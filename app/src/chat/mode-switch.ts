@@ -20,6 +20,23 @@ export const supportsChat = (kind: string) => kind === "claude" || kind === "cod
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/** Panes with a switch in flight (double clicks must not start two front-ends). */
+const switching = new Set<string>();
+
+/** Another live session of this agent in the same folder makes "newest conversation" ambiguous. */
+function ambiguous(s: SessionInfo): boolean {
+  const norm = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+  return Object.values(store.sessions).some((o) => o.id !== s.id && o.alive && o.kind === s.kind && norm(o.cwd) === norm(s.cwd));
+}
+
+async function stopProcess(s: SessionInfo, polite: () => Promise<void>): Promise<boolean> {
+  if (!s.alive) return true;
+  await polite();
+  if (await waitExit(s.id, 3000)) return true;
+  await daemon("session.kill", { handle: s.handle }).catch(() => {});
+  return waitExit(s.id, 3000);
+}
+
 async function waitExit(sessionId: string, ms: number): Promise<boolean> {
   const end = Date.now() + ms;
   while (Date.now() < end) {
@@ -86,23 +103,37 @@ export async function newChat(projectId: string, kind: SessionKind, where: "tab"
 }
 
 export async function switchToChat(project: Project, tab: Tab, pane: Pane) {
+  if (switching.has(pane.id)) return;
+  switching.add(pane.id);
+  try {
+    await doSwitchToChat(project, tab, pane);
+  } finally {
+    switching.delete(pane.id);
+  }
+}
+
+async function doSwitchToChat(project: Project, tab: Tab, pane: Pane) {
   const s = pane.sessionId ? store.sessions[pane.sessionId] : undefined;
   if (!s || !supportsChat(s.kind)) return;
   if (s.alive && s.status === "working" && !confirm("The agent is working. Interrupt it and continue in chat view?")) return;
   let conv = s.agent_session_id;
+  if (!conv && ambiguous(s)) {
+    store.notify(`This ${s.kind} session has not reported its conversation id yet and other ${s.kind} sessions run in this folder — finish one turn first, then switch.`);
+    return;
+  }
   if (!conv && (s.kind === "claude" || s.kind === "omp")) conv = (await agentLatestSession(s.kind, s.cwd).catch(() => null))?.id ?? null;
   if (s.kind !== "codex" && !conv) {
     store.notify("No conversation to continue yet — starting a new chat.");
   }
   store.notify(`Switching ${s.kind} to chat view…`);
-  if (s.alive) {
+  const stopped = await stopProcess(s, async () => {
     await sendInput(s.handle, "\x03");
     await sleep(300);
     await sendInput(s.handle, "\x03");
-    if (!(await waitExit(s.id, 3000))) {
-      await daemon("session.kill", { handle: s.handle }).catch(() => {});
-      await waitExit(s.id, 3000);
-    }
+  });
+  if (!stopped) {
+    store.notify("The terminal session did not stop; not starting a second writer.");
+    return;
   }
   try {
     const info = await createSession({
@@ -121,20 +152,30 @@ export async function switchToChat(project: Project, tab: Tab, pane: Pane) {
 }
 
 export async function switchToTerminal(project: Project, tab: Tab, pane: Pane) {
+  if (switching.has(pane.id)) return;
+  switching.add(pane.id);
+  try {
+    await doSwitchToTerminal(project, tab, pane);
+  } finally {
+    switching.delete(pane.id);
+  }
+}
+
+async function doSwitchToTerminal(project: Project, tab: Tab, pane: Pane) {
   const c = pane.sessionId ? store.sessions[pane.sessionId] : undefined;
   if (!c) return;
   const ctrl = controllers.get(c.id);
   if (ctrl?.state.busy && !confirm("The agent is working. Interrupt it and continue in the terminal?")) return;
   let conv = ctrl?.state.conversationId ?? c.agent_session_id;
   if (conv === "latest") conv = null;
-  if (c.alive) {
+  const stopped = await stopProcess(c, async () => {
     ctrl?.interrupt();
     await sleep(200);
     await daemon("chat.close_stdin", { handle: c.handle }).catch(() => {});
-    if (!(await waitExit(c.id, 4000))) {
-      await daemon("session.kill", { handle: c.handle }).catch(() => {});
-      await waitExit(c.id, 3000);
-    }
+  });
+  if (!stopped) {
+    store.notify("The chat process did not stop; not starting a second writer.");
+    return;
   }
   try {
     const info = await createSession({ kind: c.kind, cwd: c.cwd, project_id: c.project_id ?? project.id, name: c.name ?? undefined, agent_session_id: conv ?? undefined, cols: 120, rows: 32 });

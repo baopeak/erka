@@ -229,6 +229,24 @@ pub mod transport {
             }
             let _ = std::fs::remove_file(p);
         }
-        ListenerOptions::new().name(name(endpoint)?).create_tokio()
+        let opts = ListenerOptions::new().name(name(endpoint)?);
+        #[cfg(windows)]
+        let opts = {
+            use interprocess::os::windows::local_socket::ListenerOptionsExt;
+            use interprocess::os::windows::security_descriptor::SecurityDescriptor;
+            // Protected DACL: only SYSTEM and the pipe owner (the current user). The default
+            // named-pipe DACL would let every local account open it for reading.
+            let sddl = widestring::U16CString::from_str("D:P(A;;GA;;;SY)(A;;GA;;;OW)")
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e.to_string()))?;
+            opts.security_descriptor(SecurityDescriptor::deserialize(&sddl)?)
+        };
+        let listener = opts.create_tokio()?;
+        #[cfg(unix)]
+        if let Endpoint::Path(p) = endpoint {
+            use std::os::unix::fs::PermissionsExt;
+            // Owner-only, like the Windows DACL above.
+            std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o600))?;
+        }
+        Ok(listener)
     }
 }

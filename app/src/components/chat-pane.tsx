@@ -79,7 +79,13 @@ function ChatBody(props: { sessionId: string; project: Project; focused: boolean
   const target = createMemo(() => (store.connected() ? session()?.handle ?? null : null));
   onMount(() => {
     createEffect(on(target, (handle) => handle != null && void ctrl.attach(handle)));
-    onCleanup(() => ctrl.detach());
+    // The daemon dropped us for falling behind: re-attach (full replay).
+    const onResync = (e: Event) => (e as CustomEvent).detail === props.sessionId && target() != null && void ctrl.attach(target()!);
+    window.addEventListener("erka:chat-resync", onResync);
+    onCleanup(() => {
+      window.removeEventListener("erka:chat-resync", onResync);
+      ctrl.detach();
+    });
   });
 
   const items = createMemo(() => (showAll() ? ctrl.state.items : ctrl.state.items.slice(-RENDER_WINDOW)));

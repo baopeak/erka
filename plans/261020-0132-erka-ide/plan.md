@@ -1,6 +1,6 @@
 # Plan: Erka — IDE đa project, đa agent CLI, hiệu năng là ưu tiên số 1
 
-Status: in-progress · Created: 2026-10-20 · Nền tảng: Windows 10+ và macOS 12+
+Status: implemented (Windows verified; macOS via CI) · Created: 2026-10-20 · Nền tảng: Windows 10+ và macOS 12+
 Phân tích nguồn: [orca-analysis report](../reports/orca-analysis-261020-0132-features-architecture.md)
 
 ## Outcome
@@ -55,11 +55,11 @@ Giao thức `erkad` (frame `u32 LE len | u8 kind | payload`):
 
 | # | Phase | Status | Phụ thuộc |
 |---|---|---|---|
-| 1 | [Daemon core: PTY, VT, snapshot, protocol, persist, status](phase-01-daemon-core.md) | todo | — |
-| 2 | [App shell + terminals + project switch + palette/dashboard](phase-02-app-shell-terminals.md) | todo | 1 |
-| 3 | [File tree, viewer/editor, quick open, search, git](phase-03-files-git-search.md) | todo | 2 |
-| 4 | [Chat GUI mode: CLI ↔ chat cho Claude/Codex/OMP](phase-04-chat-gui-mode.md) | todo | 1,2 |
-| 5 | [Hardening, benchmark, packaging, docs](phase-05-hardening-bench-packaging.md) | todo | 1–4 |
+| 1 | [Daemon core: PTY, VT, snapshot, protocol, persist, status](phase-01-daemon-core.md) | done | — |
+| 2 | [App shell + terminals + project switch + palette/dashboard](phase-02-app-shell-terminals.md) | done | 1 |
+| 3 | [File tree, viewer/editor, quick open, search, git](phase-03-files-git-search.md) | done | 2 |
+| 4 | [Chat GUI mode: CLI ↔ chat cho Claude/Codex/OMP](phase-04-chat-gui-mode.md) | done (Codex model turn chặn bởi quota tài khoản) | 1,2 |
+| 5 | [Hardening, benchmark, packaging, docs](phase-05-hardening-bench-packaging.md) | done (soak test nhiều giờ chưa chạy) | 1–4 |
 
 ## Acceptance criteria (tổng)
 
@@ -80,3 +80,7 @@ Xem mục 6 trong report. Chính: WKWebView chưa test được tại chỗ (fal
 
 - Cờ chính xác cho permission prompt qua stdio của Claude 2.1.x → xác minh khi làm phase 4.
 - Codex TUI có dùng shared app-server không → phase 4 dùng stop+resume, không phụ thuộc.
+
+## Kết quả
+
+Xem [bench + e2e report](../reports/bench-261020-0430-erkad-and-e2e-results.md), [kiến trúc](../../docs/architecture.md), [hướng dẫn](../../docs/user-guide.md).

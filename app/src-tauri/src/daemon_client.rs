@@ -26,6 +26,8 @@ const FLUSH_DELAY: Duration = Duration::from_millis(4);
 
 struct View {
     channel: Channel<InvokeResponseBody>,
+    /// Request id of the attach that owns this view; only its reply may open the stream.
+    attach_id: u64,
     /// Output frames older than the pending attach reply are stale and dropped.
     awaiting_reply: bool,
     buf: Vec<u8>,
@@ -156,7 +158,7 @@ impl DaemonClient {
                                 let _ = tx.send(result);
                             }
                             Some(Pending::Attach(handle, tx)) => {
-                                if let Some(view) = self.views.lock().get_mut(&handle) {
+                                if let Some(view) = self.views.lock().get_mut(&handle).filter(|v| v.attach_id == id) {
                                     view.awaiting_reply = false;
                                     view.buf.clear();
                                     if let Ok(r) = &result {
@@ -216,6 +218,10 @@ impl DaemonClient {
     async fn request(&self, method: &str, params: Value, pending: impl FnOnce(oneshot::Sender<Result<Value, String>>) -> Pending) -> Result<Value> {
         self.wait_connected().await?;
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        self.request_with_id(id, method, params, pending).await
+    }
+
+    async fn request_with_id(&self, id: u64, method: &str, params: Value, pending: impl FnOnce(oneshot::Sender<Result<Value, String>>) -> Pending) -> Result<Value> {
         let (tx, rx) = oneshot::channel();
         self.pending.lock().insert(id, pending(tx));
         if let Err(e) = self.send_frame(&Frame::json(&json!({"id": id, "method": method, "params": params}))) {
@@ -239,9 +245,11 @@ impl DaemonClient {
     /// Registers the view's channel, then attaches. The reply carries the initial content
     /// (`mode` delta|reset, base64 `data`); live output follows on the channel.
     pub async fn attach(&self, handle: u32, since: Option<u64>, channel: Channel<InvokeResponseBody>) -> Result<Value> {
-        self.views.lock().insert(handle, View { channel, awaiting_reply: true, buf: Vec::new(), seq: 0 });
+        self.wait_connected().await?;
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        self.views.lock().insert(handle, View { channel, attach_id: id, awaiting_reply: true, buf: Vec::new(), seq: 0 });
         let params = json!({"handle": handle, "since_seq": since, "interactive": true});
-        self.request("session.attach", params, |tx| Pending::Attach(handle, tx)).await
+        self.request_with_id(id, "session.attach", params, |tx| Pending::Attach(handle, tx)).await
     }
 
     pub async fn detach(&self, handle: u32) -> Result<()> {

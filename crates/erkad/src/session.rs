@@ -220,6 +220,12 @@ impl Session {
 
         let generation = {
             let mut g = self.inner.lock();
+            if g.pty.is_some() {
+                // Lost a race with another spawn/restart: never run two processes in one session.
+                drop(g);
+                let _ = child.kill();
+                anyhow::bail!("session is already running");
+            }
             g.generation += 1;
             g.exit_code = None;
             g.activity = Activity { alive: true, ..Default::default() };

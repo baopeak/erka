@@ -59,7 +59,10 @@ impl Store {
 }
 
 pub fn write_atomic(path: &Path, data: &[u8]) -> Result<()> {
-    let tmp = path.with_extension("tmp");
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    // Unique temp name: concurrent writers (ticker vs shutdown) never share a temp file.
+    let tmp = path.with_extension(format!("{}.{n}.tmp", std::process::id()));
     std::fs::write(&tmp, data)?;
     std::fs::rename(&tmp, path)?;
     Ok(())

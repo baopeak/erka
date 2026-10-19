@@ -24,7 +24,11 @@ use crate::session::{json_out, ClientTx, Outgoing, SessionInfo, SessionSpec, SUB
 use crate::status::{Activity, Status, MIN_WORK_FOR_UNREAD};
 
 const LOG_MAX_LINES: usize = 20_000;
-const LOG_MAX_BYTES: usize = 24 << 20;
+/// Base64 of the replayed log must stay well under `erka_proto::MAX_FRAME_LEN`.
+const LOG_MAX_BYTES: usize = 12 << 20;
+const MAX_LINE: usize = 4 << 20;
+/// Handshake responses the UI adapters need to rebuild state; kept when the log is trimmed.
+const PINNED_IDS: &[&str] = &[r#""id":"erka-init""#, r#""id":"erka-thread""#, r#""id":"erka-session""#];
 
 struct Sub {
     client: u64,
@@ -34,6 +38,7 @@ struct Sub {
 }
 
 struct Inner {
+    pinned: Vec<Arc<[u8]>>,
     log: VecDeque<Arc<[u8]>>,
     log_bytes: usize,
     seq: u64,
@@ -63,6 +68,7 @@ impl ChatSession {
             handle,
             spec: Mutex::new(spec),
             inner: Mutex::new(Inner {
+                pinned: Vec::new(),
                 log: VecDeque::new(),
                 log_bytes: 0,
                 seq: 0,
@@ -165,6 +171,10 @@ impl ChatSession {
         if line.trim().is_empty() {
             return;
         }
+        if line.len() > MAX_LINE {
+            // Keep frames bounded; the agent's line is replaced by a notice.
+            line = json!({"type": "erka_stderr", "text": format!("[dropped a {} byte line]", line.len())}).to_string();
+        }
         let now = Instant::now();
         let derived = classify(&line);
         line.push('\n');
@@ -176,6 +186,10 @@ impl ChatSession {
         while g.log.len() > LOG_MAX_LINES || g.log_bytes > LOG_MAX_BYTES {
             if let Some(old) = g.log.pop_front() {
                 g.log_bytes -= old.len();
+                let head = String::from_utf8_lossy(&old[..old.len().min(256)]).into_owned();
+                if PINNED_IDS.iter().any(|id| head.contains(id)) && old.len() < 1 << 20 {
+                    g.pinned.push(old);
+                }
             }
         }
         g.activity.on_output(now);
@@ -205,7 +219,7 @@ impl ChatSession {
         let mut g = self.inner.lock();
         g.subs.retain(|s| s.client != client);
         let mut data = Vec::with_capacity(g.log_bytes);
-        for line in &g.log {
+        for line in g.pinned.iter().chain(g.log.iter()) {
             data.extend_from_slice(line);
         }
         let reply = json!({"id": req_id, "result": {

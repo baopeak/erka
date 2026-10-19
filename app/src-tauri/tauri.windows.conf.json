@@ -1,0 +1,8 @@
+{
+  "bundle": {
+    "resources": {
+      "../../third_party/conpty/x64/conpty.dll": "conpty.dll",
+      "../../third_party/conpty/x64/OpenConsole.exe": "OpenConsole.exe"
+    }
+  }
+}

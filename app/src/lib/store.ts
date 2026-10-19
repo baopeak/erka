@@ -103,13 +103,23 @@ function createAppStore() {
       }
       case "session.resync": {
         const s = byHandle(p.handle);
+        if (s?.chat) {
+          window.dispatchEvent(new CustomEvent("erka:chat-resync", { detail: s.id }));
+          break;
+        }
         const v = s && peekView(s.id);
         if (v && v.handle === p.handle) void v.attach(p.handle);
         break;
       }
-      case "session.clipboard":
-        void writeText(p.text);
+      case "session.clipboard": {
+        // OSC 52: only the terminal the user is looking at may set the clipboard, and we say so.
+        const s = byHandle(p.handle);
+        if (s && document.hasFocus() && isSessionVisible(s.id) && typeof p.text === "string") {
+          void writeText(p.text);
+          notify(`Clipboard set by ${sessionLabel(s)}`);
+        }
         break;
+      }
     }
   }
 
@@ -348,12 +358,18 @@ function createAppStore() {
     }
     setLoaded(true);
     await ipc.onEvent("daemon-event", onDaemonEvent);
-    await ipc.onEvent<{ connected: boolean; error?: string }>("daemon-status", (s) => {
-      setConnected(s.connected);
-      if (s.connected) {
+    await ipc.onEvent<{ connected: boolean; error?: string }>("daemon-status", async (s) => {
+      if (!s.connected) {
+        // Views must forget their stream before anything can re-attach.
         resetStreams();
-        void refreshSessions();
-      } else if (s.error) notify(s.error);
+        setConnected(false);
+        if (s.error) notify(s.error);
+        return;
+      }
+      resetStreams();
+      // Fresh handles first, then flip `connected` so panes attach to the right sessions.
+      await refreshSessions().catch(() => {});
+      setConnected(true);
     });
     // The connection may predate our listener.
     try {

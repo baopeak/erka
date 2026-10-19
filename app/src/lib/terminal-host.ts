@@ -22,6 +22,11 @@ import type { Settings } from "./types";
 
 const MAX_PARKED = 16;
 
+/** Device reports xterm emits on its own (DA, DSR/CPR, OSC colour replies, focus events). */
+export function isTerminalReply(data: string): boolean {
+  return /^(\x1b\[[?>=]?[\d;]*[cnR]|\x1b\][\d;]+;[^\x07\x1b]*(\x07|\x1b\\)|\x1b\[[IO])+$/.test(data);
+}
+
 /** Set by the keymap: returns true when the event is an app shortcut xterm must not eat. */
 let isAppShortcut: (e: KeyboardEvent) => boolean = () => false;
 export const setAppShortcutMatcher = (fn: (e: KeyboardEvent) => boolean) => (isAppShortcut = fn);
@@ -40,8 +45,10 @@ export class TermView {
   private opened = false;
   private attachGen = 0;
   private suppressReplies = 0;
-  /** Live output that raced ahead of the attach reply. */
-  private early: Uint8Array[] | null = null;
+  /** Live output that raced ahead of the attach reply, with its stream offset. */
+  private early: { seq: number; data: Uint8Array }[] | null = null;
+  /** Detach/attach run strictly in order per view (a remount parks then re-attaches). */
+  private op: Promise<unknown> = Promise.resolve();
   private sessionSize: [number, number] = [0, 0];
   private resizeObs: ResizeObserver | null = null;
   private resizeTimer = 0;
@@ -82,7 +89,10 @@ export class TermView {
   }
 
   private input(data: string, binary = false) {
-    if (this.suppressReplies > 0 || this.handle == null) return;
+    if (this.handle == null) return;
+    // While a raw replay is written, xterm re-answers old queries; drop only those replies,
+    // never the user's keystrokes.
+    if (this.suppressReplies > 0 && isTerminalReply(data)) return;
     void sendInput(this.handle, data, binary);
   }
 
@@ -190,16 +200,26 @@ export class TermView {
   }
 
   /** Subscribes to the daemon session; replays only what this buffer is missing. */
-  async attach(handle: number) {
+  attach(handle: number): Promise<void> {
     const gen = ++this.attachGen;
     this.attached = true;
+    const run = this.op.then(() => this.doAttach(handle, gen));
+    this.op = run.catch(() => {});
+    return run;
+  }
+
+  private async doAttach(handle: number, gen: number) {
+    if (gen !== this.attachGen) return;
     if (this.handle !== handle) this.lastSeq = null; // different stream (daemon restarted)
     this.handle = handle;
     this.early = [];
     const reply = await attachTerminal(handle, this.lastSeq, (seq, data) => {
       if (gen !== this.attachGen) return;
-      if (this.early) this.early.push(data);
-      else this.write(data);
+      if (this.early) {
+        this.early.push({ seq, data });
+        return;
+      }
+      this.write(data);
       this.lastSeq = seq;
     }).catch((e) => {
       console.warn("attach failed", e);
@@ -224,17 +244,24 @@ export class TermView {
     }
     const early = this.early;
     this.early = null;
-    for (const chunk of early ?? []) this.write(chunk);
-    if (this.lastSeq == null || this.lastSeq < reply.seq) this.lastSeq = reply.seq;
+    this.lastSeq = reply.seq;
+    // Chunks covered by the reply (seq <= reply.seq) were already included in it.
+    for (const chunk of early ?? []) {
+      if (chunk.seq <= reply.seq) continue;
+      this.write(chunk.data);
+      this.lastSeq = chunk.seq;
+    }
     this.fitNow();
   }
 
-  async detach() {
+  detach(): Promise<void> {
     this.attachGen++;
     this.attached = false;
     this.early = null;
     const handle = this.handle;
-    if (handle != null) await detachTerminal(handle).catch(() => {});
+    const run = this.op.then(() => (handle != null ? detachTerminal(handle).catch(() => {}) : undefined));
+    this.op = run;
+    return run;
   }
 
   focus() {

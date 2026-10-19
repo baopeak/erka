@@ -60,6 +60,8 @@ export class ChatController {
   private handle: number | null = null;
   private attachGen = 0;
   private isReplaying = false;
+  /** Answered approval ids (the agent's log does not contain our answers). */
+  private resolved = new Map<string, string>();
   private started = false;
   /** Renders the agent's own transcript (history from before chat mode) ahead of the log. */
   loadHistory: ((ctx: AdapterContext) => Promise<void>) | null = null;
@@ -75,7 +77,8 @@ export class ChatController {
     return {
       state: this.state,
       set: this.set,
-      write: (obj) => this.handle != null && void sendInput(this.handle, JSON.stringify(obj) + "\n"),
+      // Replays must never talk to the agent: those messages were answered long ago.
+      write: (obj) => this.handle != null && !this.isReplaying && void sendInput(this.handle, JSON.stringify(obj) + "\n"),
       upsert: (item) => this.upsert(item),
       patch: (id, fn) => this.patch(id, fn as (i: ChatItem) => void),
       find: (id) => {
@@ -94,6 +97,7 @@ export class ChatController {
   }
 
   upsert(item: ChatItem) {
+    if (item.kind === "permission" && this.resolved.has(item.id)) item = { ...item, resolved: this.resolved.get(item.id) };
     const i = this.index.get(item.id);
     if (i != null) {
       this.set("items", i, item);
@@ -162,6 +166,7 @@ export class ChatController {
     if (!reply || gen !== this.attachGen) return;
     this.resetState();
     if (this.loadHistory) await this.loadHistory(this.context()).catch(() => {});
+    if (gen !== this.attachGen) return;
     this.isReplaying = true;
     this.feed(b64ToBytes(reply.data));
     this.isReplaying = false;
@@ -189,6 +194,8 @@ export class ChatController {
   }
 
   respond(permissionId: string, optionId: string, label: string) {
+    if (this.resolved.has(permissionId)) return;
+    this.resolved.set(permissionId, label);
     this.adapter.respond(permissionId, optionId);
     this.patch(permissionId, (i) => {
       if (i.kind === "permission") i.resolved = label;

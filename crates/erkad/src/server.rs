@@ -80,6 +80,34 @@ where
         }
     });
 
+    // Requests from one client run strictly in order (detach-then-attach, restart twice…)
+    // on a single worker, off the read loop so input frames keep flowing meanwhile.
+    let (req_tx, mut req_rx) = tokio::sync::mpsc::unbounded_channel::<Value>();
+    let worker = {
+        let daemon = daemon.clone();
+        let out_tx = out_tx.clone();
+        tokio::spawn(async move {
+            while let Some(req) = req_rx.recv().await {
+                let daemon = daemon.clone();
+                let out_tx = out_tx.clone();
+                let _ = tokio::task::spawn_blocking(move || {
+                    let req_id = req.get("id").cloned().unwrap_or(Value::Null);
+                    let method = req.get("method").and_then(Value::as_str).unwrap_or("");
+                    let params = req.get("params").cloned().unwrap_or(Value::Null);
+                    let reply = match daemon.dispatch(id, &out_tx, &req_id, method, params) {
+                        Ok(Some(result)) => json!({"id": req_id, "result": result}),
+                        Ok(None) => return,
+                        Err(e) => json!({"id": req_id, "error": {"message": format!("{e:#}")}}),
+                    };
+                    if !req_id.is_null() {
+                        let _ = out_tx.send(json_out(&reply));
+                    }
+                })
+                .await;
+            }
+        })
+    };
+
     loop {
         let frame = match read_frame(&mut rx).await {
             Ok(Some(f)) => f,
@@ -103,27 +131,13 @@ where
                         continue;
                     }
                 };
-                let daemon = daemon.clone();
-                let out_tx = out_tx.clone();
-                // Requests may block briefly (PTY spawn); run them off the read loop so input
-                // frames for other sessions keep flowing.
-                tokio::task::spawn_blocking(move || {
-                    let req_id = req.get("id").cloned().unwrap_or(Value::Null);
-                    let method = req.get("method").and_then(Value::as_str).unwrap_or("");
-                    let params = req.get("params").cloned().unwrap_or(Value::Null);
-                    let reply = match daemon.dispatch(id, &out_tx, &req_id, method, params) {
-                        Ok(Some(result)) => json!({"id": req_id, "result": result}),
-                        Ok(None) => return,
-                        Err(e) => json!({"id": req_id, "error": {"message": format!("{e:#}")}}),
-                    };
-                    if !req_id.is_null() {
-                        let _ = out_tx.send(json_out(&reply));
-                    }
-                });
+                let _ = req_tx.send(req);
             }
             Frame::Output { .. } => {}
         }
     }
+    drop(req_tx);
+    let _ = worker.await;
     daemon.unregister_client(id);
     drop(out_tx);
     writer.abort();

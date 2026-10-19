@@ -385,6 +385,8 @@ impl Daemon {
                     for e in self.sessions.read().values() {
                         e.kill();
                     }
+                    // Unix kills escalate to SIGKILL after 1.5 s; stay alive until then.
+                    std::thread::sleep(std::time::Duration::from_millis(1700));
                 }
                 self.shutdown.notify_one();
                 json!(true)

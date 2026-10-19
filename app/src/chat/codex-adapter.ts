@@ -120,6 +120,7 @@ export function createCodexAdapter(ctx: AdapterContext): Adapter {
       if ("id" in m && ("result" in m || "error" in m) && !("method" in m)) {
         if (m.error) {
           ctx.upsert({ kind: "system", id: `e-${String(m.id)}-${ctx.state.items.length}`, text: `Codex: ${m.error.message ?? JSON.stringify(m.error)}`, tone: "error" });
+          if (String(m.id).startsWith("erka-turn-")) ctx.set("busy", false);
           if ((m.id === THREAD_ID || m.id === LIST_ID) && ctx.state.conversationId && !ctx.replaying()) {
             // Resume failed (thread gone): start fresh instead.
             ctx.set("conversationId", null);

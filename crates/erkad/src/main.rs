@@ -116,6 +116,8 @@ fn serve() -> Result<()> {
         tokio::spawn(daemon.clone().ticker());
         server::serve(daemon.clone(), erka_proto::endpoint()).await
     });
+    // Stop the ticker before the final save so the two never persist concurrently.
+    rt.shutdown_timeout(std::time::Duration::from_secs(2));
     daemon.persist(true);
     tracing::info!("erkad stopped");
     result

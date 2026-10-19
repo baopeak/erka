@@ -107,6 +107,7 @@ export function createAcpAdapter(ctx: AdapterContext): Adapter {
       if ("id" in m && !("method" in m)) {
         if (m.error) {
           ctx.upsert({ kind: "system", id: `e-${String(m.id)}`, text: `Agent: ${m.error.message ?? JSON.stringify(m.error)}`, tone: "error" });
+          if (String(m.id).startsWith("erka-prompt-")) ctx.set("busy", false);
           if (m.id === SESSION_ID && ctx.state.conversationId && !ctx.replaying()) {
             ctx.set("conversationId", null);
             openSession();
@@ -144,7 +145,7 @@ export function createAcpAdapter(ctx: AdapterContext): Adapter {
       }
       if ("id" in m && "method" in m) {
         // Unsupported client method: tell the agent rather than leaving it hanging.
-        ctx.write({ jsonrpc: "2.0", id: m.id, error: { code: -32601, message: `Erka does not implement ${m.method}` } });
+        if (!ctx.replaying()) ctx.write({ jsonrpc: "2.0", id: m.id, error: { code: -32601, message: `Erka does not implement ${m.method}` } });
       }
     },
     send(text) {

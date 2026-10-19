@@ -71,6 +71,8 @@ export function applyClaudeMessage(ctx: AdapterContext, m: any, live: { msgId: s
 }
 
 function pushUser(ctx: AdapterContext, text: string, uuid?: string) {
+  // Ctrl+C used to stop the TUI during a mode switch leaves this marker; it is not a message.
+  if (/^\[Request interrupted by user/.test(text.trim())) return;
   // Replace our optimistic copy instead of duplicating it.
   const pending = ctx.state.items.find((i) => i.kind === "user" && i.pending && i.text.trim() === text.trim());
   if (pending) ctx.patch(pending.id, (i: any) => (i.pending = false));
@@ -96,6 +98,7 @@ export function createClaudeAdapter(ctx: AdapterContext): Adapter {
   let blocks = new Map<number, string>(); // stream block index → item id
   let partialJson = new Map<number, string>();
   let interruptSeq = 0;
+  const pendingInputs = new Map<string, { input: unknown; suggestions?: unknown }>();
 
   return {
     reset() {
@@ -212,4 +215,3 @@ export function createClaudeAdapter(ctx: AdapterContext): Adapter {
   };
 }
 
-const pendingInputs = new Map<string, { input: unknown; suggestions?: unknown }>();

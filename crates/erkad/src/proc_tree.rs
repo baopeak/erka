@@ -100,6 +100,15 @@ mod imp {
             });
         }
     }
+
+    /// Like the Windows job's kill-on-close: whatever the session left running goes too.
+    impl Drop for ProcTree {
+        fn drop(&mut self) {
+            unsafe {
+                libc::killpg(self.pgid, libc::SIGHUP);
+            }
+        }
+    }
 }
 
 pub use imp::ProcTree;

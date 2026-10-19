@@ -1,0 +1,1 @@
+- [Shell hook blocked words](shell-hook-blocked-words.md) — Bash blocked for target/build/dist/vendor/node_modules; use Read/Grep, skip cargo
