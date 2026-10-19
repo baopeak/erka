@@ -46,3 +46,11 @@ chars/alt-screen/modes, status heuristics, ring buffer, npm shim parsing, dialec
 - macOS runtime (no Mac available). Daemon crates `cargo check` cleanly for
   `x86_64-apple-darwin`; the Tauri crate needs the Apple SDK — covered by `.github/workflows/ci.yml`.
 - Multi-hour soak (RAM leak slope) and IME/Vietnamese input under WebView2.
+
+## After code-review fixes (re-run)
+
+- `cargo test` (proto, daemon, app backend): 22 pass.
+- smoke 14/14 (switch p50 55 ms / p95 65 ms), restart 3/3, chat Claude 4/4 + OMP 2/2.
+- Windows installer: `Erka_0.1.0_x64-setup.exe` 4.98 MiB (NSIS, per-user).
+- Release app auto-spawns `erkad` (≈2.8 s after app process start incl. WebView init; the first
+  run of a freshly built exe took ≈30 s, consistent with an antivirus first-run scan).
