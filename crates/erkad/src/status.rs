@@ -20,6 +20,9 @@ pub enum Status {
     Exited,
 }
 
+/// A working stretch shorter than this (e.g. a shell drawing its prompt) does not mark the
+/// session unread when it goes idle.
+pub const MIN_WORK_FOR_UNREAD: Duration = Duration::from_secs(3);
 /// Output within this window counts as "working".
 const ACTIVE_WINDOW: Duration = Duration::from_millis(1500);
 /// Output this soon after input is treated as echo, not work.

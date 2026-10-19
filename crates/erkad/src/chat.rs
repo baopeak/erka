@@ -21,7 +21,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 use crate::proc_tree::ProcTree;
 use crate::session::{json_out, ClientTx, Outgoing, SessionInfo, SessionSpec, SUB_BUDGET};
-use crate::status::{Activity, Status};
+use crate::status::{Activity, Status, MIN_WORK_FOR_UNREAD};
 
 const LOG_MAX_LINES: usize = 20_000;
 const LOG_MAX_BYTES: usize = 24 << 20;
@@ -48,6 +48,7 @@ struct Inner {
     unread: bool,
     last_status: Status,
     last_broadcast: Option<SessionInfo>,
+    working_since: Option<Instant>,
 }
 
 pub struct ChatSession {
@@ -76,6 +77,7 @@ impl ChatSession {
                 unread: false,
                 last_status: Status::Exited,
                 last_broadcast: None,
+                working_since: None,
             }),
         })
     }
@@ -279,8 +281,13 @@ impl ChatSession {
     pub fn tick(&self, now: Instant) -> Option<SessionInfo> {
         let mut g = self.inner.lock();
         let status = g.activity.status(now);
+        if status == Status::Working && g.last_status != Status::Working {
+            g.working_since = Some(now);
+        }
         if g.last_status == Status::Working && matches!(status, Status::Idle | Status::Waiting) && !g.focused {
-            g.unread = true;
+            // A shell printing its prompt is not "work finished"; require a real stretch.
+            let worked = g.working_since.is_some_and(|t| now.duration_since(t) >= MIN_WORK_FOR_UNREAD);
+            g.unread |= worked || status == Status::Waiting || g.activity.hook.is_some();
         }
         g.last_status = status;
         let mut info = self.info_locked(&g, status);

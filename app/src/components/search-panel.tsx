@@ -1,0 +1,83 @@
+import { For, Show, createMemo, createSignal, onMount } from "solid-js";
+import { store } from "../lib/store";
+import { searchText, type TextHit } from "../lib/ipc";
+import type { Project } from "../lib/types";
+
+export function SearchPanel(props: { project: Project }) {
+  let input!: HTMLInputElement;
+  const [query, setQuery] = createSignal("");
+  const [regex, setRegex] = createSignal(false);
+  const [caseSensitive, setCase] = createSignal(false);
+  const [result, setResult] = createSignal<{ hits: TextHit[]; truncated: boolean; files_searched: number } | null>(null);
+  const [busy, setBusy] = createSignal(false);
+  onMount(() => input.focus());
+
+  let seq = 0;
+  const run = async () => {
+    const q = query();
+    if (!q.trim()) return setResult(null);
+    const mine = ++seq;
+    setBusy(true);
+    try {
+      const r = await searchText(props.project.path, q, regex(), caseSensitive());
+      if (mine === seq) setResult(r);
+    } catch (e) {
+      if (mine === seq) store.notify(String(e));
+    } finally {
+      if (mine === seq) setBusy(false);
+    }
+  };
+
+  const grouped = createMemo(() => {
+    const map = new Map<string, TextHit[]>();
+    for (const h of result()?.hits ?? []) {
+      if (!map.has(h.path)) map.set(h.path, []);
+      map.get(h.path)!.push(h);
+    }
+    return [...map.entries()];
+  });
+
+  return (
+    <>
+      <div class="search-box">
+        <input
+          ref={input}
+          class="text-input"
+          placeholder="Search in files (Enter)"
+          value={query()}
+          onInput={(e) => setQuery(e.currentTarget.value)}
+          onKeyDown={(e) => e.key === "Enter" && void run()}
+        />
+        <div class="toggles">
+          <button class={`toggle${caseSensitive() ? " on" : ""}`} title="Match case" onClick={() => { setCase(!caseSensitive()); void run(); }}>Aa</button>
+          <button class={`toggle${regex() ? " on" : ""}`} title="Regular expression" onClick={() => { setRegex(!regex()); void run(); }}>.*</button>
+          <span style={{ flex: 1 }} />
+          <Show when={busy()}><span class="muted" style={{ padding: 0 }}>searching…</span></Show>
+          <Show when={result() && !busy()}>
+            <span class="muted" style={{ padding: 0 }}>{result()!.hits.length}{result()!.truncated ? "+" : ""} hits · {result()!.files_searched} files</span>
+          </Show>
+        </div>
+      </div>
+      <div class="list">
+        <For each={grouped()}>
+          {([path, hits]) => (
+            <>
+              <div class="list-row" style={{ "font-weight": 500 }} onClick={() => store.openFile(props.project.id, path)}>
+                <span class="name">{path.split("/").pop()}</span>
+                <span class="dir">{path}</span>
+                <span class="kbd">{hits.length}</span>
+              </div>
+              <For each={hits}>
+                {(h) => (
+                  <div class="hit" onClick={() => store.openFile(props.project.id, h.path, { line: h.line })} title={h.text}>
+                    <span class="ln">{h.line}</span>{h.text.trim()}
+                  </div>
+                )}
+              </For>
+            </>
+          )}
+        </For>
+      </div>
+    </>
+  );
+}

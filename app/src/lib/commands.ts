@@ -1,0 +1,174 @@
+// Command registry + keymap. One table drives keyboard shortcuts and the command palette.
+//
+// Defaults avoid stealing keys TUIs need: on Windows/Linux app commands use Ctrl+Shift
+// (Ctrl+P/J/K/O/G… are used by Claude Code, Codex, OMP and readline); on macOS Cmd is
+// never sent to the terminal, so plain Cmd chords are safe.
+import { open } from "@tauri-apps/plugin-dialog";
+import { store } from "./store";
+import { cyclePane } from "./layout";
+import { isMac } from "./platform";
+import { allViews, peekView, setAppShortcutMatcher } from "./terminal-host";
+import type { SessionKind } from "./types";
+
+export interface Command {
+  id: string;
+  label: string;
+  /** Chord per platform, e.g. "mod+shift+p". `mod` = Cmd on macOS, Ctrl elsewhere. */
+  win?: string;
+  mac?: string;
+  run: () => void;
+  when?: () => boolean;
+}
+
+const pid = () => store.state.activeProject;
+const hasProject = () => !!pid();
+
+function focusedPane() {
+  const p = pid();
+  const tab = p ? store.activeTab(p) : undefined;
+  return p && tab ? { projectId: p, tab, paneId: tab.focus } : null;
+}
+
+function newSession(kind: SessionKind, where: "tab" | "right" | "down" = "tab") {
+  const p = pid();
+  if (p) void store.newSession(p, kind, { where });
+}
+
+export async function pickProjectFolder() {
+  const dir = await open({ directory: true, multiple: false, title: "Add project folder" });
+  if (typeof dir === "string") store.addProject(dir);
+}
+
+function zoom(delta: number) {
+  const size = delta === 0 ? 13 : Math.min(28, Math.max(8, store.state.settings.fontSize + delta));
+  store.setSettings({ fontSize: size });
+  for (const v of allViews()) v.applySettings(store.state.settings);
+}
+
+export const commands: Command[] = [
+  { id: "palette", label: "Command Palette", win: "mod+shift+p", mac: "mod+shift+p", run: () => store.setOverlay("palette") },
+  { id: "quickopen", label: "Go to File…", win: "mod+shift+o", mac: "mod+p", run: () => store.setOverlay("quickopen"), when: hasProject },
+  { id: "jump", label: "Jump to Session / Project…", win: "mod+shift+k", mac: "mod+k", run: () => store.setOverlay("jump") },
+  { id: "dashboard", label: "Toggle Agent Dashboard", win: "mod+shift+m", mac: "mod+shift+m", run: () => store.setOverlay(store.overlay() === "dashboard" ? null : "dashboard") },
+  { id: "project.add", label: "Add Project Folder…", run: () => void pickProjectFolder() },
+  { id: "new.shell", label: "New Terminal", win: "mod+shift+t", mac: "mod+t", run: () => newSession("shell"), when: hasProject },
+  { id: "new.menu", label: "New Session…", win: "mod+shift+n", mac: "mod+shift+n", run: () => store.setOverlay("newsession"), when: hasProject },
+  { id: "new.claude", label: "New Claude Code Session", run: () => newSession("claude"), when: hasProject },
+  { id: "new.codex", label: "New Codex Session", run: () => newSession("codex"), when: hasProject },
+  { id: "new.omp", label: "New OMP Session", run: () => newSession("omp"), when: hasProject },
+  { id: "split.right", label: "Split Right (Terminal)", win: "mod+shift+d", mac: "mod+d", run: () => newSession("shell", "right"), when: hasProject },
+  { id: "split.down", label: "Split Down (Terminal)", win: "mod+shift+s", mac: "mod+shift+d", run: () => newSession("shell", "down"), when: hasProject },
+  {
+    id: "pane.close", label: "Close Pane", win: "mod+shift+w", mac: "mod+w", when: hasProject,
+    run: () => {
+      const f = focusedPane();
+      if (!f) return;
+      const pane = f.tab && findInTab(f.tab, f.paneId);
+      const s = pane?.sessionId ? store.sessions[pane.sessionId] : undefined;
+      if (s?.alive && s.kind !== "shell" && !confirm(`Stop ${s.kind} and close this pane?`)) return;
+      void store.closePane(f.projectId, f.tab.id, f.paneId);
+    },
+  },
+  {
+    id: "pane.next", label: "Focus Next Pane", win: "alt+]", mac: "mod+]", when: hasProject,
+    run: () => { const f = focusedPane(); if (f) store.focusPane(f.projectId, f.tab.id, cyclePane(f.tab.root, f.paneId, 1)); },
+  },
+  {
+    id: "pane.prev", label: "Focus Previous Pane", win: "alt+[", mac: "mod+[", when: hasProject,
+    run: () => { const f = focusedPane(); if (f) store.focusPane(f.projectId, f.tab.id, cyclePane(f.tab.root, f.paneId, -1)); },
+  },
+  { id: "tab.next", label: "Next Tab", win: "ctrl+tab", mac: "ctrl+tab", run: () => store.cycleTab(1) },
+  { id: "tab.prev", label: "Previous Tab", win: "ctrl+shift+tab", mac: "ctrl+shift+tab", run: () => store.cycleTab(-1) },
+  { id: "panel.files", label: "Toggle Explorer", win: "mod+shift+e", mac: "mod+shift+e", run: () => store.setRightPanel("files"), when: hasProject },
+  { id: "panel.git", label: "Toggle Source Control", win: "mod+shift+g", mac: "mod+shift+g", run: () => store.setRightPanel("git"), when: hasProject },
+  { id: "panel.search", label: "Search in Files", win: "mod+shift+h", mac: "mod+shift+f", run: () => store.setRightPanel("search"), when: hasProject },
+  { id: "sidebar", label: "Toggle Sidebar", win: "mod+shift+b", mac: "mod+b", run: () => store.setSettings({ sidebarCollapsed: !store.state.settings.sidebarCollapsed }) },
+  {
+    id: "find", label: "Find in Terminal", win: "mod+shift+f", mac: "mod+f",
+    run: () => window.dispatchEvent(new CustomEvent("erka:find")),
+  },
+  { id: "settings", label: "Settings", win: "mod+,", mac: "mod+,", run: () => store.setOverlay("settings") },
+  { id: "zoom.in", label: "Increase Font Size", win: "mod+=", mac: "mod+=", run: () => zoom(1) },
+  { id: "zoom.out", label: "Decrease Font Size", win: "mod+-", mac: "mod+-", run: () => zoom(-1) },
+  { id: "zoom.reset", label: "Reset Font Size", win: "mod+0", mac: "mod+0", run: () => zoom(0) },
+  {
+    id: "terminal.clear", label: "Clear Terminal Buffer", when: hasProject,
+    run: () => {
+      const f = focusedPane();
+      const pane = f && findInTab(f.tab, f.paneId);
+      if (pane?.sessionId) peekView(pane.sessionId)?.term.clear();
+    },
+  },
+];
+
+function findInTab(tab: { root: import("./types").LayoutNode }, paneId: string) {
+  const walk = (n: import("./types").LayoutNode): import("./types").Pane | undefined =>
+    n.type === "leaf" ? (n.pane.id === paneId ? n.pane : undefined) : walk(n.a) ?? walk(n.b);
+  return walk(tab.root);
+}
+
+// Project switching: Alt+1..9 (Windows) / Cmd+1..9 (macOS).
+for (let i = 1; i <= 9; i++) {
+  commands.push({
+    id: `project.${i}`,
+    label: `Switch to Project ${i}`,
+    win: `alt+${i}`,
+    mac: `mod+${i}`,
+    run: () => {
+      const p = store.state.projects[i - 1];
+      if (p) store.switchProject(p.id);
+    },
+  });
+}
+
+function eventChord(e: KeyboardEvent): string {
+  const parts: string[] = [];
+  const mod = isMac ? e.metaKey : e.ctrlKey;
+  if (mod) parts.push("mod");
+  if (isMac && e.ctrlKey) parts.push("ctrl");
+  if (!isMac && e.metaKey) parts.push("meta");
+  if (e.shiftKey) parts.push("shift");
+  if (e.altKey) parts.push("alt");
+  let key = e.key.toLowerCase();
+  // Use the physical key for digits/punctuation so Shift/Alt layouts still match.
+  if (/^Digit\d$/.test(e.code)) key = e.code.slice(5);
+  else if (e.code === "BracketLeft") key = "[";
+  else if (e.code === "BracketRight") key = "]";
+  else if (e.code === "Equal") key = "=";
+  else if (e.code === "Minus") key = "-";
+  else if (e.code === "Comma") key = ",";
+  else if (/^Key[A-Z]$/.test(e.code)) key = e.code.slice(3).toLowerCase();
+  parts.push(key);
+  return parts.join("+");
+}
+
+/** "ctrl+tab" on macOS is literally Control; normalise for matching. */
+function normalizeChord(chord: string): string {
+  return isMac ? chord : chord.replace(/^ctrl\+/, "mod+");
+}
+
+export const chordOf = (c: Command) => (isMac ? c.mac : c.win);
+
+function match(e: KeyboardEvent): Command | undefined {
+  const chord = eventChord(e);
+  return commands.find((c) => {
+    const k = chordOf(c);
+    return k && normalizeChord(k) === chord && (!c.when || c.when());
+  });
+}
+
+export function installKeymap() {
+  setAppShortcutMatcher((e) => !!match(e));
+  window.addEventListener(
+    "keydown",
+    (e) => {
+      if (e.isComposing) return;
+      const cmd = match(e);
+      if (!cmd) return;
+      e.preventDefault();
+      e.stopPropagation();
+      cmd.run();
+    },
+    true,
+  );
+}

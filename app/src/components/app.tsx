@@ -1,0 +1,58 @@
+import { Match, Show, Switch, onMount } from "solid-js";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { store } from "../lib/store";
+import { peekView } from "../lib/terminal-host";
+import { Sidebar } from "./sidebar";
+import { WorkspaceView } from "./workspace-view";
+import { RightPanel } from "./right-panel";
+import { StatusBar } from "./status-bar";
+import { Palette } from "./palette";
+import { Dashboard } from "./dashboard";
+import { SettingsView } from "./settings-view";
+import { NewSessionMenu } from "./new-session-menu";
+import { Welcome } from "./welcome";
+
+export function App() {
+  onMount(() => {
+    // Files dropped from Explorer/Finder onto a terminal paste their (quoted) paths.
+    void getCurrentWebview().onDragDropEvent((event) => {
+      if (event.payload.type !== "drop") return;
+      const { x, y } = event.payload.position;
+      const ratio = window.devicePixelRatio || 1;
+      const el = document.elementFromPoint(x / ratio, y / ratio)?.closest<HTMLElement>("[data-session]");
+      const view = el && peekView(el.dataset.session!);
+      if (!view) return;
+      const quote = (p: string) => (/[\s'"&()]/.test(p) ? `"${p}"` : p);
+      view.paste(event.payload.paths.map(quote).join(" ") + " ");
+      view.focus();
+    });
+  });
+
+  return (
+    <div class="app" style={{ "--sidebar-w": `${store.state.settings.sidebarWidth}px`, "--right-w": `${store.state.settings.rightPanelWidth}px` }}>
+      <Sidebar />
+      <div class="main">
+        <div class="workarea">
+          <div class="center">
+            <Show when={store.activeProject()} fallback={<Welcome />} keyed>
+              {(project) => <WorkspaceView project={project} />}
+            </Show>
+          </div>
+          <Show when={store.activeProject() && store.workspace(store.activeProject()!.id).rightPanel ? store.activeProject() : null} keyed>
+            {(project) => <RightPanel project={project} />}
+          </Show>
+        </div>
+        <StatusBar />
+      </div>
+      <Switch>
+        <Match when={store.overlay() === "dashboard"}><Dashboard /></Match>
+        <Match when={store.overlay() === "settings"}><SettingsView /></Match>
+        <Match when={store.overlay() === "newsession"}><NewSessionMenu /></Match>
+        <Match when={["palette", "quickopen", "jump"].includes(store.overlay() ?? "")}><Palette mode={store.overlay() as "palette" | "quickopen" | "jump"} /></Match>
+      </Switch>
+      <Show when={store.toast()}>
+        <div class="toast">{store.toast()}</div>
+      </Show>
+    </div>
+  );
+}
