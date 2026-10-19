@@ -16,6 +16,14 @@ export function createAcpAdapter(ctx: AdapterContext): Adapter {
   let lastKind: "assistant" | "thinking" | "user" | null = null;
   let lastId: string | null = null;
   const requests = new Map<string, unknown>();
+  /** Prompts typed before the session was ready; sent once it is. */
+  const queued: string[] = [];
+
+  function prompt(text: string) {
+    lastKind = null;
+    ctx.set("busy", true);
+    rpc(`erka-prompt-${++seq}-${Date.now()}`, "session/prompt", { sessionId, prompt: [{ type: "text", text }] });
+  }
 
   const rpc = (id: string, method: string, params: unknown) => ctx.write({ jsonrpc: "2.0", id, method, params });
   const notify = (method: string, params: unknown) => ctx.write({ jsonrpc: "2.0", method, params });
@@ -113,6 +121,7 @@ export function createAcpAdapter(ctx: AdapterContext): Adapter {
           sessionId = m.result?.sessionId ?? ctx.state.conversationId;
           if (sessionId) ctx.setConversation(sessionId);
           lastKind = null;
+          if (!ctx.replaying()) while (queued.length) prompt(queued.shift()!);
         } else if (m.result && "stopReason" in m.result) {
           ctx.set("busy", false);
           lastKind = null;
@@ -139,14 +148,13 @@ export function createAcpAdapter(ctx: AdapterContext): Adapter {
       }
     },
     send(text) {
+      ctx.upsert({ kind: "user", id: `local-${Date.now()}`, text });
       if (!sessionId) {
-        ctx.upsert({ kind: "system", id: `wait-${Date.now()}`, text: "Agent is still starting…", tone: "info" });
+        queued.push(text);
+        ctx.set("busy", true);
         return;
       }
-      lastKind = null;
-      ctx.upsert({ kind: "user", id: `local-${Date.now()}`, text });
-      ctx.set("busy", true);
-      rpc(`erka-prompt-${++seq}-${Date.now()}`, "session/prompt", { sessionId, prompt: [{ type: "text", text }] });
+      prompt(text);
     },
     interrupt() {
       if (sessionId) notify("session/cancel", { sessionId });

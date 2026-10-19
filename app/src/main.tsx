@@ -10,8 +10,8 @@ import { store } from "./lib/store";
 installKeymap();
 // Dev builds expose internals to the WebDriver end-to-end tests (scripts/e2e).
 if (import.meta.env.DEV) {
-  void Promise.all([import("./lib/terminal-host"), import("./lib/commands")]).then(([th, cmds]) => {
-    (window as any).__erka = { store, views: th.allViews, peekView: th.peekView, commands: cmds.commands };
+  void Promise.all([import("./lib/terminal-host"), import("./lib/commands"), import("./chat/mode-switch")]).then(([th, cmds, chat]) => {
+    (window as any).__erka = { store, views: th.allViews, peekView: th.peekView, commands: cmds.commands, chat };
   });
 }
 // Terminals measure glyphs once at open: wait for the bundled font before the first render.

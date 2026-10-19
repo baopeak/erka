@@ -2,7 +2,17 @@
 // Shapes follow `codex app-server generate-json-schema` (v2 protocol, codex-cli 0.158).
 import { type Adapter, type AdapterContext, textOf } from "./chat-model";
 
-export const codexArgs = () => ["codex", "app-server"];
+/** `codex app-server` accepts `-c key=value` overrides; translate the TUI's `--model X`. */
+export function codexArgs(profile: string[] = []): string[] {
+  const out = ["codex", "app-server"];
+  for (let i = 0; i < profile.length; i++) {
+    const a = profile[i];
+    if ((a === "--model" || a === "-m") && profile[i + 1]) out.push("-c", `model="${profile[++i]}"`);
+    else if (a.startsWith("--model=")) out.push("-c", `model="${a.slice(8)}"`);
+    else if ((a === "-c" || a === "--config") && profile[i + 1]) out.push("-c", profile[++i]);
+  }
+  return out;
+}
 
 const INIT_ID = "erka-init";
 const THREAD_ID = "erka-thread";
@@ -15,6 +25,13 @@ export function createCodexAdapter(ctx: AdapterContext): Adapter {
   let turnId: string | null = null;
   let seq = 0;
   const approvals = new Map<string, { id: unknown; method: string }>();
+  /** Prompts typed before the thread was ready; sent once it is. */
+  const queued: string[] = [];
+
+  function startTurn(text: string) {
+    ctx.set("busy", true);
+    request(`erka-turn-${++seq}-${Date.now()}`, "turn/start", { threadId, input: [{ type: "text", text, text_elements: [] }] });
+  }
 
   const request = (id: string, method: string, params: unknown) => ctx.write({ id, method, params });
 
@@ -126,6 +143,10 @@ export function createCodexAdapter(ctx: AdapterContext): Adapter {
           if (threadId) ctx.setConversation(threadId);
           ctx.set("model", m.result?.model ?? null);
           renderTurns(thread?.turns);
+          if (!ctx.replaying()) {
+            for (const it of ctx.state.items) if (it.id.startsWith("queued-")) ctx.patch(it.id, (i: any) => (i.text = ""));
+            while (queued.length) startTurn(queued.shift()!);
+          }
         }
         return;
       }
@@ -189,12 +210,13 @@ export function createCodexAdapter(ctx: AdapterContext): Adapter {
     },
     send(text) {
       if (!threadId) {
-        ctx.upsert({ kind: "system", id: `wait-${Date.now()}`, text: "Codex is still starting…", tone: "info" });
+        queued.push(text);
+        ctx.upsert({ kind: "user", id: `queued-${Date.now()}`, text, pending: true });
+        ctx.set("busy", true);
         return;
       }
       // No optimistic bubble: Codex echoes the prompt as a `userMessage` item right away.
-      ctx.set("busy", true);
-      request(`erka-turn-${++seq}-${Date.now()}`, "turn/start", { threadId, input: [{ type: "text", text, text_elements: [] }] });
+      startTurn(text);
     },
     interrupt() {
       if (threadId && turnId) request(`erka-int-${++seq}`, "turn/interrupt", { threadId, turnId });

@@ -33,7 +33,7 @@ async function waitExit(sessionId: string, ms: number): Promise<boolean> {
 function chatArgv(kind: SessionKind, resumeId: string | null): string[] {
   const profile = store.state.settings.profiles.find((p) => p.kind === kind)?.args ?? [];
   if (kind === "claude") return claudeArgs(resumeId, profile);
-  if (kind === "codex") return codexArgs();
+  if (kind === "codex") return codexArgs(profile);
   return ompAcpArgs();
 }
 
@@ -60,7 +60,7 @@ export function getController(s: SessionInfo): ChatController {
         if (m.timestamp && Date.parse(m.timestamp) >= createdAt) break;
         if (m.type === "user" || m.type === "assistant") applyClaudeMessage(ctx, m, live);
       }
-      if (ctx.state.items.length) ctx.upsert({ kind: "system", id: "history-mark", text: "— earlier conversation (from the terminal session) —", tone: "info" });
+      if (ctx.state.items.length) ctx.upsert({ kind: "system", id: "history-mark", text: "↑ from the terminal session · continued in chat view ↓", tone: "info" });
     };
   }
   controllers.set(s.id, c);

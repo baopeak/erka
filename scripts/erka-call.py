@@ -3,6 +3,7 @@
 
     python scripts/erka-call.py <method> [json-params]
     python scripts/erka-call.py watch <handle> <seconds>   # print status changes
+    python scripts/erka-call.py attach <handle>            # dump the session's replay/snapshot
 
 Honours ERKA_ENDPOINT like the daemon (Windows named pipe name / Unix socket path).
 """
@@ -82,6 +83,11 @@ def main():
                         print("%6.1fs %s unread=%s title=%r" % (secs - (end - time.time()), *cur), flush=True)
                         last = cur
             time.sleep(0.25)
+        return
+    if sys.argv[1] == "attach":
+        import base64
+        r = c.call("session.attach", {"handle": int(sys.argv[2]), "interactive": False})
+        sys.stdout.write(base64.b64decode(r["data"]).decode("utf8", "replace"))
         return
     params = json.loads(sys.argv[2]) if len(sys.argv) > 2 else {}
     print(json.dumps(c.call(sys.argv[1], params), indent=2, ensure_ascii=False))

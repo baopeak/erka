@@ -1,4 +1,4 @@
-import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
+import { For, Match, Show, Switch, createEffect, createMemo, createSignal, on, onCleanup, onMount } from "solid-js";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -75,11 +75,10 @@ function ChatBody(props: { sessionId: string; project: Project; focused: boolean
   const [showAll, setShowAll] = createSignal(false);
   let stick = true;
 
+  // Attach only when the handle or the daemon connection changes — not on every status tick.
+  const target = createMemo(() => (store.connected() ? session()?.handle ?? null : null));
   onMount(() => {
-    createEffect(() => {
-      const s = session();
-      if (s && store.connected()) void ctrl.attach(s.handle);
-    });
+    createEffect(on(target, (handle) => handle != null && void ctrl.attach(handle)));
     onCleanup(() => ctrl.detach());
   });
 
