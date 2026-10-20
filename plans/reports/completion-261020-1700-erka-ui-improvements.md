@@ -36,8 +36,23 @@ Each phase: implement → e2e with screenshots (scratchpad `shots/p<N>-*.png`) �
 - `docs/user-guide.md`: sidebar, search everything, past conversations, usage/memory, quick commands, worktrees + board + `.erka.yaml`, settings, shortcuts.
 - `docs/architecture.md`: state versioning/backups, `set_unread`, API level, app-side services, worktrees, history measurements.
 
-## Unresolved
+## Follow-up (2026-10-20 evening)
 
-- Release-build switch p95 not measured after these changes (dev-build numbers are noisy).
-- The daemon still answers OSC 10/11 colour queries with the dark palette while no view is attached, so agents started under the light theme may pick dark colours.
-- Usage meters impersonate the vendor CLIs' User-Agent (as Orca does); acceptable per the user's decision, but the endpoints are unofficial and may change.
+All previously open items resolved; every e2e suite green on the dev environment (smoke 15,
+restart 3, phase1 10, phase2 13, phase3 18, phase4 22, phase5 23, chat 8 incl. real Claude /
+Codex / OMP turns).
+
+- Project switch: long frames traced (Long Animation Frames API) to WebGL context re-creation
+  and to detaching live canvases. Hidden terminals now keep recent WebGL contexts and stay in the
+  document → p50 ≈ 25 ms, p95 35–105 ms (was p50 60, p95 270–370). Status bar no longer runs a
+  second full `git status` per switch.
+- Daemon answers terminal colour queries with the light palette in light mode (`daemon.set_theme`).
+- Usage requests identify as `erka/<version>` (verified: both endpoints answer); last good values
+  survive failed refreshes.
+- UI review from a 41-shot tour (`scripts/e2e/ui_tour.py`, dark / light / compact 120 % / 1100×700):
+  segmented controls padded, settings column centred, long values wrap, wide rows fixed, collapsed
+  sidebar footer stacked, tabs share width and keep the active one in view, panel toggles hide
+  in a narrow centre column, toggles use the UI font, "Claude · claude" → "Claude", search no
+  longer matches letters scattered across words, Switch-to-Project-N only for existing projects,
+  terminal find colours per theme, no dark flash when starting in light mode.
+- Release build smoke not run (deferred at the user's request until dev testing passed).

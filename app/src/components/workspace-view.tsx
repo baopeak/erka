@@ -1,4 +1,4 @@
-import { For, Show, createMemo } from "solid-js";
+import { For, Show, createEffect, createMemo, onCleanup, onMount } from "solid-js";
 import { store, sessionLabel } from "../lib/store";
 import { allPanes } from "../lib/layout";
 import { chordLabel } from "../lib/platform";
@@ -52,10 +52,23 @@ export function WorkspaceView(props: { project: Project }) {
     for (const pane of allPanes(tab.root)) await store.closePane(props.project.id, tab.id, pane.id);
   };
 
+  // The active tab stays in view when tabs overflow: on selection and when the bar resizes.
+  let tabsRef!: HTMLDivElement;
+  const showActive = () => tabsRef?.querySelector(".tab.active")?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  createEffect(() => {
+    active()?.id;
+    queueMicrotask(showActive);
+  });
+  onMount(() => {
+    const ro = new ResizeObserver(showActive);
+    ro.observe(tabsRef);
+    onCleanup(() => ro.disconnect());
+  });
+
   return (
     <>
-      <div class="tabbar">
-        <div class="tabs">
+      <div class={`tabbar${ws().rightPanel ? " panel-open" : ""}`}>
+        <div class="tabs" ref={tabsRef}>
           <For each={ws().tabs}>
             {(tab) => (
               <div
@@ -74,10 +87,10 @@ export function WorkspaceView(props: { project: Project }) {
           <button class="icon-btn" title={`New session…${hint("new.menu")}`} onClick={() => store.setOverlay("newsession")}><Icon name="plus" /></button>
           <button class="icon-btn" title={`Split right${hint("split.right")}`} onClick={() => void store.newSession(props.project.id, "shell", { where: "right" })}><Icon name="splitRight" /></button>
           <button class="icon-btn" title={`Split down${hint("split.down")}`} onClick={() => void store.newSession(props.project.id, "shell", { where: "down" })}><Icon name="splitDown" /></button>
-          <span style={{ width: "8px" }} />
-          <button class={`icon-btn${ws().rightPanel === "files" ? " active" : ""}`} title={`Explorer${hint("panel.files")}`} onClick={() => store.setRightPanel("files")}><Icon name="files" /></button>
-          <button class={`icon-btn${ws().rightPanel === "git" ? " active" : ""}`} title={`Source control${hint("panel.git")}`} onClick={() => store.setRightPanel("git")}><Icon name="git" /></button>
-          <button class={`icon-btn${ws().rightPanel === "search" ? " active" : ""}`} title={`Search${hint("panel.search")}`} onClick={() => store.setRightPanel("search")}><Icon name="search" /></button>
+          <span class="panel-toggle" style={{ width: "8px" }} />
+          <button class={`icon-btn panel-toggle${ws().rightPanel === "files" ? " active" : ""}`} title={`Explorer${hint("panel.files")}`} onClick={() => store.setRightPanel("files")}><Icon name="files" /></button>
+          <button class={`icon-btn panel-toggle${ws().rightPanel === "git" ? " active" : ""}`} title={`Source control${hint("panel.git")}`} onClick={() => store.setRightPanel("git")}><Icon name="git" /></button>
+          <button class={`icon-btn panel-toggle${ws().rightPanel === "search" ? " active" : ""}`} title={`Search${hint("panel.search")}`} onClick={() => store.setRightPanel("search")}><Icon name="search" /></button>
         </div>
       </div>
       <div class="tab-content">

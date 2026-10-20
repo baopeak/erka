@@ -91,7 +91,7 @@ try:
         run.shot("11-claude-chat")
         conv = pane_session()["agent_session_id"]
         switch("switchToTerminal")
-        d.wait("return !!document.querySelector('.term-host .xterm')", 60)
+        d.wait("return !!document.querySelector('.pane .term-host .xterm')", 60)
         s = pane_session()
         end = time.time() + 60
         text = ""
@@ -121,7 +121,7 @@ try:
         run.check(f"{kind} chat turn completes", True, json.dumps(items[-3:], ensure_ascii=False))
         run.shot(f"2{0 if kind == 'codex' else 1}-{kind}-chat")
         switch("switchToTerminal")
-        d.wait("return !!document.querySelector('.term-host .xterm')", 60)
+        d.wait("return !!document.querySelector('.pane .term-host .xterm')", 60)
         time.sleep(10)
         s = pane_session()
         text = daemon(d, "session.read", {"handle": s["handle"]})["text"]

@@ -428,6 +428,10 @@ impl Daemon {
                 "endpoint": erka_proto::endpoint().display(),
                 "sessions": self.sessions.read().len(),
             }),
+            "daemon.set_theme" => {
+                crate::vt::set_light_theme(params.get("theme").and_then(Value::as_str) == Some("light"));
+                json!({})
+            }
             "daemon.shutdown" => {
                 if params.get("kill_sessions").and_then(Value::as_bool).unwrap_or(false) {
                     for e in self.sessions.read().values() {

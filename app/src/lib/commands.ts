@@ -135,6 +135,7 @@ for (let i = 1; i <= 9; i++) {
       const p = store.topProjects()[i - 1];
       if (p) store.switchProject(p.id);
     },
+    when: () => store.topProjects().length >= i,
   });
 }
 

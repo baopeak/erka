@@ -666,6 +666,7 @@ export function sessionLabel(s: SessionInfo): string {
   if (s.name) return s.name;
   const title = s.title?.replace(/^[⠀-⣿✳✶✻✽·*◐◑◒◓⠂⠐]\s*/u, "").trim();
   const kind = { shell: "Terminal", claude: "Claude", codex: "Codex", omp: "OMP", custom: "Command" }[s.kind] ?? s.kind;
-  if (title && title.length < 48 && !/^[A-Z]:\\|\.exe$/i.test(title)) return s.kind === "shell" ? title : `${kind} · ${title}`;
+  const redundant = title && [s.kind, kind.toLowerCase()].includes(title.toLowerCase());
+  if (title && !redundant && title.length < 48 && !/^[A-Z]:\\|\.exe$/i.test(title)) return s.kind === "shell" ? title : `${kind} · ${title}`;
   return kind;
 }

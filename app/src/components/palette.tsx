@@ -46,16 +46,22 @@ export function fuzzy(query: string, text: string): { score: number; marks: numb
   let ti = 0;
   let score = 0;
   let prev = -2;
+  // Runs of matched letters that begin inside a word: one is fine (a typo, a suffix), more
+  // means the letters were merely found scattered across the text.
+  let midWordRuns = 0;
   for (const ch of q) {
     if (ch === " ") continue;
     const i = t.indexOf(ch, ti);
     if (i < 0) return null;
     marks.push(i);
+    const wordStart = i === 0 || " /-_.·›".includes(t[i - 1]);
+    if (i !== prev + 1 && !wordStart) midWordRuns++;
     score += i === prev + 1 ? 8 : 1;
-    if (i === 0 || " /-_.·".includes(t[i - 1])) score += 6;
+    if (wordStart) score += 6;
     prev = i;
     ti = i + 1;
   }
+  if (midWordRuns > 1) return null;
   return { score: score - t.length * 0.02, marks };
 }
 

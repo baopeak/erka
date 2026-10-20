@@ -38,7 +38,13 @@ export function TerminalPane(props: { sessionId: string; focused: boolean }) {
   const find = (forward: boolean) => {
     const q = query();
     if (!q) return;
-    const opts = { decorations: { matchOverviewRuler: "#f2c96d", activeMatchColorOverviewRuler: "#6cb6ff", matchBackground: "#5a4a1a", activeMatchBackground: "#1f4b7a" } };
+    // Match highlights must read on both terminal backgrounds.
+    const light = store.state.settings.theme === "light";
+    const opts = {
+      decorations: light
+        ? { matchOverviewRuler: "#b7791f", activeMatchColorOverviewRuler: "#2f6fde", matchBackground: "#fbe7a6", activeMatchBackground: "#b9d2fb" }
+        : { matchOverviewRuler: "#f2c96d", activeMatchColorOverviewRuler: "#6cb6ff", matchBackground: "#5a4a1a", activeMatchBackground: "#1f4b7a" },
+    };
     if (forward) view.search.findNext(q, opts);
     else view.search.findPrevious(q, opts);
   };

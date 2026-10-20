@@ -103,6 +103,8 @@ fn platform_info() -> Value {
         "data_dir": erka_proto::data_dir(),
         // The daemon feature level this app was built against.
         "api": erka_proto::API_LEVEL,
+        // Set by the end-to-end test runner: lets it drive a release build too.
+        "e2e": std::env::var_os("ERKA_E2E").is_some(),
     })
 }
 

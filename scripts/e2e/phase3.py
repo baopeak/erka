@@ -132,7 +132,7 @@ try:
     # ---------- quick commands ----------
     d.js("window.__erka.store.switchProject(arguments[0]);", probe_id)
     shell = d.js_async("const done = arguments[arguments.length-1]; window.__erka.store.newSession(arguments[0], 'shell').then(done);", probe_id)
-    d.wait("return !!document.querySelector('.term-host .xterm')", 20)
+    d.wait("return !!document.querySelector('.pane .term-host .xterm')", 20)
     time.sleep(1.5)
     d.js("""window.__erka.store.setSettings({ quickCommands: [
         { id: 'qc1', label: 'Echo marker', text: 'echo erka-qc-' + 'ok', action: 'terminal', enter: true, projectId: null },

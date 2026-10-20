@@ -30,7 +30,7 @@ try:
     pid = d.js("return window.__erka.store.state.activeProject")
     info = d.js_async("const done = arguments[arguments.length-1]; window.__erka.store.newSession(arguments[0], 'shell').then(done);", pid)
     h = info["handle"]
-    d.wait("return !!document.querySelector('.term-host .xterm')", 20)
+    d.wait("return !!document.querySelector('.pane .term-host .xterm')", 20)
     time.sleep(2)
 
     # Env scrub: the daemon was started from a VS Code terminal that sets ELECTRON_RUN_AS_NODE.
@@ -38,7 +38,7 @@ try:
     run.check("editor-host env vars do not leak into sessions", wait_text(h, "[EN=][VS=]"))
 
     # Intercept toast: app chord pressed inside the terminal.
-    d.click(".xterm")
+    d.click(".pane .xterm")
     time.sleep(0.5)
     d.keys("ctrl+shift+o")
     d.wait("return !!document.querySelector('.palette')", 5)
@@ -50,7 +50,7 @@ try:
     d.keys("escape")
 
     # Overlay guard: typing while the dashboard is open must not reach the terminal.
-    d.click(".xterm")
+    d.click(".pane .xterm")
     d.keys("ctrl+shift+m")
     d.wait("return !!document.querySelector('.dashboard')", 5)
     d.keys("zzqq")
@@ -76,7 +76,7 @@ try:
 
     # Pane tools: split from the hover toolbar, then maximize and restore.
     d.js("document.querySelector('.pane-tools button[title=\"Split right\"]').click()")
-    d.wait("return document.querySelectorAll('.term-host .xterm').length === 2", 20)
+    d.wait("return document.querySelectorAll('.pane .term-host .xterm').length === 2", 20)
     run.check("pane toolbar splits", True)
     d.js("document.querySelector('.pane-header button[title=\"Maximize pane\"]').click()")
     time.sleep(0.6)

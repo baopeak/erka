@@ -106,7 +106,9 @@ export async function languageFor(path: string): Promise<Extension | null> {
   if (!desc) return null;
   try {
     return await desc.load();
-  } catch {
+  } catch (e) {
+    // Plain text still works; say why highlighting is missing.
+    console.warn(`syntax highlighting for ${name} unavailable:`, e);
     return null;
   }
 }

@@ -2,8 +2,10 @@
 //
 // Policy (performance is the point of the whole app):
 // - A view exists only for terminals the user has looked at. Visible views get a WebGL
-//   renderer; hidden ("parked") views drop WebGL (browsers cap live contexts ~16) and
-//   unsubscribe from the daemon, but keep their buffer so re-showing is a tiny delta replay.
+//   renderer. Hidden ("parked") views unsubscribe from the daemon but keep their buffer, so
+//   re-showing is a tiny delta replay; the most recently hidden ones also keep their WebGL
+//   context (rebuilding one costs 100–400 ms per switch), older ones drop it because
+//   browsers cap live contexts at ~16.
 // - At most MAX_PARKED parked views are kept; older ones are disposed and rebuilt from the
 //   daemon's snapshot when shown again.
 // - The daemon owns the truth. Background sessions cost the UI nothing.
@@ -21,6 +23,8 @@ import { terminalThemeFor } from "./theme";
 import type { Settings } from "./types";
 
 const MAX_PARKED = 16;
+/** Hidden views that keep their WebGL context (visible ones always have one). */
+const MAX_HIDDEN_WEBGL = 6;
 
 /** Device reports xterm emits on its own (DA, DSR/CPR, OSC colour replies, focus events). */
 export function isTerminalReply(data: string): boolean {
@@ -165,11 +169,22 @@ export class TermView {
     this.fitNow();
   }
 
+  /** Leaves the pane. The element moves to a hidden holder instead of leaving the document:
+   *  detaching a live WebGL canvas costs Chromium 100–200 ms of synchronous work. The WebGL
+   *  context stays until `releaseWebgl` (see MAX_HIDDEN_WEBGL). */
   unmount() {
     this.resizeObs?.disconnect();
     this.resizeObs = null;
-    this.disableWebgl();
-    this.el.remove();
+    parkingLot().appendChild(this.el);
+  }
+
+  /** In a pane on screen (not in the parking lot). */
+  get visible() {
+    return this.el.isConnected && this.el.parentElement !== lot;
+  }
+
+  get hasWebgl() {
+    return this.webgl !== null;
   }
 
   private enableWebgl() {
@@ -187,13 +202,13 @@ export class TermView {
     }
   }
 
-  private disableWebgl() {
+  releaseWebgl() {
     this.webgl?.dispose();
     this.webgl = null;
   }
 
   fitNow() {
-    if (!this.el.isConnected) return;
+    if (!this.visible) return;
     const dims = this.fit.proposeDimensions();
     if (!dims || !Number.isFinite(dims.cols) || !Number.isFinite(dims.rows) || dims.cols < 2 || dims.rows < 1) return;
     if (dims.cols !== this.term.cols || dims.rows !== this.term.rows) this.term.resize(dims.cols, dims.rows);
@@ -288,8 +303,23 @@ export class TermView {
       scrollback: s.scrollback,
       theme: terminalThemeFor(s.theme),
     });
+    // Renderer switch applies now (hidden views keep their context, so no remount does it).
+    if (!s.webgl) this.releaseWebgl();
+    else if (this.visible) this.enableWebgl();
     this.fitNow();
   }
+}
+
+/** Hidden holder for parked terminal elements (kept in the document, never rendered). */
+let lot: HTMLDivElement | null = null;
+function parkingLot(): HTMLDivElement {
+  if (!lot || !lot.isConnected) {
+    lot = document.createElement("div");
+    lot.className = "term-parking";
+    lot.style.display = "none";
+    document.body.appendChild(lot);
+  }
+  return lot;
 }
 
 const views = new Map<string, TermView>();
@@ -317,6 +347,9 @@ export function parkView(sessionId: string) {
   void v.detach();
   if (!parked.includes(sessionId)) parked.push(sessionId);
   while (parked.length > MAX_PARKED) disposeView(parked.shift()!);
+  // Oldest hidden views give their WebGL context back first.
+  const withGl = parked.filter((id) => views.get(id)?.hasWebgl);
+  for (const id of withGl.slice(0, Math.max(0, withGl.length - MAX_HIDDEN_WEBGL))) views.get(id)?.releaseWebgl();
 }
 
 export function disposeView(sessionId: string) {

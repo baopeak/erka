@@ -4,6 +4,7 @@
 //! a raw replay (cheap, exact) or an ANSI snapshot produced by [`Vt::snapshot`].
 
 use std::fmt::Write as _;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use alacritty_terminal::event::{Event, EventListener};
@@ -45,20 +46,58 @@ impl EventListener for Collector {
     }
 }
 
-/// Matches the default dark theme in `app/src/lib/theme.ts`.
-fn default_color(index: usize) -> Rgb {
-    const ANSI: [(u8, u8, u8); 16] = [
+/// The app's theme (Settings → Appearance), set over RPC. Agents probe the background colour
+/// at start to pick their own theme, so answers must match what the views render.
+static LIGHT_THEME: AtomicBool = AtomicBool::new(false);
+
+pub fn set_light_theme(light: bool) {
+    LIGHT_THEME.store(light, Ordering::Relaxed);
+}
+
+type Rgb3 = (u8, u8, u8);
+
+/// ANSI 0–15, then foreground, background, cursor.
+struct Palette {
+    ansi: [Rgb3; 16],
+    fg: Rgb3,
+    bg: Rgb3,
+    cursor: Rgb3,
+}
+
+/// Matches `terminalTheme` in `app/src/lib/theme.ts`.
+const DARK: Palette = Palette {
+    ansi: [
         (0x1d, 0x20, 0x2a), (0xff, 0x6b, 0x7a), (0x8b, 0xd5, 0x8b), (0xf2, 0xc9, 0x6d),
         (0x6c, 0xb6, 0xff), (0xc5, 0x92, 0xff), (0x5f, 0xd7, 0xd7), (0xc9, 0xd1, 0xd9),
         (0x5c, 0x63, 0x70), (0xff, 0x8f, 0x9c), (0xa8, 0xe6, 0xa1), (0xff, 0xdd, 0x8a),
         (0x8f, 0xc8, 0xff), (0xd7, 0xb0, 0xff), (0x87, 0xe8, 0xe8), (0xf4, 0xf6, 0xfa),
-    ];
+    ],
+    fg: (0xd7, 0xdc, 0xe6),
+    bg: (0x0e, 0x11, 0x17),
+    cursor: (0x6c, 0xb6, 0xff),
+};
+
+/// Matches `terminalThemeLight` in `app/src/lib/theme.ts`.
+const LIGHT: Palette = Palette {
+    ansi: [
+        (0x1d, 0x23, 0x30), (0xc4, 0x30, 0x3f), (0x2b, 0x8a, 0x4b), (0x9a, 0x6a, 0x00),
+        (0x2f, 0x6f, 0xde), (0x8a, 0x4f, 0xd8), (0x0f, 0x7f, 0x8a), (0xc8, 0xcd, 0xd6),
+        (0x6b, 0x73, 0x83), (0xd6, 0x45, 0x53), (0x2f, 0x9e, 0x57), (0xb7, 0x79, 0x1f),
+        (0x4a, 0x86, 0xe8), (0x9b, 0x67, 0xe0), (0x15, 0x97, 0xa3), (0xee, 0xf0, 0xf4),
+    ],
+    fg: (0x1d, 0x23, 0x30),
+    bg: (0xff, 0xff, 0xff),
+    cursor: (0x2f, 0x6f, 0xde),
+};
+
+fn default_color(index: usize) -> Rgb {
+    let p = if LIGHT_THEME.load(Ordering::Relaxed) { &LIGHT } else { &DARK };
     let (r, g, b) = match index {
-        i if i < 16 => ANSI[i],
+        i if i < 16 => p.ansi[i],
         // NamedColor::Foreground / Background / Cursor
-        256 => (0xd7, 0xdc, 0xe6),
-        257 => (0x0e, 0x11, 0x17),
-        258 => (0x6c, 0xb6, 0xff),
+        256 => p.fg,
+        257 => p.bg,
+        258 => p.cursor,
         i if i < 232 => {
             let i = i - 16;
             let level = |v: usize| if v == 0 { 0 } else { (v * 40 + 55) as u8 };
@@ -68,7 +107,7 @@ fn default_color(index: usize) -> Rgb {
             let v = (8 + (i - 232) * 10) as u8;
             (v, v, v)
         }
-        _ => (0xd7, 0xdc, 0xe6),
+        _ => p.fg,
     };
     Rgb { r, g, b }
 }

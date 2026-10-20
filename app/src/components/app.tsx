@@ -2,6 +2,7 @@ import { Match, Show, Switch, createEffect, onMount } from "solid-js";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { store } from "../lib/store";
 import { peekView } from "../lib/terminal-host";
+import { daemon } from "../lib/ipc";
 import { Sidebar } from "./sidebar";
 import { WorkspaceView } from "./workspace-view";
 import { RightPanel } from "./right-panel";
@@ -17,13 +18,25 @@ import { NewSessionMenu } from "./new-session-menu";
 import { Welcome } from "./welcome";
 import { ContextMenuHost } from "./context-menu";
 
+/** Tells the daemon which palette to answer terminal colour queries with. */
+function syncDaemonTheme() {
+  if (store.connected()) void daemon("daemon.set_theme", { theme: store.state.settings.theme ?? "dark" }).catch(() => {});
+}
+
 export function App() {
+  createEffect(syncDaemonTheme);
   // Theme, density and interface scale are plain CSS switches on the root element.
   createEffect(() => {
     const s = store.state.settings;
     const root = document.documentElement;
     root.dataset.theme = s.theme ?? "dark";
     setEditorTheme(s.theme !== "light");
+    // Remembered outside the state file so the next launch paints the right theme at once.
+    try {
+      localStorage.setItem("erka-theme", s.theme ?? "dark");
+    } catch {
+      /* storage unavailable: the theme still applies once the state is loaded */
+    }
     root.dataset.density = s.density ?? "comfortable";
     root.style.setProperty("--ui-scale", String(s.uiScale ?? 1));
   });

@@ -33,17 +33,55 @@ function resetText(at: number | null): string {
 /** One toast per window and reset period when a limit is reached. */
 const warned = new Set<string>();
 
-function Provider(props: { kind: "claude" | "codex"; name: string; usage: ProviderUsage }) {
-  const title = () =>
-    props.usage.error
-      ? `${props.name} usage: ${props.usage.error}`
-      : `${props.name} usage\n` + props.usage.windows.map((w) => `${w.label}: ${Math.round(w.used_percent)}% ${resetText(w.resets_at)}`).join("\n");
+/** What a meter shows: the latest windows, or the last good ones when a refresh failed. */
+type Shown = ProviderUsage & { stale?: string; at?: number };
+type ProviderId = "claude" | "codex";
+
+/** Last successful windows per provider, kept across launches: a failed refresh (rate limit,
+ *  network) keeps showing them, marked stale, instead of a bare "!". */
+const CACHE_KEY = "erka-usage";
+const CACHE_MAX_AGE = 12 * 3600_000;
+type Cache = Partial<Record<ProviderId, { windows: UsageWindow[]; at: number }>>;
+
+function loadCache(): Cache {
+  try {
+    return JSON.parse(localStorage.getItem(CACHE_KEY) ?? "{}");
+  } catch {
+    return {};
+  }
+}
+
+function saveCache(c: Cache) {
+  try {
+    localStorage.setItem(CACHE_KEY, JSON.stringify(c));
+  } catch {
+    /* storage unavailable: only this session remembers */
+  }
+}
+
+function shown(fresh: ProviderUsage | null, cached: Cache[ProviderId]): Shown | null {
+  if (fresh?.windows.length) return fresh;
+  const usable = cached && Date.now() - cached.at < CACHE_MAX_AGE;
+  if (usable && (!fresh || (fresh.error && !fresh.error.startsWith("not signed in")))) {
+    return { windows: cached.windows, error: null, stale: fresh?.error ?? "not refreshed yet", at: cached.at };
+  }
+  return fresh;
+}
+
+function Provider(props: { kind: ProviderId; name: string; usage: Shown | null }) {
+  const u = (): Shown => props.usage ?? { windows: [], error: null };
+  const title = () => {
+    if (u().error) return `${props.name} usage: ${u().error}`;
+    const lines = u().windows.map((w) => `${w.label}: ${Math.round(w.used_percent)}% ${resetText(w.resets_at)}`);
+    const stale = u().stale ? `\nLast refresh failed (${u().stale}); showing data from ${new Date(u().at!).toLocaleTimeString()}.` : "";
+    return `${props.name} usage\n${lines.join("\n")}${stale}`;
+  };
   return (
-    <Show when={props.usage.windows.length || (props.usage.error && !props.usage.error.startsWith("not signed in"))}>
-      <span class="item meter" title={title()} data-provider={props.kind}>
+    <Show when={u().windows.length || (u().error && !u().error!.startsWith("not signed in"))}>
+      <span class={`item meter${u().stale ? " stale" : ""}`} title={title()} data-provider={props.kind}>
         <KindGlyph kind={props.kind} size={12} />
-        <Show when={!props.usage.error} fallback={<span class="meter-err">!</span>}>
-          <For each={props.usage.windows}>
+        <Show when={!u().error} fallback={<span class="meter-err">!</span>}>
+          <For each={u().windows}>
             {(w: UsageWindow) => (
               <span class={`meter-win${level(w.used_percent)}`}>
                 <span class="meter-label">{w.label}</span>
@@ -59,7 +97,9 @@ function Provider(props: { kind: "claude" | "codex"; name: string; usage: Provid
 }
 
 export function UsageMeters() {
+  const cache = loadCache();
   const [report, setReport] = createSignal<UsageReport | null>(null);
+  const view = (p: ProviderId) => shown(report()?.[p] ?? null, cache[p]);
   let last = 0;
   const refresh = () => {
     if (Date.now() - last < USAGE_MIN_GAP) return;
@@ -69,6 +109,8 @@ export function UsageMeters() {
   const fetchUsage = () =>
     void usageFetch()
       .then((r) => {
+        for (const p of ["claude", "codex"] as const) if (r[p].windows.length) cache[p] = { windows: r[p].windows, at: Date.now() };
+        saveCache(cache);
         setReport(r);
         for (const [name, u] of [["Claude", r.claude], ["Codex", r.codex]] as const) {
           for (const w of u.windows) {
@@ -83,10 +125,10 @@ export function UsageMeters() {
       .catch(() => {});
   poll(refresh, USAGE_EVERY);
   return (
-    <Show when={report()}>
+    <Show when={view("claude") || view("codex")}>
       <span class="meters clickable" onClick={refresh} title="Click to refresh">
-        <Provider kind="claude" name="Claude" usage={report()!.claude} />
-        <Provider kind="codex" name="Codex" usage={report()!.codex} />
+        <Provider kind="claude" name="Claude" usage={view("claude")} />
+        <Provider kind="codex" name="Codex" usage={view("codex")} />
       </span>
     </Show>
   );

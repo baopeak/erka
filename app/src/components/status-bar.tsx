@@ -1,6 +1,5 @@
-import { Show, createMemo, createResource, createSignal, onCleanup } from "solid-js";
+import { Show, createMemo } from "solid-js";
 import { store } from "../lib/store";
-import { gitStatus, onEvent } from "../lib/ipc";
 import { Icon } from "./icons";
 import { MemoryMeter, UsageMeters } from "./usage-meter";
 
@@ -15,13 +14,13 @@ export function StatusBar() {
     }
     return { alive, working, waiting };
   });
-  const [gitTick, setGitTick] = createSignal(0);
-  const unlisten = onEvent<{ root: string; git: boolean }>("fs-changed", (e) => e.git && e.root === store.activeProject()?.path && setGitTick((t) => t + 1));
-  onCleanup(() => void unlisten.then((f) => f()));
-  const [branch] = createResource(
-    () => (store.activeProject() ? { path: store.activeProject()!.path, t: gitTick() } : null),
-    (k) => gitStatus(k.path).then((s) => (s.is_repo ? s.branch ?? "detached" : null)).catch(() => null),
-  );
+  // The sidebar's branch summary (debounced `git status -uno`) — never a second full status:
+  // on a large repository each full status takes seconds.
+  const branch = () => {
+    const p = store.activeProject();
+    const info = p && store.projectInfo[p.id];
+    return info?.is_repo ? info.branch ?? "detached" : null;
+  };
 
   return (
     <div class="statusbar">

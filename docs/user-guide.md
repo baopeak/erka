@@ -57,7 +57,9 @@ The status bar shows Claude and Codex plan usage (5 h and weekly windows, amber 
 and a notice at 100 %) and Erka's memory (app + WebView, daemon, sessions). Usage is read with
 the agents' own sign-in (`~/.claude/.credentials.json` or the macOS keychain, and
 `~/.codex/auth.json`); tokens stay in Erka's Rust core and are sent only to the vendor's usage
-endpoint. Both meters can be turned off in Settings → Usage & Resources.
+endpoint, identifying as Erka. When a refresh fails (e.g. the endpoint's rate limit) the last
+values stay shown, dimmed, with the reason in the tooltip. Both meters can be turned off in
+Settings → Usage & Resources.
 
 ### Quick commands
 

@@ -44,7 +44,7 @@ def daemon(d, method, params=None):
 BUFFER_JS = r"""
 const out = [];
 for (const v of window.__erka.views()) {
-  if (!v.el.isConnected) continue;
+  if (!v.visible) continue;
   const b = v.term.buffer.active;
   for (let i = 0; i < b.length; i++) out.push(b.getLine(i)?.translateToString(true) ?? '');
 }
@@ -77,12 +77,22 @@ try:
         d.js("window.__erka.store.switchProject(arguments[0]);", pid)
         info = d.js_async("const done = arguments[arguments.length-1]; window.__erka.store.newSession(arguments[0], 'shell').then(i => done(i));", pid)
         handles[pid] = info["handle"]
-    d.wait("return document.querySelectorAll('.xterm-screen').length > 0", 20)
+    d.wait("return document.querySelectorAll('.pane .xterm-screen').length > 0", 20)
     check("terminal rendered", True)
+
+    # Shells must be ready before typing and before timing switches: a cold PowerShell start
+    # takes 5-20 s on a busy machine and its CPU use would skew both.
+    def prompt_ready(h):
+        text = screen_text(d, h)
+        return any(m in text for m in ("PS ", "$ ", "% ", "> "))
+    end = time.time() + 60
+    while time.time() < end and not all(prompt_ready(h) for h in handles.values()):
+        time.sleep(0.3)
+    check("shells printed their prompt", all(prompt_ready(h) for h in handles.values()))
 
     # Type into the active terminal through real keyboard events.
     active = ids[-1]
-    d.click(".xterm")
+    d.click(".pane .xterm")
     time.sleep(1.5)
     d.keys("echo erka-e2e-ok", "enter")
     ok = False
@@ -93,12 +103,24 @@ try:
             break
         time.sleep(0.25)
     check("keyboard input reaches PTY and output renders", ok)
-    check("xterm buffer shows command output", "erka-e2e-ok" in [l.strip() for l in d.js(BUFFER_JS).splitlines()])
+    if not ok:  # what the views looked like, for diagnosis
+        print("views:", d.js("return window.__erka.views().map(v => [v.sessionId.slice(0, 6), v.visible, v.handle, v.hasWebgl, v.el.parentElement?.className])"))
+        info = [x for x in daemon(d, "session.list") if x["handle"] == handles[active]]
+        print("session:", [(x["alive"], x["status"], x["pid"]) for x in info], repr(screen_text(d, handles[active])[-300:]))
+        print("active element:", d.js("return document.activeElement?.className + ' in ' + (document.activeElement?.closest('[data-session]')?.dataset.session || '-').slice(0, 6)"))
+    # The view gets output a few ms after the daemon (batched IPC); allow it to arrive.
+    in_view = False
+    for _ in range(25):
+        if "erka-e2e-ok" in [l.strip() for l in d.js(BUFFER_JS).splitlines()]:
+            in_view = True
+            break
+        time.sleep(0.2)
+    check("xterm buffer shows command output", in_view)
     d.screenshot(os.path.join(shots, "01-terminal.png"))
 
     # Split right with the keyboard shortcut.
     d.keys("ctrl+shift+d")
-    d.wait("return document.querySelectorAll('.xterm-screen').length >= 2", 20)
+    d.wait("return document.querySelectorAll('.pane .xterm-screen').length >= 2", 20)
     check("split right creates second terminal", True)
     time.sleep(1)
     d.screenshot(os.path.join(shots, "02-split.png"))
@@ -108,11 +130,14 @@ try:
     for i in range(30):
         pid = ids[i % 3]
         d.js("window.__erka.store.switchProject(arguments[0]);", pid)
-        t = d.wait("return window.__erka.store.state.activeProject === arguments[0] && document.querySelector('.term-host .xterm') ? window.__erka.store.lastSwitchMs() : null", 10, 0.05, pid)
+        t = d.wait("return window.__erka.store.state.activeProject === arguments[0] && document.querySelector('.pane .term-host .xterm') ? window.__erka.store.lastSwitchMs() : null", 10, 0.05, pid)
         times.append(t)
+    order = list(times)  # in switch order, to tell first visits from steady state
     times.sort()
     p50, p95 = times[len(times) // 2], times[int(len(times) * 0.95) - 1]
     check("project switch p95 < 200 ms", p95 < 200, f"p50={p50}ms p95={p95}ms")
+    if p95 >= 200:
+        print("switch times in order:", order)
     alive = [s for s in daemon(d, "session.list") if s["handle"] in handles.values() and s["alive"]]
     check("all sessions still alive after 30 switches", len(alive) == len(handles), f"{len(alive)}/{len(handles)}")
 

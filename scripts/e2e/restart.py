@@ -13,7 +13,7 @@ shots, project = sys.argv[1], sys.argv[2]
 BUFFER_JS = r"""
 const out = [];
 for (const v of window.__erka.views()) {
-  if (!v.el.isConnected) continue;
+  if (!v.visible) continue;
   const b = v.term.buffer.active;
   for (let i = 0; i < b.length; i++) out.push(b.getLine(i)?.translateToString(true) ?? '');
 }
@@ -29,7 +29,7 @@ try:
     pid = d.js("return window.__erka.store.state.activeProject")
     info = d.js_async("const done = arguments[arguments.length-1]; window.__erka.store.newSession(arguments[0], 'shell').then(done);", pid)
     handle, sid = info["handle"], info["id"]
-    d.wait("return !!document.querySelector('.term-host .xterm')", 20)
+    d.wait("return !!document.querySelector('.pane .term-host .xterm')", 20)
     time.sleep(2)
     daemon(d, "session.input", {"handle": handle, "data": f"echo {marker}\r"})
     d.wait(f"return (function(){{{BUFFER_JS}}})().split('echo {marker}').pop().includes('{marker}')", 20)
@@ -45,7 +45,7 @@ try:
     d = run2.d
     s = next((x for x in daemon(d, "session.list") if x["id"] == sid), None)
     run2.check("session survived app exit", s is not None and s["alive"])
-    d.wait("return !!document.querySelector('.term-host .xterm')", 30)
+    d.wait("return !!document.querySelector('.pane .term-host .xterm')", 30)
     ok = False
     for _ in range(40):
         if marker in d.js(BUFFER_JS).split(f"echo {marker}")[-1]:

@@ -49,7 +49,7 @@ Frames (`crates/erka-proto`): `u32 LE length | u8 kind | payload`
 | 2 Output | daemon → app | `u32 handle \| u64 seq \| bytes` (`seq` = stream offset after the bytes) |
 | 3 Input | app → daemon | `u32 handle \| bytes` |
 
-RPC methods: `daemon.info|shutdown`, `session.list|create|attach|detach|input|resize|focus|kill|close|restart|update|read|set_unread`, `chat.close_stdin`, `hook.report`.
+RPC methods: `daemon.info|set_theme|shutdown`, `session.list|create|attach|detach|input|resize|focus|kill|close|restart|update|read|set_unread`, `chat.close_stdin`, `hook.report`.
 `daemon.info` reports an `api` feature level (`erka_proto::API_LEVEL`); an app built for a
 higher level offers to restart an older daemon still running from a previous version.
 Events: `session.updated` (coalesced, 250 ms), `session.closed`, `session.resync`, `session.clipboard`.
@@ -68,7 +68,8 @@ Each subscriber has a 4 MiB unsent-byte budget. A slow view is marked stalled an
 `resync`; the PTY keeps draining and the other sessions are unaffected.
 
 Terminal queries (DA, DSR, OSC 10/11 colours) are answered by the daemon only while no
-interactive view is attached; an attached xterm answers itself.
+interactive view is attached; an attached xterm answers itself. The daemon answers colour
+queries with the palette of the app's current theme (`daemon.set_theme`).
 
 Windows: each session runs in its own Job Object (kill-on-close, owned by the daemon) so a
 kill reaches the whole process tree; a modern `conpty.dll`/`OpenConsole.exe` is sideloaded
@@ -91,10 +92,12 @@ writing them.
 
 ## UI rendering policy
 
-- Only the active project's active tab is mounted. Hidden terminals are *parked*: WebGL
-  renderer disposed (browsers cap live WebGL contexts), daemon subscription dropped, xterm
-  buffer kept. Re-showing is a delta replay of what was missed. At most 16 parked views are
-  kept; older ones are rebuilt from a snapshot.
+- Only the active project's active tab is mounted. Hidden terminals are *parked*: daemon
+  subscription dropped, xterm buffer kept, element moved to a hidden holder that stays in the
+  document (detaching a live WebGL canvas costs Chromium 100–200 ms). The 6 most recently
+  hidden views keep their WebGL context (creating one costs 100–400 ms); older ones drop it,
+  since browsers cap live contexts at ~16. Re-showing is a delta replay of what was missed. At
+  most 16 parked views are kept; older ones are rebuilt from a snapshot.
 - Output reaches the webview through one binary `Channel` per visible terminal, coalesced
   every 4 ms (`daemon_client.rs`).
 - Solid's fine-grained stores mean a status change on one session re-renders only its dot.
@@ -153,6 +156,6 @@ repository by the file's hash.
 
 - 20 sessions × 2 MiB output: 40 MiB in 3.9 s through the daemon, 0 sequence gaps.
 - Attach (snapshot) p50/p95: 4.4 / 5.8 ms.
-- Project switch (3 projects, rendered): p50 ≈ 55 ms, p95 ≈ 76 ms.
+- Project switch (3 projects with terminals, dev build): p50 ≈ 25 ms, p95 35–105 ms.
 - Session history, 421 transcripts / 1.2 GB (release build): first scan 0.5 s, later launches
   (disk cache) 34 ms; the first full prompt count runs in the background (~15–30 s).
