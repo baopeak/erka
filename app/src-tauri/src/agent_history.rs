@@ -133,7 +133,11 @@ pub struct HistoryItem {
     agent: String,
     /// Id the agent resumes by.
     id: String,
+    /// Folder the conversation ran in, as the agent recorded it (resume must use exactly this:
+    /// agents look transcripts up by it).
     cwd: String,
+    /// `cwd` in canonical form for matching sidebar projects (long names, no `\\?\` prefix).
+    folder: String,
     title: Option<String>,
     first_prompt: Option<String>,
     /// Last write to the transcript, ms since the epoch.
@@ -156,7 +160,7 @@ const HEAD_BYTES: u64 = 512 * 1024;
 /// Claude appends a new AI title as the conversation moves on: the newest is near the end.
 const TAIL_BYTES: u64 = 256 * 1024;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 struct Meta {
     mtime_ms: u64,
     len: u64,
@@ -173,11 +177,11 @@ struct TurnCount {
 }
 
 /// Bump when parsing changes, so stale entries from older builds are re-read.
-const CACHE_VERSION: u32 = 1;
+const CACHE_VERSION: u32 = 2;
 
 /// Head-parsed transcripts and prompt counts by path, kept on disk: after the first launch a
 /// scan only stats files and re-reads the ones that changed.
-#[derive(Serialize, Deserialize, Default)]
+#[derive(Serialize, Deserialize, Default, Clone)]
 struct Cache {
     version: u32,
     meta: HashMap<PathBuf, Meta>,
@@ -186,6 +190,10 @@ struct Cache {
 
 static CACHE: LazyLock<Mutex<Cache>> = LazyLock::new(|| Mutex::new(load_cache()));
 static COUNTING: AtomicBool = AtomicBool::new(false);
+/// Scans run one at a time (fast project switching must not stack all-core scans).
+static SCANNING: Mutex<()> = Mutex::new(());
+/// Writers of the cache file share one temp path.
+static SAVING: Mutex<()> = Mutex::new(());
 
 fn cache_file() -> PathBuf {
     erka_proto::data_dir().join("history-cache.json")
@@ -200,7 +208,10 @@ fn load_cache() -> Cache {
 }
 
 fn save_cache() {
-    let Ok(json) = serde_json::to_vec(&*CACHE.lock()) else { return };
+    let _saving = SAVING.lock();
+    // Serialize a copy: scans and counting workers must not wait on the encoder.
+    let snapshot = CACHE.lock().clone();
+    let Ok(json) = serde_json::to_vec(&snapshot) else { return };
     let path = cache_file();
     let tmp = path.with_extension("json.tmp");
     if std::fs::write(&tmp, json).is_ok() {
@@ -310,9 +321,33 @@ impl Iterator for Lines {
     }
 }
 
-/// Slash commands and their output are recorded as tagged user lines, not prompts.
+/// User lines Claude records that the user did not type as a prompt: slash commands and their
+/// output, interruption markers.
 fn is_claude_command(text: &str) -> bool {
-    text.starts_with("<command-") || text.starts_with("<local-command") || text.starts_with("Caveat:")
+    text.starts_with("<command-") || text.starts_with("<local-command") || text.starts_with("Caveat:") || text.starts_with("[Request interrupted")
+}
+
+/// Ids are passed to the agent's `--resume`; anything else (a leading `-`, spaces, quotes) is
+/// not a real conversation id.
+fn valid_id(id: &str) -> bool {
+    static ID: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"^[A-Za-z0-9][A-Za-z0-9._:-]*$").unwrap());
+    ID.is_match(id)
+}
+
+/// Folder for matching sidebar projects: on Windows, long names instead of 8.3 short names
+/// (`BAOPEA~1`) and no `\\?\` prefix. A folder that no longer exists keeps its recorded form.
+fn canonical_folder(cwd: &str) -> String {
+    #[cfg(windows)]
+    if !cwd.is_empty() {
+        if let Ok(p) = std::fs::canonicalize(cwd) {
+            let s = p.to_string_lossy();
+            if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+                return format!(r"\\{rest}");
+            }
+            return s.strip_prefix(r"\\?\").unwrap_or(&s).to_string();
+        }
+    }
+    cwd.to_string()
 }
 
 /// Whether a transcript line is one user prompt (Claude / OMP) or turn (Codex).
@@ -321,7 +356,13 @@ fn is_turn(agent: Agent, line: &str) -> bool {
         Agent::Codex => line.contains("\"type\":\"task_started\""),
         Agent::Claude => {
             // Tool results are user lines too, and often huge: reject them before parsing.
-            if !line.contains("\"type\":\"user\"") || line.contains("\"tool_result\"") || line.contains("\"isMeta\":true") {
+            // Compaction summaries and sub-agent (sidechain) lines are not the user's prompts.
+            if !line.contains("\"type\":\"user\"")
+                || line.contains("\"tool_result\"")
+                || line.contains("\"isMeta\":true")
+                || line.contains("\"isCompactSummary\":true")
+                || line.contains("\"isSidechain\":true")
+            {
                 return false;
             }
             serde_json::from_str::<Value>(line).is_ok_and(|v| content_text(&v["message"]["content"]).is_some_and(|t| !is_claude_command(t)))
@@ -353,6 +394,9 @@ fn parse_claude(path: &Path, len: u64) -> Option<HistoryItem> {
             }
         }
     }
+    if cwd.is_empty() {
+        cwd = cwd_from_prefix(path).unwrap_or_default();
+    }
     if len > HEAD_BYTES {
         // The tail starts mid-line: skip that fragment.
         let start = len.saturating_sub(TAIL_BYTES).max(HEAD_BYTES);
@@ -361,7 +405,7 @@ fn parse_claude(path: &Path, len: u64) -> Option<HistoryItem> {
         }
     }
     let id = path.file_stem()?.to_string_lossy().into_owned();
-    (prompt.is_some() || title.is_some()).then_some(HistoryItem { agent: "claude".into(), id, cwd, title, first_prompt: prompt, updated_at: 0, turns: None })
+    (prompt.is_some() || title.is_some()).then_some(HistoryItem { agent: "claude".into(), id, cwd, folder: String::new(), title, first_prompt: prompt, updated_at: 0, turns: None })
 }
 
 /// First text block of a Codex user message that the user typed: Codex and IDEs inject
@@ -383,6 +427,17 @@ fn codex_prompt(content: &Value) -> Option<String> {
         let text = b["text"].as_str().filter(|_| b["type"] == "input_text" || b["type"] == "text")?;
         if INJECTED.iter().any(|p| text.starts_with(p)) { None } else { clean_text(text) }
     })
+}
+
+/// `cwd` from the raw start of a transcript whose first line is too long to read whole (e.g.
+/// a pasted image): it precedes the message in Claude's line layout.
+fn cwd_from_prefix(path: &Path) -> Option<String> {
+    static CWD: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r#""cwd":"((?:[^"\\]|\\.)*)""#).unwrap());
+    let mut buf = vec![0; 64 * 1024];
+    let n = std::fs::File::open(path).ok()?.read(&mut buf).ok()?;
+    let head = String::from_utf8_lossy(&buf[..n]);
+    let raw = CWD.captures(&head)?.get(1)?.as_str();
+    serde_json::from_str::<String>(&format!("\"{raw}\"")).ok()
 }
 
 fn parse_codex(path: &Path) -> Option<HistoryItem> {
@@ -408,7 +463,7 @@ fn parse_codex(path: &Path) -> Option<HistoryItem> {
             break;
         }
     }
-    (!id.is_empty()).then_some(HistoryItem { agent: "codex".into(), id, cwd, title: None, first_prompt: prompt, updated_at: 0, turns: None })
+    (!id.is_empty()).then_some(HistoryItem { agent: "codex".into(), id, cwd, folder: String::new(), title: None, first_prompt: prompt, updated_at: 0, turns: None })
 }
 
 fn parse_omp(path: &Path) -> Option<HistoryItem> {
@@ -430,7 +485,7 @@ fn parse_omp(path: &Path) -> Option<HistoryItem> {
             break;
         }
     }
-    (!id.is_empty()).then_some(HistoryItem { agent: "omp".into(), id, cwd, title, first_prompt: prompt, updated_at: 0, turns: None })
+    (!id.is_empty()).then_some(HistoryItem { agent: "omp".into(), id, cwd, folder: String::new(), title, first_prompt: prompt, updated_at: 0, turns: None })
 }
 
 /// Codex keeps thread names in a separate append-only index (later lines win).
@@ -446,12 +501,27 @@ fn codex_titles() -> HashMap<String, String> {
     out
 }
 
+/// Whether byte `offset - 1` is a newline: a file rewritten (not appended) since the last count
+/// would otherwise be counted from the middle of a line.
+fn line_ends_at(path: &Path, offset: u64) -> bool {
+    if offset == 0 {
+        return true;
+    }
+    let mut byte = [0u8];
+    std::fs::File::open(path)
+        .and_then(|mut f| {
+            f.seek(SeekFrom::Start(offset - 1))?;
+            f.read_exact(&mut byte)
+        })
+        .is_ok_and(|_| byte[0] == b'\n')
+}
+
 /// Brings a prompt count up to date: unchanged files keep theirs, grown plain files continue
 /// from the last counted line, anything else is recounted.
 fn count_turns(agent: Agent, path: &Path, prev: Option<TurnCount>, mtime_ms: u64, len: u64) -> Option<TurnCount> {
     let (offset, base) = match prev {
         Some(p) if p.mtime_ms == mtime_ms && p.len == len => return Some(p),
-        Some(p) if !is_zst(path) && len >= p.offset => (p.offset, p.turns),
+        Some(p) if !is_zst(path) && len >= p.offset && line_ends_at(path, p.offset) => (p.offset, p.turns),
         _ => (0, 0),
     };
     let mut lines = open_lines(path, offset, u64::MAX)?;
@@ -467,7 +537,17 @@ fn spawn_counting(app: AppHandle, mut files: Vec<(Agent, PathBuf, u64, u64)>) {
     }
     files.sort_by_key(|f| f.3);
     std::thread::spawn(move || {
+        /// Clears `COUNTING` however the pass ends (a panicking worker included).
+        struct Done;
+        impl Drop for Done {
+            fn drop(&mut self) {
+                COUNTING.store(false, Ordering::Release);
+            }
+        }
+        let _done = Done;
         let next = AtomicUsize::new(0);
+        // A first pass over gigabytes takes a while: keep progress if the app closes midway.
+        let last_save = Mutex::new(std::time::Instant::now());
         // Two workers: this is background work and must not compete with the terminals.
         std::thread::scope(|scope| {
             for _ in 0..2 {
@@ -477,12 +557,22 @@ fn spawn_counting(app: AppHandle, mut files: Vec<(Agent, PathBuf, u64, u64)>) {
                         if let Some(count) = count_turns(*agent, path, prev, *mtime_ms, *len) {
                             CACHE.lock().turns.insert(path.clone(), count);
                         }
+                        let due = {
+                            let mut t = last_save.lock();
+                            let due = t.elapsed() > std::time::Duration::from_secs(10);
+                            if due {
+                                *t = std::time::Instant::now();
+                            }
+                            due
+                        };
+                        if due {
+                            save_cache();
+                        }
                     }
                 });
             }
         });
         save_cache();
-        COUNTING.store(false, Ordering::Release);
         let _ = app.emit("agent-history-counted", ());
     });
 }
@@ -503,7 +593,8 @@ fn scan_history() -> (Vec<HistoryItem>, Vec<(Agent, PathBuf, u64, u64)>) {
             .collect()
     };
     let next = AtomicUsize::new(0);
-    let workers = std::thread::available_parallelism().map_or(4, |n| n.get()).min(stale.len().max(1));
+    // Mostly file opening and decompression; more threads would only compete with terminals.
+    let workers = std::thread::available_parallelism().map_or(4, |n| n.get()).min(4).min(stale.len().max(1));
     let parsed: Vec<(usize, Option<HistoryItem>)> = std::thread::scope(|scope| {
         let handles: Vec<_> = (0..workers)
             .map(|_| {
@@ -515,7 +606,12 @@ fn scan_history() -> (Vec<HistoryItem>, Vec<(Agent, PathBuf, u64, u64)>) {
                             Agent::Claude => parse_claude(path, *len),
                             Agent::Codex => parse_codex(path),
                             Agent::Omp => parse_omp(path),
-                        };
+                        }
+                        .filter(|it| valid_id(&it.id))
+                        .map(|mut it| {
+                            it.folder = canonical_folder(&it.cwd);
+                            it
+                        });
                         out.push((i, item));
                     }
                     out
@@ -570,7 +666,12 @@ fn scan_history() -> (Vec<HistoryItem>, Vec<(Agent, PathBuf, u64, u64)>) {
 /// `count`, so an agent writing its transcript cannot cause a loop).
 #[tauri::command]
 pub async fn agent_history_list(app: AppHandle, count: Option<bool>) -> CmdResult<Vec<HistoryItem>> {
-    let (items, to_count) = tauri::async_runtime::spawn_blocking(scan_history).await.map_err(err)?;
+    let (items, to_count) = tauri::async_runtime::spawn_blocking(|| {
+        let _one_at_a_time = SCANNING.lock();
+        scan_history()
+    })
+    .await
+    .map_err(err)?;
     if count.unwrap_or(true) {
         spawn_counting(app, to_count);
     }
@@ -664,6 +765,31 @@ mod tests {
         let o = parse_omp(&omp).unwrap();
         assert_eq!((o.id.as_str(), o.title.as_deref(), o.first_prompt.as_deref()), ("o1", Some("Renamed"), Some("Do it")));
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn rejects_non_prompts_and_bad_ids() {
+        assert!(!is_turn(Agent::Claude, r#"{"type":"user","isCompactSummary":true,"message":{"content":"This session is being continued"}}"#));
+        assert!(!is_turn(Agent::Claude, r#"{"type":"user","isSidechain":true,"message":{"content":"sub-agent task"}}"#));
+        assert!(!is_turn(Agent::Claude, r#"{"type":"user","message":{"content":"[Request interrupted by user]"}}"#));
+        assert!(valid_id("019fe5ee-4706-7a10-8578-a98f95104d9f"));
+        assert!(!valid_id("-rf"));
+        assert!(!valid_id("a b"));
+    }
+
+    #[test]
+    fn rewritten_files_are_recounted() {
+        let path = std::env::temp_dir().join(format!("erka-rewrite-{}.jsonl", std::process::id()));
+        let turn = r#"{"type":"event_msg","payload":{"type":"task_started"}}"#;
+        std::fs::write(&path, format!("{turn}\n{turn}\n")).unwrap();
+        let len = std::fs::metadata(&path).unwrap().len();
+        let first = count_turns(Agent::Codex, &path, None, 1, len).unwrap();
+        // Rewritten with different content, longer: the old offset is mid-line now.
+        std::fs::write(&path, format!("{{\"x\":1}}\n{turn}\n{turn}\n")).unwrap();
+        assert!(!line_ends_at(&path, first.offset));
+        let len = std::fs::metadata(&path).unwrap().len();
+        assert_eq!(count_turns(Agent::Codex, &path, Some(first), 2, len).unwrap().turns, 2);
+        std::fs::remove_file(&path).ok();
     }
 
     #[test]

@@ -1,7 +1,7 @@
 //! Memory meter: resident memory of the app (incl. its WebView processes), the session daemon,
 //! and everything the daemon runs (shells, agents and their children).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
 use parking_lot::Mutex;
@@ -22,11 +22,16 @@ pub struct MemoryStats {
     session_processes: u32,
 }
 
-/// Sum of memory of `root`'s descendants (not `root` itself), and their count.
+/// Sum of memory of `root`'s descendants (not `root` itself), and their count. The graph can
+/// contain cycles (Windows reuses the PIDs of dead parents), so each process counts once.
 fn descendants(children: &HashMap<Pid, Vec<Pid>>, mem: &HashMap<Pid, u64>, root: Pid) -> (u64, u32) {
     let (mut total, mut count) = (0, 0);
+    let mut seen = HashSet::from([root]);
     let mut stack = children.get(&root).cloned().unwrap_or_default();
     while let Some(pid) = stack.pop() {
+        if !seen.insert(pid) {
+            continue;
+        }
         total += mem.get(&pid).copied().unwrap_or(0);
         count += 1;
         if let Some(c) = children.get(&pid) {
@@ -43,19 +48,21 @@ fn collect(daemon_pid: Option<u32>) -> MemoryStats {
     let mut mem: HashMap<Pid, u64> = HashMap::new();
     for (pid, p) in sys.processes() {
         mem.insert(*pid, p.memory());
-        if let Some(parent) = p.parent() {
+        // A "parent" that started after its child is a newer process that reused a dead
+        // parent's PID, not the real parent.
+        if let Some(parent) = p.parent().filter(|pp| sys.process(*pp).is_some_and(|pp| pp.start_time() <= p.start_time())) {
             children.entry(parent).or_default().push(*pid);
         }
     }
     let me = Pid::from_u32(std::process::id());
     let daemon = daemon_pid.map(Pid::from_u32);
-    // The daemon is detached from the app, but guard against counting it twice anyway.
     let (app_children, _) = descendants(&children, &mem, me);
     let (sessions, session_processes) = daemon.map_or((0, 0), |d| descendants(&children, &mem, d));
     let daemon_mem = daemon.and_then(|d| mem.get(&d).copied()).unwrap_or(0);
+    // A daemon the app spawned is its child: count it (and its sessions) once, not in `app`.
     let overlap = daemon.filter(|d| sys.process(*d).and_then(|p| p.parent()) == Some(me)).map_or(0, |_| daemon_mem + sessions);
     MemoryStats {
-        app: mem.get(&me).copied().unwrap_or(0) + app_children - overlap,
+        app: (mem.get(&me).copied().unwrap_or(0) + app_children).saturating_sub(overlap),
         daemon: daemon_mem,
         sessions,
         session_processes,
@@ -65,4 +72,17 @@ fn collect(daemon_pid: Option<u32>) -> MemoryStats {
 #[tauri::command]
 pub async fn memory_stats(daemon_pid: Option<u32>) -> CmdResult<MemoryStats> {
     tauri::async_runtime::spawn_blocking(move || collect(daemon_pid)).await.map_err(err)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn descendants_survive_cycles() {
+        let (a, b, c) = (Pid::from_u32(1), Pid::from_u32(2), Pid::from_u32(3));
+        let children = HashMap::from([(a, vec![b]), (b, vec![c]), (c, vec![a, b])]);
+        let mem = HashMap::from([(a, 1), (b, 10), (c, 100)]);
+        assert_eq!(descendants(&children, &mem, a), (110, 2));
+    }
 }

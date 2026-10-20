@@ -8,6 +8,7 @@ import { store } from "./store";
 import { cyclePane } from "./layout";
 import { chordLabel, isMac } from "./platform";
 import { allViews, peekView, setAppShortcutMatcher, setOverlayCheck } from "./terminal-host";
+import { navBack, navForward } from "./nav-history";
 import type { SessionKind } from "./types";
 
 export interface Command {
@@ -91,8 +92,13 @@ export const commands: Command[] = [
   {
     id: "find", label: "Find in Terminal", win: "mod+shift+f", mac: "mod+f",
     run: () => window.dispatchEvent(new CustomEvent("erka:find")),
+    // Pages and dialogs have their own find (e.g. Settings search).
+    when: () => store.overlay() === null,
   },
   { id: "settings", label: "Settings", win: "mod+,", mac: "mod+,", run: () => store.openSettings() },
+  // Alt+Shift+Arrow, not Alt+Arrow: shells use Alt+Arrow for word movement.
+  { id: "nav.back", label: "Go Back", win: "shift+alt+arrowleft", mac: "ctrl+-", run: navBack, when: hasProject },
+  { id: "nav.forward", label: "Go Forward", win: "shift+alt+arrowright", mac: "ctrl+shift+-", run: navForward, when: hasProject },
   { id: "zoom.in", label: "Increase Font Size", win: "mod+=", mac: "mod+=", run: () => zoom(1) },
   { id: "zoom.out", label: "Decrease Font Size", win: "mod+-", mac: "mod+-", run: () => zoom(-1) },
   { id: "zoom.reset", label: "Reset Font Size", win: "mod+0", mac: "mod+0", run: () => zoom(0) },
@@ -126,7 +132,7 @@ for (let i = 1; i <= 9; i++) {
   });
 }
 
-function eventChord(e: KeyboardEvent): string {
+export function eventChord(e: KeyboardEvent): string {
   const parts: string[] = [];
   const mod = isMac ? e.metaKey : e.ctrlKey;
   if (mod) parts.push("mod");
@@ -147,15 +153,37 @@ function eventChord(e: KeyboardEvent): string {
   return parts.join("+");
 }
 
-/** "ctrl+tab" on macOS is literally Control; normalise for matching. */
-function normalizeChord(chord: string): string {
-  return isMac ? chord : chord.replace(/^ctrl\+/, "mod+");
+const MODIFIER_ORDER = ["mod", "ctrl", "meta", "shift", "alt"];
+
+/** Canonical form for comparing chords: "ctrl" is `mod` off macOS, modifiers in a fixed order. */
+export function normalizeChord(chord: string): string {
+  const parts = chord.toLowerCase().split("+").map((p) => (!isMac && p === "ctrl" ? "mod" : p));
+  const key = parts.pop() ?? "";
+  const mods = [...new Set(parts)].sort((a, b) => MODIFIER_ORDER.indexOf(a) - MODIFIER_ORDER.indexOf(b));
+  return [...mods, key].join("+");
 }
 
-export const chordOf = (c: Command) => (isMac ? c.mac : c.win);
+export const defaultChordOf = (c: Command) => (isMac ? c.mac : c.win);
+
+/** The user's override (from Settings → Shortcuts) or the default; "" means unbound. */
+export function chordOf(c: Command): string | undefined {
+  const override = store.state.keymap?.[c.id];
+  return override !== undefined ? override || undefined : defaultChordOf(c);
+}
+
+/** Commands bound to `chord`, optionally ignoring one command. */
+export function commandsWithChord(chord: string, except?: string): Command[] {
+  const n = normalizeChord(chord);
+  return commands.filter((c) => c.id !== except && chordOf(c) && normalizeChord(chordOf(c)!) === n);
+}
+
+/** While the shortcut editor records a key, no command may run. */
+let suspended = false;
+export const suspendKeymap = (on: boolean) => (suspended = on);
 
 function match(e: KeyboardEvent): Command | undefined {
-  const chord = eventChord(e);
+  if (suspended) return undefined;
+  const chord = normalizeChord(eventChord(e));
   return commands.find((c) => {
     const k = chordOf(c);
     return k && normalizeChord(k) === chord && (!c.when || c.when());

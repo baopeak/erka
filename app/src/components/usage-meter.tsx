@@ -1,11 +1,13 @@
 // Status-bar meters: Claude / Codex subscription windows (5 h, week) and Erka's memory use.
 import { For, Show, createSignal, onCleanup, onMount } from "solid-js";
 import { store } from "../lib/store";
-import { daemon, memoryStats, usageFetch } from "../lib/ipc";
+import { daemon, memoryStats, onEvent, usageFetch } from "../lib/ipc";
 import { KindGlyph } from "./icons";
 import type { MemoryStats, ProviderUsage, UsageReport, UsageWindow } from "../lib/types";
 
 const USAGE_EVERY = 5 * 60_000;
+/** Clicks refresh at most this often: the usage endpoints are strictly rate limited. */
+const USAGE_MIN_GAP = 30_000;
 const MEMORY_EVERY = 5_000;
 
 /** Runs `fn` now and every `ms` while the window is visible. */
@@ -58,7 +60,13 @@ function Provider(props: { kind: "claude" | "codex"; name: string; usage: Provid
 
 export function UsageMeters() {
   const [report, setReport] = createSignal<UsageReport | null>(null);
-  const refresh = () =>
+  let last = 0;
+  const refresh = () => {
+    if (Date.now() - last < USAGE_MIN_GAP) return;
+    last = Date.now();
+    fetchUsage();
+  };
+  const fetchUsage = () =>
     void usageFetch()
       .then((r) => {
         setReport(r);
@@ -89,8 +97,10 @@ const gb = (b: number) => (b >= 1 << 30 ? `${(b / (1 << 30)).toFixed(1)} GB` : `
 export function MemoryMeter() {
   const [stats, setStats] = createSignal<MemoryStats | null>(null);
   let daemonPid: number | null = null;
+  // Any (re)connection may be to a different daemon process.
+  const unlisten = onEvent("daemon-status", () => (daemonPid = null));
+  onCleanup(() => void unlisten.then((f) => f()));
   const refresh = async () => {
-    if (!store.connected()) daemonPid = null; // a restarted daemon has a new pid
     if (daemonPid === null && store.connected()) daemonPid = (await daemon<{ pid: number }>("daemon.info").catch(() => null))?.pid ?? null;
     setStats(await memoryStats(daemonPid).catch(() => null));
   };

@@ -60,11 +60,12 @@ try:
     probe_id = d.js("return window.__erka.store.state.activeProject")
 
     # ---------- history scan ----------
+    # count=false: measure the list itself, not its race with the background prompt count.
     t = time.time()
-    items = d.js_async(INVOKE, "agent_history_list")
+    items = d.js_async(INVOKE, "agent_history_list", {"count": False})
     cold = time.time() - t
     t = time.time()
-    d.js_async(INVOKE, "agent_history_list")
+    d.js_async(INVOKE, "agent_history_list", {"count": False})
     warm = time.time() - t
     agents = sorted({i["agent"] for i in items})
     run.check("history lists every agent's transcripts", len(items) > 10 and "claude" in agents, f"{len(items)} items {agents} cold={cold:.2f}s warm={warm*1000:.0f}ms")

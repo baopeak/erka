@@ -10,6 +10,11 @@ export function chordLabel(chord: string): string {
         case "ctrl": return isMac ? "⌃" : "Ctrl";
         case "shift": return isMac ? "⇧" : "Shift";
         case "alt": return isMac ? "⌥" : "Alt";
+        case "arrowleft": return "←";
+        case "arrowright": return "→";
+        case "arrowup": return "↑";
+        case "arrowdown": return "↓";
+        case "enter": return isMac ? "↩" : "Enter";
         default: return k.length === 1 ? k.toUpperCase() : k[0].toUpperCase() + k.slice(1);
       }
     })

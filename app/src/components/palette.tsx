@@ -200,7 +200,7 @@ export function Palette(props: { scope: SearchScope }) {
           marks: m!.marks.filter((i) => i < c.label.length),
           hint: "Settings",
           icon: () => <Icon name="settings" size={14} />,
-          run: () => store.openSettings(c.section),
+          run: () => store.openSettings(c.section, c.id),
         }));
       if (items.length) out.push({ title: "Settings", items: sc === "all" ? items.slice(0, 4) : items });
     }

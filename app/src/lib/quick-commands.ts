@@ -3,11 +3,14 @@
 import { store } from "./store";
 import { sendInput } from "./ipc";
 import { allPanes } from "./layout";
+import { peekView } from "./terminal-host";
 import { getController } from "../chat/mode-switch";
 import type { QuickCommand, SessionInfo } from "./types";
 
+/** Commands for a project: global ones, its own, and ones whose project was removed. */
 export function quickCommandsFor(projectId: string | null): QuickCommand[] {
-  return (store.state.settings.quickCommands ?? []).filter((c) => !c.projectId || c.projectId === projectId);
+  const known = new Set(store.state.projects.map((p) => p.id));
+  return (store.state.settings.quickCommands ?? []).filter((c) => !c.projectId || c.projectId === projectId || !known.has(c.projectId));
 }
 
 function focusedSession(): SessionInfo | undefined {
@@ -19,13 +22,17 @@ function focusedSession(): SessionInfo | undefined {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-async function typeInto(s: SessionInfo, text: string, enter: boolean, paste: boolean) {
-  // Agent TUIs submit on a bare newline; bracketed paste keeps a multi-line prompt together.
-  await sendInput(s.handle, paste && text.includes("\n") ? `\x1b[200~${text}\x1b[201~` : text);
-  if (enter) {
-    await sleep(80); // let the TUI finish handling the paste before Enter
-    await sendInput(s.handle, "\r");
-  }
+/** Delivers `text` like a real paste: xterm adds bracketed-paste markers only when the program
+ *  asked for them and turns newlines into Enter keys, exactly as when the user pastes. */
+async function typeInto(s: SessionInfo, text: string, enter: boolean, enterDelay: number) {
+  const view = peekView(s.id);
+  if (view) view.paste(text);
+  else await sendInput(s.handle, text.replace(/\r?\n/g, "\r"));
+  if (!enter) return;
+  // Agent TUIs treat Enter that follows a burst of input as part of the paste (Codex: within
+  // 120 ms) and insert a newline instead of submitting.
+  await sleep(enterDelay);
+  await sendInput(s.handle, "\r");
 }
 
 export async function runQuickCommand(c: QuickCommand) {
@@ -35,10 +42,10 @@ export async function runQuickCommand(c: QuickCommand) {
   if (c.action === "agent") {
     if (!s?.alive || s.kind === "shell" || s.kind === "custom") return store.notify(`Focus an agent session to send "${c.label}"`);
     if (s.chat) return getController(s).send(c.text);
-    return typeInto(s, c.text, c.enter, true);
+    return typeInto(s, c.text, c.enter, 250);
   }
   let target = s?.alive && s.kind === "shell" && !s.chat ? s : undefined;
   // No shell focused: open one. The PTY buffers input until the shell reads it.
   target ??= await store.newSession(project.id, "shell");
-  if (target) await typeInto(target, c.text, c.enter, false);
+  if (target) await typeInto(target, c.text, c.enter, 60);
 }

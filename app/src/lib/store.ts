@@ -10,7 +10,7 @@ import { basename, uid } from "./platform";
 import { projectColors } from "./theme";
 import { disposeView, peekView, resetStreams } from "./terminal-host";
 import type { SettingsSection } from "./settings-catalog";
-import type { AppState, BranchInfo, LayoutNode, Pane, Project, RecentItem, SessionInfo, SessionKind, Settings, Tab, Workspace } from "./types";
+import type { AgentProfile, AppState, BranchInfo, LayoutNode, Pane, Project, RecentItem, SessionInfo, SessionKind, Settings, Tab, Workspace } from "./types";
 
 export const defaultSettings: Settings = {
   fontFamily: '"JetBrains Mono", "Cascadia Code", "Cascadia Mono", Menlo, Consolas, "Symbols Nerd Font Mono", monospace',
@@ -30,6 +30,11 @@ export const defaultSettings: Settings = {
   usageMeters: true,
   memoryMeter: true,
   quickCommands: [],
+  theme: "dark",
+  density: "comfortable",
+  uiScale: 1,
+  tips: true,
+  tipsSeen: [],
   profiles: [
     { kind: "claude", label: "Claude Code", args: [] },
     { kind: "codex", label: "Codex", args: [] },
@@ -37,7 +42,7 @@ export const defaultSettings: Settings = {
   ],
 };
 
-const emptyState = (): AppState => ({ version: 1, projects: [], activeProject: null, workspaces: {}, settings: { ...defaultSettings }, recent: [], collapsed: {} });
+const emptyState = (): AppState => ({ version: 1, projects: [], activeProject: null, workspaces: {}, settings: { ...defaultSettings }, recent: [], collapsed: {}, keymap: {} });
 const MAX_RECENT = 40;
 
 export type Overlay = null | "palette" | "quickopen" | "jump" | "dashboard" | "settings" | "newsession";
@@ -56,6 +61,8 @@ function createAppStore() {
   const [zoomed, setZoomed] = createSignal<Record<string, string>>({});
   const [lastSwitchMs, setLastSwitchMs] = createSignal<number | null>(null);
   const [settingsSection, setSettingsSection] = createSignal<SettingsSection>("agents");
+  /** Setting row to scroll to and highlight when the page opens (from search). */
+  const [settingsItem, setSettingsItem] = createSignal<string | null>(null);
 
   // ---------- persistence ----------
   let saveTimer = 0;
@@ -344,7 +351,7 @@ function createAppStore() {
   async function newSession(projectId: string, kind: SessionKind, opts: { where?: "tab" | "right" | "down"; args?: string[]; name?: string; agentSessionId?: string; cwd?: string } = {}) {
     const project = state.projects.find((p) => p.id === projectId);
     if (!project) return;
-    const profile = state.settings.profiles.find((p) => p.kind === kind);
+    const launch = profileLaunch(kind);
     try {
       const info = await ipc.createSession({
         kind,
@@ -352,7 +359,8 @@ function createAppStore() {
         cwd: opts.cwd ?? project.path,
         project_id: projectId,
         name: opts.name,
-        args: opts.args ?? (kind === "shell" ? state.settings.shellArgs : profile?.args ?? []),
+        args: opts.args ?? (kind === "shell" ? state.settings.shellArgs : launch.args),
+        env: launch.env,
         agent_session_id: opts.agentSessionId,
         cols: 120,
         rows: 32,
@@ -441,8 +449,9 @@ function createAppStore() {
     });
   }
 
-  function openSettings(section?: SettingsSection) {
+  function openSettings(section?: SettingsSection, item?: string) {
     if (section) setSettingsSection(section);
+    setSettingsItem(item ?? null);
     setOverlay("settings");
   }
 
@@ -474,6 +483,32 @@ function createAppStore() {
 
   function setSettings(patch: Partial<Settings>) {
     update((s) => Object.assign(s.settings, patch));
+  }
+
+  /** Launch arguments and environment of an agent profile, permission mode included. */
+  function profileLaunch(kind: SessionKind): { args: string[]; env?: Record<string, string> } {
+    const p = state.settings.profiles.find((x) => x.kind === kind);
+    const args = [...(p?.args ?? [])];
+    if (p?.permission && kind === "claude") args.push("--permission-mode", p.permission);
+    if (p?.permission && kind === "codex") args.push("-c", `approval_policy="${p.permission}"`);
+    return { args, env: p?.env && Object.keys(p.env).length ? { ...p.env } : undefined };
+  }
+
+  /** Edits an agent profile in place (rows bound to it stay mounted). */
+  function setProfile(kind: SessionKind, patch: Partial<AgentProfile>) {
+    update((s) => {
+      const p = s.settings.profiles.find((x) => x.kind === kind);
+      if (p) Object.assign(p, patch);
+    });
+  }
+
+  /** Sets (chord) or clears ("") a shortcut override; `null` restores the default. */
+  function setShortcut(commandId: string, chord: string | null) {
+    update((s) => {
+      s.keymap ??= {};
+      if (chord === null) delete s.keymap[commandId];
+      else s.keymap[commandId] = chord;
+    });
   }
 
   // ---------- boot ----------
@@ -520,8 +555,8 @@ function createAppStore() {
     init, activeProject, workspace, activeTab, addProject, removeProject, renameProject, moveProject, switchProject,
     addTab, selectTab, cycleTab, focusPane, placePane, newSession, revealSession, openFile, closePane,
     replacePaneIn, resizeSplit, setRightPanel, showRightPanel, setSettings, zoomed, toggleZoom,
-    projectInfo, refreshProjectInfo, recordRecent, setCollapsed, markUnread, renameSession,
-    settingsSection, setSettingsSection, openSettings, paneLocation, isSessionVisible, refreshSessions, setSessions,
+    projectInfo, refreshProjectInfo, recordRecent, setCollapsed, markUnread, renameSession, profileLaunch, setShortcut, setProfile,
+    settingsSection, setSettingsSection, settingsItem, openSettings, paneLocation, isSessionVisible, refreshSessions, setSessions,
   };
 }
 

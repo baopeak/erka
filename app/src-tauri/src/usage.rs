@@ -69,7 +69,7 @@ fn parse_iso_ms(s: &str) -> Option<u64> {
         "" | "Z" | "z" => 0,
         o => {
             let sign = if o.starts_with('-') { -1 } else { 1 };
-            let mut p = o[1..].split(':');
+            let mut p = o.get(1..)?.split(':');
             sign * (p.next()?.parse::<i64>().ok()? * 60 + p.next().unwrap_or("0").parse::<i64>().ok()?)
         }
     };

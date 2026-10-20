@@ -84,6 +84,10 @@ export interface AgentProfile {
   kind: SessionKind;
   label: string;
   args: string[];
+  /** Extra environment for this agent's sessions. */
+  env?: Record<string, string>;
+  /** Claude `--permission-mode` / Codex `approval_policy`; empty = the agent's own default. */
+  permission?: string;
 }
 
 export interface Settings {
@@ -107,6 +111,13 @@ export interface Settings {
   usageMeters: boolean;
   memoryMeter: boolean;
   quickCommands: QuickCommand[];
+  theme: "dark" | "light";
+  density: "comfortable" | "compact";
+  /** Interface (not terminal) text scale, 0.9 – 1.2. */
+  uiScale: number;
+  /** First-run tips; `tipsSeen` holds the ids already dismissed. */
+  tips: boolean;
+  tipsSeen: string[];
 }
 
 export interface QuickCommand {
@@ -123,7 +134,10 @@ export interface QuickCommand {
 export interface HistoryItem {
   agent: "claude" | "codex" | "omp";
   id: string;
+  /** Folder as the agent recorded it; resume launches here. */
   cwd: string;
+  /** `cwd` in canonical form (long names), for matching projects. */
+  folder: string;
   title: string | null;
   first_prompt: string | null;
   updated_at: number;
@@ -171,6 +185,8 @@ export interface AppState {
   recent: RecentItem[];
   /** Projects whose session list is folded in the sidebar. */
   collapsed: Record<string, boolean>;
+  /** Shortcut overrides by command id: a chord like "mod+alt+p", or "" for none. */
+  keymap: Record<string, string>;
 }
 
 export interface BranchInfo {

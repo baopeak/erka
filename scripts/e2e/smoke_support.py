@@ -28,9 +28,12 @@ class Run:
         self.results = []
         self.d = Driver(app or default_app())
 
-    def boot(self):
+    def boot(self, tips=False):
         self.d.wait("return !!(window.__erka && window.__erka.store.loaded())", 60)
         self.d.wait("return window.__erka.store.connected()", 30)
+        # First-run tips would float over whatever a scenario clicks.
+        if not tips:
+            self.d.js("window.__erka.store.setSettings({ tips: false })")
 
     def check(self, name, ok, detail=""):
         self.results.append((name, bool(ok), detail))

@@ -1,5 +1,5 @@
 // Quick command editor (Settings) and the runnable list shown in the New Session menu.
-import { For, Show } from "solid-js";
+import { For, Index, Show } from "solid-js";
 import { store } from "../lib/store";
 import { isMac, uid } from "../lib/platform";
 import { quickCommandsFor, runQuickCommand } from "../lib/quick-commands";
@@ -12,32 +12,37 @@ export function QuickCommandsEditor() {
   const patch = (id: string, p: Partial<QuickCommand>) => save(list().map((c) => (c.id === id ? { ...c, ...p } : c)));
   const add = () =>
     save([...list(), { id: uid(), label: "New command", text: "", action: "terminal", enter: true, projectId: null }]);
+  // A command limited to a project that was removed runs everywhere (see quickCommandsFor).
+  const scopeOf = (c: QuickCommand) => (c.projectId && store.state.projects.some((p) => p.id === c.projectId) ? c.projectId : "");
 
   return (
     <div class="qc-editor">
-      <For each={list()} fallback={<div class="muted" style={{ padding: "4px 0" }}>No quick commands yet.</div>}>
+      <Show when={!list().length}><div class="muted" style={{ padding: "4px 0" }}>No quick commands yet.</div></Show>
+      {/* Index, not For: a row stays mounted while its command object is replaced on edit, so a
+          click right after typing is not lost to a re-created row. */}
+      <Index each={list()}>
         {(c) => (
-          <div class="qc-row" data-qc={c.id}>
+          <div class="qc-row" data-qc={c().id}>
             <div class="qc-line">
-              <input class="text-input qc-label" value={c.label} placeholder="Label" onChange={(e) => patch(c.id, { label: e.currentTarget.value.trim() || "Untitled" })} />
+              <input class="text-input qc-label" value={c().label} placeholder="Label" onChange={(e) => patch(c().id, { label: e.currentTarget.value.trim() || "Untitled" })} />
               <div class="toggles">
-                <button class={`toggle${c.action === "terminal" ? " on" : ""}`} title="Type into the focused terminal (or a new one)" onClick={() => patch(c.id, { action: "terminal" })}>Terminal</button>
-                <button class={`toggle${c.action === "agent" ? " on" : ""}`} title="Send as a prompt to the focused agent" onClick={() => patch(c.id, { action: "agent" })}>Agent</button>
+                <button class={`toggle${c().action === "terminal" ? " on" : ""}`} title="Type into the focused terminal (or a new one)" onClick={() => patch(c().id, { action: "terminal" })}>Terminal</button>
+                <button class={`toggle${c().action === "agent" ? " on" : ""}`} title="Send as a prompt to the focused agent" onClick={() => patch(c().id, { action: "agent" })}>Agent</button>
               </div>
-              <button class="icon-btn" title="Delete" onClick={() => save(list().filter((x) => x.id !== c.id))}><Icon name="close" size={13} /></button>
+              <button class="icon-btn" title="Delete" onClick={() => save(list().filter((x) => x.id !== c().id))}><Icon name="close" size={13} /></button>
             </div>
-            <textarea class="text-input qc-text" rows={2} value={c.text} placeholder={c.action === "agent" ? "Prompt for the agent" : "Command, e.g. npm test"}
-              onChange={(e) => patch(c.id, { text: e.currentTarget.value })} />
+            <textarea class="text-input qc-text" rows={2} value={c().text} placeholder={c().action === "agent" ? "Prompt for the agent" : "Command, e.g. npm test"}
+              onChange={(e) => patch(c().id, { text: e.currentTarget.value })} />
             <div class="qc-line qc-opts">
-              <label><input type="checkbox" checked={c.enter} onChange={(e) => patch(c.id, { enter: e.currentTarget.checked })} /> Press Enter</label>
-              <select class="text-input" value={c.projectId ?? ""} onChange={(e) => patch(c.id, { projectId: e.currentTarget.value || null })}>
+              <label><input type="checkbox" checked={c().enter} onChange={(e) => patch(c().id, { enter: e.currentTarget.checked })} /> Press Enter</label>
+              <select class="text-input" value={scopeOf(c())} onChange={(e) => patch(c().id, { projectId: e.currentTarget.value || null })}>
                 <option value="">All projects</option>
                 <For each={store.state.projects}>{(p) => <option value={p.id}>Only {p.name}</option>}</For>
               </select>
             </div>
           </div>
         )}
-      </For>
+      </Index>
       <button class="btn" onClick={add}><Icon name="plus" size={13} /> Add quick command</button>
     </div>
   );

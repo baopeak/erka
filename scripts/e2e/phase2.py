@@ -53,7 +53,11 @@ try:
     d.js("document.querySelector('.project .chev').click()")
     time.sleep(0.4)
 
-    # Context menu → mark as unread.
+    # Context menu → mark as unread (from a known read state: shells can turn unread on their own
+    # after their startup output).
+    for c in created:
+        daemon(d, "session.set_unread", {"handle": c["handle"], "unread": False})
+    d.wait("return !document.querySelector('.session-row .dot.unread')", 5)
     d.js("const r = document.querySelector('.session-row'); r.dispatchEvent(new MouseEvent('contextmenu', {bubbles: true, clientX: 120, clientY: 160}));")
     labels = d.js("return [...document.querySelectorAll('.ctx-item')].map(e => e.innerText)")
     run.check("session context menu has actions", any("unread" in l.lower() or "read" in l.lower() for l in labels), "|".join(labels))

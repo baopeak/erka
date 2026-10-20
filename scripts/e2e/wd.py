@@ -11,7 +11,7 @@ import urllib.request
 KEYS = {
     "enter": "", "escape": "", "tab": "", "backspace": "",
     "ctrl": "", "shift": "", "alt": "", "meta": "",
-    "down": "", "up": "",
+    "down": "", "up": "", "left": "", "right": "",
 }
 
 

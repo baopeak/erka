@@ -48,7 +48,7 @@ async function waitExit(sessionId: string, ms: number): Promise<boolean> {
 }
 
 function chatArgv(kind: SessionKind, resumeId: string | null): string[] {
-  const profile = store.state.settings.profiles.find((p) => p.kind === kind)?.args ?? [];
+  const profile = store.profileLaunch(kind).args;
   if (kind === "claude") return claudeArgs(resumeId, profile);
   if (kind === "codex") return codexArgs(profile);
   return ompAcpArgs();
@@ -100,9 +100,11 @@ export async function newChat(projectId: string, kind: SessionKind, where: "tab"
       kind, cwd: opts.cwd ?? project.path, project_id: projectId,
       agent_session_id: resume ?? undefined,
       chat_argv: chatArgv(kind, kind === "claude" ? resume : null),
+      env: store.profileLaunch(kind).env,
     });
     store.setSessions(info.id, info);
     store.placePane(projectId, { id: uid(), kind: "chat", sessionId: info.id }, where);
+    return info;
   } catch (e) {
     store.notify(`Could not start ${kind} chat: ${e}`);
   }
@@ -147,6 +149,7 @@ async function doSwitchToChat(project: Project, tab: Tab, pane: Pane) {
       // Codex without a known thread id resumes the newest thread of this folder.
       agent_session_id: conv ?? (s.kind === "codex" ? "latest" : undefined),
       chat_argv: chatArgv(s.kind, s.kind === "claude" ? conv : null),
+      env: store.profileLaunch(s.kind).env,
     });
     store.setSessions(info.id, info);
     store.replacePaneIn(project.id, tab.id, pane.id, { id: pane.id, kind: "chat", sessionId: info.id });
@@ -184,7 +187,9 @@ async function doSwitchToTerminal(project: Project, tab: Tab, pane: Pane) {
     return;
   }
   try {
-    const info = await createSession({ kind: c.kind, cwd: c.cwd, project_id: c.project_id ?? project.id, name: c.name ?? undefined, agent_session_id: conv ?? undefined, cols: 120, rows: 32 });
+    // The terminal front-end gets the profile's flags back (chat argv used its own form).
+    const launch = store.profileLaunch(c.kind);
+    const info = await createSession({ kind: c.kind, cwd: c.cwd, project_id: c.project_id ?? project.id, name: c.name ?? undefined, agent_session_id: conv ?? undefined, args: launch.args, env: launch.env, cols: 120, rows: 32 });
     store.setSessions(info.id, info);
     store.replacePaneIn(project.id, tab.id, pane.id, { id: pane.id, kind: "terminal", sessionId: info.id });
     disposeController(c.id);

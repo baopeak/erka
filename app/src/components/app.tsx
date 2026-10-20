@@ -1,4 +1,4 @@
-import { Match, Show, Switch, onMount } from "solid-js";
+import { Match, Show, Switch, createEffect, onMount } from "solid-js";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { store } from "../lib/store";
 import { peekView } from "../lib/terminal-host";
@@ -8,12 +8,21 @@ import { RightPanel } from "./right-panel";
 import { StatusBar } from "./status-bar";
 import { Palette } from "./palette";
 import { Dashboard } from "./dashboard";
-import { SettingsView } from "./settings-view";
+import { SettingsPage } from "./settings/settings-page";
+import { Tips } from "./tips";
 import { NewSessionMenu } from "./new-session-menu";
 import { Welcome } from "./welcome";
 import { ContextMenuHost } from "./context-menu";
 
 export function App() {
+  // Theme, density and interface scale are plain CSS switches on the root element.
+  createEffect(() => {
+    const s = store.state.settings;
+    const root = document.documentElement;
+    root.dataset.theme = s.theme ?? "dark";
+    root.dataset.density = s.density ?? "comfortable";
+    root.style.setProperty("--ui-scale", String(s.uiScale ?? 1));
+  });
   onMount(() => {
     // Files dropped from Explorer/Finder onto a terminal paste their (quoted) paths.
     void getCurrentWebview().onDragDropEvent((event) => {
@@ -47,13 +56,14 @@ export function App() {
       </div>
       <Switch>
         <Match when={store.overlay() === "dashboard"}><Dashboard /></Match>
-        <Match when={store.overlay() === "settings"}><SettingsView /></Match>
+        <Match when={store.overlay() === "settings"}><SettingsPage /></Match>
         <Match when={store.overlay() === "newsession"}><NewSessionMenu /></Match>
         <Match when={["palette", "quickopen", "jump"].includes(store.overlay() ?? "") && store.overlay()} keyed>
           {(o) => <Palette scope={o === "quickopen" ? "files" : o === "jump" ? "sessions" : "all"} />}
         </Match>
       </Switch>
       <ContextMenuHost />
+      <Tips />
       <Show when={store.toast()}>
         {(t) => (
           <div class="toast">

@@ -5,9 +5,11 @@ import "@fontsource/jetbrains-mono/700.css";
 import "./styles.css";
 import { App } from "./components/app";
 import { installKeymap } from "./lib/commands";
+import { startNavHistory } from "./lib/nav-history";
 import { store } from "./lib/store";
 
 installKeymap();
+startNavHistory();
 // Dev builds expose internals to the WebDriver end-to-end tests (scripts/e2e).
 if (import.meta.env.DEV) {
   void Promise.all([import("./lib/terminal-host"), import("./lib/commands"), import("./chat/mode-switch")]).then(([th, cmds, chat]) => {

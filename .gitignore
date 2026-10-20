@@ -6,3 +6,4 @@ app/src-tauri/gen/
 .DS_Store
 app/src-tauri/binaries/
 plans/261020-0823-erka-ui-improvements/assets/
+__pycache__/

@@ -32,6 +32,37 @@ export const terminalTheme: ITheme = {
   scrollbarSliderActiveBackground: "rgba(255,255,255,0.22)",
 };
 
+/** Light terminal palette (Settings → Appearance → Light). */
+export const terminalThemeLight: ITheme = {
+  background: "#ffffff",
+  foreground: "#1d2330",
+  cursor: "#2f6fde",
+  cursorAccent: "#ffffff",
+  selectionBackground: "rgba(47, 111, 222, 0.22)",
+  selectionInactiveBackground: "rgba(47, 111, 222, 0.12)",
+  black: "#1d2330",
+  red: "#c4303f",
+  green: "#2b8a4b",
+  yellow: "#9a6a00",
+  blue: "#2f6fde",
+  magenta: "#8a4fd8",
+  cyan: "#0f7f8a",
+  white: "#c8cdd6",
+  brightBlack: "#6b7383",
+  brightRed: "#d64553",
+  brightGreen: "#2f9e57",
+  brightYellow: "#b7791f",
+  brightBlue: "#4a86e8",
+  brightMagenta: "#9b67e0",
+  brightCyan: "#1597a3",
+  brightWhite: "#eef0f4",
+  scrollbarSliderBackground: "rgba(0,0,0,0.10)",
+  scrollbarSliderHoverBackground: "rgba(0,0,0,0.18)",
+  scrollbarSliderActiveBackground: "rgba(0,0,0,0.25)",
+};
+
+export const terminalThemeFor = (theme: "dark" | "light" | undefined) => (theme === "light" ? terminalThemeLight : terminalTheme);
+
 export const projectColors = ["#6cb6ff", "#c592ff", "#8bd58b", "#f2c96d", "#ff8f9c", "#5fd7d7", "#ffb86c", "#a8b3ff"];
 
 export const statusColor: Record<string, string> = {

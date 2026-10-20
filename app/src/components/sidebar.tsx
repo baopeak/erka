@@ -9,6 +9,7 @@ import { revealEntry } from "../lib/ipc";
 import { switchToChat, switchToTerminal, supportsChat } from "../chat/mode-switch";
 import { daemon } from "../lib/ipc";
 import { Icon, KindGlyph } from "./icons";
+import { canGoBack, canGoForward, navBack, navForward } from "../lib/nav-history";
 import { openContextMenu, type MenuItem } from "./context-menu";
 import type { Project, SessionInfo } from "../lib/types";
 
@@ -194,6 +195,11 @@ function ProjectRow(props: { project: Project }) {
   );
 }
 
+const navHint = (id: string) => {
+  const c = commands.find((x) => x.id === id);
+  return c && chordOf(c) ? ` (${chordLabel(chordOf(c)!)})` : "";
+};
+
 const FILTERS = { all: "All projects", running: "Projects with running sessions", attention: "Projects that need you" } as const;
 
 export function Sidebar() {
@@ -236,6 +242,8 @@ export function Sidebar() {
         <Show when={!collapsed()}>
           <span>Erka</span>
           <span class="spacer" />
+          <button class="icon-btn mini" title={`Back${navHint("nav.back")}`} disabled={!canGoBack()} onClick={navBack}><Icon name="back" size={14} /></button>
+          <button class="icon-btn mini" title={`Forward${navHint("nav.forward")}`} disabled={!canGoForward()} onClick={navForward}><Icon name="forward" size={14} /></button>
         </Show>
       </div>
       <Show when={!collapsed()} fallback={<button class="icon-btn" style={{ margin: "0 auto 6px" }} title="Search" onClick={() => store.setOverlay("palette")}><Icon name="search" /></button>}>
@@ -265,7 +273,7 @@ export function Sidebar() {
         </Show>
       </div>
       <div class="sidebar-footer">
-        <button class="icon-btn" title="Agent dashboard" onClick={() => store.setOverlay("dashboard")}><Icon name="dashboard" /></button>
+        <button class="icon-btn" data-tip="dashboard" title="Agent dashboard" onClick={() => store.setOverlay("dashboard")}><Icon name="dashboard" /></button>
         <button class="icon-btn" title="Settings" onClick={() => store.openSettings()}><Icon name="settings" /></button>
         <span style={{ flex: 1 }} />
         <button class="icon-btn" title="Toggle sidebar" onClick={() => store.setSettings({ sidebarCollapsed: !collapsed() })}><Icon name="sidebar" /></button>

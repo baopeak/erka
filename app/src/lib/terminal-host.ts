@@ -17,7 +17,7 @@ import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { attachTerminal, b64ToBytes, daemon, detachTerminal, sendInput } from "./ipc";
 import { isMac } from "./platform";
-import { terminalTheme } from "./theme";
+import { terminalThemeFor } from "./theme";
 import type { Settings } from "./types";
 
 const MAX_PARKED = 16;
@@ -68,7 +68,7 @@ export class TermView {
       cursorStyle: "bar",
       cursorWidth: 2,
       allowProposedApi: true,
-      theme: terminalTheme,
+      theme: terminalThemeFor(settings.theme),
       macOptionIsMeta: true,
       drawBoldTextInBrightColors: false,
       rescaleOverlappingGlyphs: true,
@@ -286,6 +286,7 @@ export class TermView {
       lineHeight: s.lineHeight,
       cursorBlink: s.cursorBlink,
       scrollback: s.scrollback,
+      theme: terminalThemeFor(s.theme),
     });
     this.fitNow();
   }
