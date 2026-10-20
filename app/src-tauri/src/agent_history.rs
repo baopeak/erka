@@ -343,7 +343,7 @@ fn valid_id(id: &str) -> bool {
 }
 
 /// Folder for matching sidebar projects: on Windows, long names instead of 8.3 short names
-/// (`BAOPEA~1`) and no `\\?\` prefix. A folder that no longer exists keeps its recorded form.
+/// (`PROGRA~1`) and no `\\?\` prefix. A folder that no longer exists keeps its recorded form.
 fn canonical_folder(cwd: &str) -> String {
     #[cfg(windows)]
     if !cwd.is_empty() {
