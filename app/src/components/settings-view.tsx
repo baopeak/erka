@@ -3,6 +3,7 @@ import { store } from "../lib/store";
 import { allViews } from "../lib/terminal-host";
 import { daemon } from "../lib/ipc";
 import { kindMeta } from "./icons";
+import { QuickCommandsEditor } from "./quick-commands";
 import type { Settings } from "../lib/types";
 
 export function SettingsView() {
@@ -59,6 +60,13 @@ export function SettingsView() {
           </div>
         </div>
         <div class="form-row">
+          <label>Status bar meters</label>
+          <div class="toggles">
+            <button class={`toggle${s().usageMeters ? " on" : ""}`} title="Claude / Codex plan usage, read with the agents' own sign-in" onClick={() => set({ usageMeters: !s().usageMeters })}>Usage {s().usageMeters ? "on" : "off"}</button>
+            <button class={`toggle${s().memoryMeter ? " on" : ""}`} onClick={() => set({ memoryMeter: !s().memoryMeter })}>RAM {s().memoryMeter ? "on" : "off"}</button>
+          </div>
+        </div>
+        <div class="form-row">
           <label>Default shell command</label>
           <input class="text-input" placeholder="(system default)" value={s().shellArgs.join(" ")} onChange={(e) => set({ shellArgs: e.currentTarget.value.trim() ? e.currentTarget.value.trim().split(/\s+/) : [] })} />
         </div>
@@ -70,6 +78,10 @@ export function SettingsView() {
             </div>
           )}
         </For>
+        <div class="form-row" data-section="commands">
+          <label>Quick commands</label>
+          <QuickCommandsEditor />
+        </div>
         <div class="footer">
           <button class="btn danger" onClick={() => void stopAll()}>Stop daemon & all sessions</button>
           <span style={{ flex: 1 }} />

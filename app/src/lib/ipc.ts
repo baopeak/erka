@@ -1,7 +1,7 @@
 // Typed wrappers around the Tauri commands in app/src-tauri/src.
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { AttachReply, BranchInfo, DirEntry, FileContent, GitStatus, SessionInfo } from "./types";
+import type { AttachReply, BranchInfo, DirEntry, FileContent, GitStatus, HistoryItem, MemoryStats, SessionInfo, UsageReport } from "./types";
 
 export const daemon = <T = unknown>(method: string, params: object = {}) =>
   invoke<T>("daemon_call", { method, params });
@@ -68,6 +68,10 @@ export const gitStage = (root: string, paths: string[], stage: boolean) => invok
 export const gitDiscard = (root: string, paths: string[], untracked: string[]) => invoke<void>("git_discard", { root, paths, untracked });
 export const gitCommit = (root: string, message: string, amend = false) => invoke<string>("git_commit", { root, message, amend });
 
+/** `count`: also refresh prompt counts in the background (`agent-history-counted` when done). */
+export const agentHistoryList = (count = true) => invoke<HistoryItem[]>("agent_history_list", { count });
+export const usageFetch = () => invoke<UsageReport>("usage_fetch");
+export const memoryStats = (daemonPid: number | null) => invoke<MemoryStats>("memory_stats", { daemonPid });
 export const agentLatestSession = (kind: string, cwd: string) =>
   invoke<{ id: string; path: string } | null>("agent_latest_session", { kind, cwd });
 export const claudeTranscript = (sessionId: string, cwd?: string) =>

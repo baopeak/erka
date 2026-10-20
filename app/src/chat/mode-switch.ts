@@ -77,7 +77,7 @@ export function getController(s: SessionInfo): ChatController {
         if (m.timestamp && Date.parse(m.timestamp) >= createdAt) break;
         if (m.type === "user" || m.type === "assistant") applyClaudeMessage(ctx, m, live);
       }
-      if (ctx.state.items.length) ctx.upsert({ kind: "system", id: "history-mark", text: "↑ from the terminal session · continued in chat view ↓", tone: "info" });
+      if (ctx.state.items.length) ctx.upsert({ kind: "system", id: "history-mark", text: "↑ earlier in this conversation · continued in chat view ↓", tone: "info" });
     };
   }
   controllers.set(s.id, c);
@@ -89,12 +89,18 @@ export function disposeController(sessionId: string) {
   controllers.delete(sessionId);
 }
 
-/** Starts a brand-new conversation directly in chat mode. */
-export async function newChat(projectId: string, kind: SessionKind, where: "tab" | "right" | "down" = "tab") {
+/** Starts a conversation directly in chat mode: a new one, or `resume` (an agent conversation
+ *  id) in that conversation's own folder `cwd`. */
+export async function newChat(projectId: string, kind: SessionKind, where: "tab" | "right" | "down" = "tab", opts: { resume?: string; cwd?: string } = {}) {
   const project = store.state.projects.find((p) => p.id === projectId);
   if (!project) return;
   try {
-    const info = await createSession({ kind, cwd: project.path, project_id: projectId, chat_argv: chatArgv(kind, null) });
+    const resume = opts.resume ?? null;
+    const info = await createSession({
+      kind, cwd: opts.cwd ?? project.path, project_id: projectId,
+      agent_session_id: resume ?? undefined,
+      chat_argv: chatArgv(kind, kind === "claude" ? resume : null),
+    });
     store.setSessions(info.id, info);
     store.placePane(projectId, { id: uid(), kind: "chat", sessionId: info.id }, where);
   } catch (e) {

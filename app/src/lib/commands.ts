@@ -52,6 +52,7 @@ export const commands: Command[] = [
   { id: "dashboard", label: "Toggle Agent Dashboard", win: "mod+shift+m", mac: "mod+shift+m", run: () => store.setOverlay(store.overlay() === "dashboard" ? null : "dashboard") },
   { id: "project.add", label: "Add Project Folder…", run: () => void pickProjectFolder() },
   { id: "new.shell", label: "New Terminal", win: "mod+shift+t", mac: "mod+t", run: () => newSession("shell"), when: hasProject },
+  { id: "panel.history", label: "Agent Session History", run: () => store.showRightPanel("history"), when: hasProject },
   { id: "new.menu", label: "New Session…", win: "mod+shift+n", mac: "mod+shift+n", run: () => store.setOverlay("newsession"), when: hasProject },
   { id: "new.claude", label: "New Claude Code Session", run: () => newSession("claude"), when: hasProject },
   { id: "new.codex", label: "New Codex Session", run: () => newSession("codex"), when: hasProject },

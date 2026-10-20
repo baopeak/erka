@@ -7,6 +7,8 @@ mod daemon_client;
 mod fs_ops;
 mod git;
 mod search;
+mod sys_stats;
+mod usage;
 mod watcher;
 
 use std::sync::Arc;
@@ -115,6 +117,9 @@ pub fn run() {
             git::git_worktree_remove,
             agent_history::agent_latest_session,
             agent_history::agent_claude_transcript,
+            agent_history::agent_history_list,
+            usage::usage_fetch,
+            sys_stats::memory_stats,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Erka");

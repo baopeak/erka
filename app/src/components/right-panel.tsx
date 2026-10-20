@@ -4,6 +4,7 @@ import { unwatchRoot, watchRoot } from "../lib/ipc";
 import { gitState } from "../lib/git-state";
 import { Explorer } from "./explorer";
 import { GitPanel } from "./git-panel";
+import { HistoryPanel } from "./history-panel";
 import type { Project } from "../lib/types";
 
 export function RightPanel(props: { project: Project }) {
@@ -31,7 +32,7 @@ export function RightPanel(props: { project: Project }) {
     el.addEventListener("pointerup", up);
   };
 
-  const tab = (id: "files" | "git", label: string) => (
+  const tab = (id: "files" | "git" | "history", label: string) => (
     <button class={`ptab${panel() === id || (id === "files" && panel() === "search") ? " active" : ""}`} onClick={() => store.showRightPanel(id)}>
       {label}
       {id === "git" && gitState.status()?.files.length ? ` ${gitState.status()!.files.length}` : ""}
@@ -44,11 +45,13 @@ export function RightPanel(props: { project: Project }) {
       <div class="panel-tabs">
         {tab("files", "Files")}
         {tab("git", "Changes")}
+        {tab("history", "Sessions")}
       </div>
       <div class="panel-body">
         <Switch>
           <Match when={panel() === "files" || panel() === "search"}><Explorer project={props.project} /></Match>
           <Match when={panel() === "git"}><GitPanel project={props.project} /></Match>
+          <Match when={panel() === "history"}><HistoryPanel project={props.project} /></Match>
         </Switch>
       </div>
     </aside>

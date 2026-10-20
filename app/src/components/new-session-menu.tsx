@@ -2,6 +2,7 @@ import { For, Show, createSignal, onMount } from "solid-js";
 import { store } from "../lib/store";
 import { KindGlyph, kindMeta } from "./icons";
 import { KeyHints } from "./key-hints";
+import { QuickCommandList, quickCommandKey } from "./quick-commands";
 import { newChat, supportsChat } from "../chat/mode-switch";
 import type { SessionKind } from "../lib/types";
 
@@ -31,8 +32,13 @@ export function NewSessionMenu() {
 
   return (
     <div class="overlay" onPointerDown={(e) => e.target === e.currentTarget && store.setOverlay(null)}>
-      <div class="modal" onKeyDown={(e) => { if (e.key === "Escape") store.setOverlay(null); if (e.key === "Enter") start(); }}>
+      <div class="modal" onKeyDown={(e) => {
+        if (quickCommandKey(e, () => store.setOverlay(null))) return;
+        if (e.key === "Escape") store.setOverlay(null);
+        if (e.key === "Enter") start();
+      }}>
         <h2>New session in {project?.name}</h2>
+        <QuickCommandList onRun={() => store.setOverlay(null)} />
         <div class="launcher" style={{ "grid-template-columns": "repeat(5, 1fr)" }}>
           <For each={kinds}>
             {(k) => (

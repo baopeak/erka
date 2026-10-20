@@ -2,6 +2,7 @@ import { Show, createMemo, createResource, createSignal, onCleanup } from "solid
 import { store } from "../lib/store";
 import { gitStatus, onEvent } from "../lib/ipc";
 import { Icon } from "./icons";
+import { MemoryMeter, UsageMeters } from "./usage-meter";
 
 export function StatusBar() {
   const counts = createMemo(() => {
@@ -32,6 +33,8 @@ export function StatusBar() {
         <span class="item clickable" onClick={() => store.setRightPanel("git")}><Icon name="git" size={13} /> {branch()}</span>
       </Show>
       <span class="spacer" />
+      <Show when={store.state.settings.usageMeters}><UsageMeters /></Show>
+      <Show when={store.state.settings.memoryMeter}><MemoryMeter /></Show>
       <Show when={store.lastSwitchMs() != null}>
         <span class="item" title="Time to render the last project switch">switch {store.lastSwitchMs()} ms</span>
       </Show>

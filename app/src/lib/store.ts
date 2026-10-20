@@ -27,6 +27,9 @@ export const defaultSettings: Settings = {
   shortcutHints: true,
   projectFilter: "all",
   projectSort: "manual",
+  usageMeters: true,
+  memoryMeter: true,
+  quickCommands: [],
   profiles: [
     { kind: "claude", label: "Claude Code", args: [] },
     { kind: "codex", label: "Codex", args: [] },
@@ -338,14 +341,15 @@ function createAppStore() {
     return activeTab(loc.projectId)?.id === loc.tabId;
   }
 
-  async function newSession(projectId: string, kind: SessionKind, opts: { where?: "tab" | "right" | "down"; args?: string[]; name?: string; agentSessionId?: string } = {}) {
+  async function newSession(projectId: string, kind: SessionKind, opts: { where?: "tab" | "right" | "down"; args?: string[]; name?: string; agentSessionId?: string; cwd?: string } = {}) {
     const project = state.projects.find((p) => p.id === projectId);
     if (!project) return;
     const profile = state.settings.profiles.find((p) => p.kind === kind);
     try {
       const info = await ipc.createSession({
         kind,
-        cwd: project.path,
+        // Resuming must use the conversation's own folder: agents look transcripts up by cwd.
+        cwd: opts.cwd ?? project.path,
         project_id: projectId,
         name: opts.name,
         args: opts.args ?? (kind === "shell" ? state.settings.shellArgs : profile?.args ?? []),

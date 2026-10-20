@@ -72,7 +72,7 @@ export interface Tab {
   focus: string; // pane id
 }
 
-export type RightPanel = "files" | "git" | "search" | null;
+export type RightPanel = "files" | "git" | "search" | "history" | null;
 
 export interface Workspace {
   tabs: Tab[];
@@ -103,6 +103,55 @@ export interface Settings {
   projectFilter: "all" | "running" | "attention";
   projectSort: "manual" | "recent";
   profiles: AgentProfile[];
+  /** Claude / Codex subscription usage in the status bar (reads the agents' own sign-in). */
+  usageMeters: boolean;
+  memoryMeter: boolean;
+  quickCommands: QuickCommand[];
+}
+
+export interface QuickCommand {
+  id: string;
+  label: string;
+  text: string;
+  /** terminal: type into the focused shell (or a new one); agent: send as a prompt to the focused agent. */
+  action: "terminal" | "agent";
+  enter: boolean;
+  /** null = every project. */
+  projectId: string | null;
+}
+
+export interface HistoryItem {
+  agent: "claude" | "codex" | "omp";
+  id: string;
+  cwd: string;
+  title: string | null;
+  first_prompt: string | null;
+  updated_at: number;
+  /** null until the background count reaches this transcript. */
+  turns: number | null;
+}
+
+export interface UsageWindow {
+  label: string;
+  used_percent: number;
+  resets_at: number | null;
+}
+
+export interface ProviderUsage {
+  windows: UsageWindow[];
+  error: string | null;
+}
+
+export interface UsageReport {
+  claude: ProviderUsage;
+  codex: ProviderUsage;
+}
+
+export interface MemoryStats {
+  app: number;
+  daemon: number;
+  sessions: number;
+  session_processes: number;
 }
 
 export interface RecentItem {

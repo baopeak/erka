@@ -7,6 +7,7 @@ import { chordOf, commands } from "../lib/commands";
 import { basename, chordLabel, relTime } from "../lib/platform";
 import { quickOpen, type QuickOpenHit } from "../lib/ipc";
 import { settingsCatalog } from "../lib/settings-catalog";
+import { quickCommandsFor, runQuickCommand } from "../lib/quick-commands";
 import { Icon, KindGlyph } from "./icons";
 import { KeyHints } from "./key-hints";
 import { StatusDot } from "./sidebar";
@@ -214,6 +215,14 @@ export function Palette(props: { scope: SearchScope }) {
       if (!m) continue;
       const k = chordOf(c);
       ranked.push({ key: c.id, label: c.label, chord: k ? chordLabel(k) : undefined, marks: m.marks, score: m.score, run: c.run, icon: () => <Icon name="bolt" size={14} /> });
+    }
+    for (const c of quickCommandsFor(store.state.activeProject)) {
+      const m = fuzzy(q, `Run: ${c.label}`);
+      if (!m) continue;
+      ranked.push({
+        key: `qc${c.id}`, label: `Run: ${c.label}`, hint: c.action === "agent" ? "Quick prompt" : "Quick command", marks: m.marks, score: m.score,
+        run: () => void runQuickCommand(c), icon: () => <Icon name={c.action === "agent" ? "chat" : "terminal"} size={14} />,
+      });
     }
     return q ? ranked.sort((a, b) => b.score - a.score) : ranked;
   }
