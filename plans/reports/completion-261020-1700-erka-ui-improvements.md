@@ -55,4 +55,4 @@ Codex / OMP turns).
   in a narrow centre column, toggles use the UI font, "Claude · claude" → "Claude", search no
   longer matches letters scattered across words, Switch-to-Project-N only for existing projects,
   terminal find colours per theme, no dark flash when starting in light mode.
-- Release build smoke not run (deferred at the user's request until dev testing passed).
+- Release build (after dev testing passed): smoke 15/15 three times, project switch p50 29–33 ms, p95 40–52 ms.

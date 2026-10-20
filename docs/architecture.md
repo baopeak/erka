@@ -156,6 +156,6 @@ repository by the file's hash.
 
 - 20 sessions × 2 MiB output: 40 MiB in 3.9 s through the daemon, 0 sequence gaps.
 - Attach (snapshot) p50/p95: 4.4 / 5.8 ms.
-- Project switch (3 projects with terminals, dev build): p50 ≈ 25 ms, p95 35–105 ms.
+- Project switch (3 projects with terminals): release p50 ≈ 30 ms, p95 40–52 ms; dev build p95 35–105 ms.
 - Session history, 421 transcripts / 1.2 GB (release build): first scan 0.5 s, later launches
   (disk cache) 34 ms; the first full prompt count runs in the background (~15–30 s).
