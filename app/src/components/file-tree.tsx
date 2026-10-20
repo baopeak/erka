@@ -1,7 +1,7 @@
 // Virtualized, lazily-loaded file tree. Only rows inside the viewport exist in the DOM, and a
 // directory is read from disk the first time it is expanded (then refreshed by the watcher).
 import { For, Show, createMemo, createSignal, onCleanup, onMount } from "solid-js";
-import { createStore, reconcile } from "solid-js/store";
+import { createStore, produce, reconcile } from "solid-js/store";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { store } from "../lib/store";
 import { createEntry, deleteEntry, listDir, onEvent, renameEntry, revealEntry } from "../lib/ipc";
@@ -28,7 +28,7 @@ function FileIcon(props: { entry: DirEntry; open: boolean }) {
   return <span class="ficon" style={{ color: c, "font-size": g.length > 1 ? "8.5px" : "11px", "font-weight": 700 }}>{g}</span>;
 }
 
-interface Row { entry: DirEntry; depth: number; index: number }
+interface Row { entry: DirEntry; depth: number; index: number; ignored: boolean }
 
 export interface FileTreeApi {
   collapseAll(): void;
@@ -51,8 +51,9 @@ export function FileTree(props: { project: Project; api?: (api: FileTreeApi) => 
       const list = await listDir(root(), dir);
       setChildren(dir, list);
     } catch (e) {
-      setChildren(dir, []);
-      store.notify(String(e));
+      // A folder deleted behind our back simply disappears; only the root is worth a toast.
+      setChildren(produce((c) => delete c[dir]));
+      if (!dir) store.notify(String(e));
     }
   }
 
@@ -61,7 +62,9 @@ export function FileTree(props: { project: Project; api?: (api: FileTreeApi) => 
     props.api?.({
       collapseAll: () => setExpanded(reconcile({ "": true })),
       refresh: () => {
-        for (const d of Object.keys(children)) void load(d);
+        // Only the root and folders currently expanded (with all their parents expanded).
+        const open = (d: string): boolean => !d || (!!expanded[d] && open(d.includes("/") ? d.slice(0, d.lastIndexOf("/")) : ""));
+        for (const d of Object.keys(children)) if (open(d)) void load(d);
       },
     });
     const ro = new ResizeObserver(() => setHeight(scroller.clientHeight));
@@ -81,13 +84,14 @@ export function FileTree(props: { project: Project; api?: (api: FileTreeApi) => 
 
   const rows = createMemo<Row[]>(() => {
     const out: Row[] = [];
-    const walk = (dir: string, depth: number) => {
+    const walk = (dir: string, depth: number, parentIgnored: boolean) => {
       for (const entry of children[dir] ?? []) {
-        out.push({ entry, depth, index: out.length });
-        if (entry.is_dir && expanded[entry.path]) walk(entry.path, depth + 1);
+        const ignored = parentIgnored || entry.ignored;
+        out.push({ entry, depth, index: out.length, ignored });
+        if (entry.is_dir && expanded[entry.path]) walk(entry.path, depth + 1, ignored);
       }
     };
-    walk("", 0);
+    walk("", 0, false);
     return out;
   });
 
@@ -184,7 +188,7 @@ export function FileTree(props: { project: Project; api?: (api: FileTreeApi) => 
               const renaming = () => editing()?.kind === "rename" && editing()?.entry?.path === row.entry.path;
               return (
                 <div
-                  class={`tree-row${selected() === row.entry.path ? " selected" : ""}${row.entry.ignored ? " ignored" : ""}${status() ? ` g-${status() === "•" ? "M" : status()}` : ""}`}
+                  class={`tree-row${selected() === row.entry.path ? " selected" : ""}${row.ignored ? " ignored" : ""}${status() ? ` g-${status() === "•" ? "M" : status()}` : ""}`}
                   style={{ top: `${row.index * ROW_H}px`, "padding-left": `${8 + row.depth * 14}px` }}
                   onClick={() => activate(row.entry)}
                   onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setSelected(row.entry.path); setMenu({ x: e.clientX, y: e.clientY, entry: row.entry }); }}

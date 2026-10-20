@@ -34,4 +34,14 @@ export function relTime(ms: number): string {
   return `${Math.floor(d / 86_400_000)}d ago`;
 }
 
+/** Compact age: "now", "5m", "3h", "2d", "4w". */
+export function relTimeShort(ms: number, now = Date.now()): string {
+  const d = Math.max(0, now - ms);
+  if (d < 60_000) return "now";
+  if (d < 3_600_000) return `${Math.floor(d / 60_000)}m`;
+  if (d < 86_400_000) return `${Math.floor(d / 3_600_000)}h`;
+  if (d < 7 * 86_400_000) return `${Math.floor(d / 86_400_000)}d`;
+  return `${Math.floor(d / (7 * 86_400_000))}w`;
+}
+
 export const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);

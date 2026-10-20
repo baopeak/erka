@@ -54,6 +54,9 @@ pub struct SessionSpec {
     /// Agent-side conversation id (Claude session id, Codex thread id…) used for resume.
     #[serde(default)]
     pub agent_session_id: Option<String>,
+    /// Model the agent runs (from `--model`, hooks or the chat protocol), for display.
+    #[serde(default)]
+    pub model: Option<String>,
     #[serde(default)]
     pub created_at: u64,
 }
@@ -74,6 +77,8 @@ pub struct SessionInfo {
     pub seq: u64,
     /// Not a terminal session: a structured chat process (see `chat.rs`).
     pub chat: bool,
+    /// Wall-clock ms of the last output or input (0 = never). Not a broadcast trigger.
+    pub last_activity: u64,
 }
 
 /// One queued write to a client socket. `credit` is decremented once written.
@@ -153,6 +158,7 @@ struct Inner {
     persisted_seq: u64,
     last_broadcast: Option<SessionInfo>,
     working_since: Option<Instant>,
+    last_activity: u64,
 }
 
 pub struct Session {
@@ -186,6 +192,7 @@ impl Session {
                 persisted_seq: 0,
                 last_broadcast: None,
                 working_since: None,
+                last_activity: 0,
             }),
         })
     }
@@ -298,6 +305,7 @@ impl Session {
         g.seq += bytes.len() as u64;
         g.ring.push(bytes);
         g.activity.on_output(now);
+        g.last_activity = now_millis();
         let handle = self.handle;
         if !g.subs.is_empty() {
             let frame: Arc<[u8]> = Frame::Output { handle, seq: g.seq, data: bytes.to_vec() }.encode().into();
@@ -378,6 +386,7 @@ impl Session {
     pub fn input(&self, bytes: Vec<u8>) {
         let mut g = self.inner.lock();
         g.activity.last_input = Some(Instant::now());
+        g.last_activity = now_millis();
         g.activity.bell = None;
         if let Some(pty) = &g.pty {
             let _ = pty.ctl.send(Ctl::Input(bytes));
@@ -394,6 +403,13 @@ impl Session {
         if let Some(pty) = &g.pty {
             let _ = pty.ctl.send(Ctl::Resize(cols, rows));
         }
+    }
+
+    pub fn set_unread(&self, unread: bool) {
+        let mut g = self.inner.lock();
+        g.unread = unread;
+        // Force the next tick to broadcast.
+        g.last_broadcast = None;
     }
 
     pub fn set_focus(&self, focused: bool) {
@@ -449,6 +465,7 @@ impl Session {
             rows,
             seq: g.seq,
             chat: false,
+            last_activity: g.last_activity,
         }
     }
 
@@ -466,12 +483,15 @@ impl Session {
         }
         g.last_status = status;
         let mut info = self.info_locked(&g, status);
-        info.seq = 0; // seq changes constantly; not a reason to broadcast
+        // seq / activity time change constantly; not a reason to broadcast
+        info.seq = 0;
+        info.last_activity = 0;
         if g.last_broadcast.as_ref() == Some(&info) {
             return None;
         }
         g.last_broadcast = Some(info.clone());
         info.seq = g.seq;
+        info.last_activity = g.last_activity;
         Some(info)
     }
 

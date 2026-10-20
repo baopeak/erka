@@ -11,6 +11,7 @@ import { Dashboard } from "./dashboard";
 import { SettingsView } from "./settings-view";
 import { NewSessionMenu } from "./new-session-menu";
 import { Welcome } from "./welcome";
+import { ContextMenuHost } from "./context-menu";
 
 export function App() {
   onMount(() => {
@@ -48,8 +49,11 @@ export function App() {
         <Match when={store.overlay() === "dashboard"}><Dashboard /></Match>
         <Match when={store.overlay() === "settings"}><SettingsView /></Match>
         <Match when={store.overlay() === "newsession"}><NewSessionMenu /></Match>
-        <Match when={["palette", "quickopen", "jump"].includes(store.overlay() ?? "")}><Palette mode={store.overlay() as "palette" | "quickopen" | "jump"} /></Match>
+        <Match when={["palette", "quickopen", "jump"].includes(store.overlay() ?? "") && store.overlay()} keyed>
+          {(o) => <Palette scope={o === "quickopen" ? "files" : o === "jump" ? "sessions" : "all"} />}
+        </Match>
       </Switch>
+      <ContextMenuHost />
       <Show when={store.toast()}>
         {(t) => (
           <div class="toast">

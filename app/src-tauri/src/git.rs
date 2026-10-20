@@ -128,6 +128,28 @@ pub async fn git_status(root: String) -> CmdResult<GitStatus> {
 }
 
 #[derive(Serialize)]
+pub struct BranchInfo {
+    is_repo: bool,
+    branch: Option<String>,
+    /// Tracked files changed (untracked files are not scanned: this runs for every project).
+    dirty: bool,
+    ahead: i64,
+    behind: i64,
+}
+
+/// Cheap per-project summary for the sidebar (`-uno` skips the untracked walk).
+#[tauri::command]
+pub async fn git_branch_info(root: String) -> CmdResult<BranchInfo> {
+    let dir = guard(&root, "")?;
+    let out = git(&dir, &["status", "--porcelain=v2", "-z", "--branch", "-uno"]).await?;
+    if !out.ok {
+        return Ok(BranchInfo { is_repo: false, branch: None, dirty: false, ahead: 0, behind: 0 });
+    }
+    let st = parse_status(&out.stdout);
+    Ok(BranchInfo { is_repo: true, dirty: !st.files.is_empty(), branch: st.branch, ahead: st.ahead, behind: st.behind })
+}
+
+#[derive(Serialize)]
 pub struct FileVersions {
     /// Content at HEAD (None when the file is new).
     original: Option<String>,

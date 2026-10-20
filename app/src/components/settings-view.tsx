@@ -22,7 +22,7 @@ export function SettingsView() {
 
   return (
     <div class="overlay" onPointerDown={(e) => e.target === e.currentTarget && store.setOverlay(null)}>
-      <div class="modal" onKeyDown={(e) => e.key === "Escape" && store.setOverlay(null)}>
+      <div class="modal" tabIndex={-1} ref={(el) => queueMicrotask(() => el.focus())} onKeyDown={(e) => e.key === "Escape" && store.setOverlay(null)}>
         <h2>Settings</h2>
         <div class="form-row">
           <label>Terminal font</label>

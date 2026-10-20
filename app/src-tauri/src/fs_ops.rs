@@ -86,8 +86,14 @@ pub fn natural_cmp(a: &str, b: &str) -> Ordering {
     }
 }
 
+/// Async + blocking pool: listing a huge folder must never stall the UI thread.
 #[tauri::command]
-pub fn fs_list_dir(root: String, path: String) -> CmdResult<Vec<DirEntry>> {
+pub async fn fs_list_dir(root: String, path: String) -> CmdResult<Vec<DirEntry>> {
+    tauri::async_runtime::spawn_blocking(move || list_dir(&root, &path)).await.map_err(err)?
+}
+
+fn list_dir(root: &str, path: &str) -> CmdResult<Vec<DirEntry>> {
+    let (root, path) = (root.to_string(), path.to_string());
     let dir = guard(&root, &path)?;
     let mut entries: Vec<DirEntry> = std::fs::read_dir(&dir)
         .map_err(err)?

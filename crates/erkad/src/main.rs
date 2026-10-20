@@ -104,10 +104,18 @@ fn serve() -> Result<()> {
     }
     // Launched from VS Code (or any Electron host)? Its IPC hooks and run-as-node switch would
     // leak into every session and break `code .` or Electron apps started from a terminal.
-    let inherited: Vec<String> = std::env::vars_os()
+    let mut inherited: Vec<String> = std::env::vars_os()
         .filter_map(|(k, _)| k.into_string().ok())
         .filter(|k| inherits_editor_host(k))
         .collect();
+    // VS Code's GIT_ASKPASS script calls its VSCODE_GIT_ASKPASS_* helpers; without them every
+    // git credential prompt would fail, so drop it too and let git use its own helper.
+    if inherited.iter().any(|k| k.starts_with("VSCODE_GIT_ASKPASS")) {
+        inherited.push("GIT_ASKPASS".into());
+    }
+    if std::env::var("TERM_PROGRAM").is_ok_and(|v| v == "vscode") {
+        inherited.push("TERM_PROGRAM_VERSION".into());
+    }
     for key in inherited {
         std::env::remove_var(key);
     }

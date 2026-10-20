@@ -38,7 +38,10 @@ export function PaneView(props: { pane: Pane; project: Project; tab: Tab }) {
       <button class="icon-btn" title="Close pane" onClick={close}><Icon name="close" size={12} /></button>
     </>
   );
-  const hasHeader = () => multi() || zoomedHere() || (session() && supportsChat(session()!.kind));
+  // File/diff viewers have their own top bar: give them the header instead of a floating
+  // toolbar so the two never overlap.
+  const hasHeader = () =>
+    multi() || zoomedHere() || props.pane.kind === "file" || props.pane.kind === "diff" || (session() && supportsChat(session()!.kind));
 
   return (
     <div class={`pane${focused() && multi() ? " focused" : ""}`} onPointerDown={focus}>

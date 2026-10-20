@@ -54,6 +54,7 @@ struct Inner {
     last_status: Status,
     last_broadcast: Option<SessionInfo>,
     working_since: Option<Instant>,
+    last_activity: u64,
 }
 
 pub struct ChatSession {
@@ -84,6 +85,7 @@ impl ChatSession {
                 last_status: Status::Exited,
                 last_broadcast: None,
                 working_since: None,
+                last_activity: 0,
             }),
         })
     }
@@ -193,6 +195,7 @@ impl ChatSession {
             }
         }
         g.activity.on_output(now);
+        g.last_activity = crate::session::now_millis();
         if let Some(status) = derived {
             g.activity.hook = Some((status, now));
         }
@@ -244,6 +247,7 @@ impl ChatSession {
     pub fn input(&self, bytes: Vec<u8>) {
         let mut g = self.inner.lock();
         g.activity.last_input = Some(Instant::now());
+        g.last_activity = crate::session::now_millis();
         if let Some(stdin) = &g.stdin {
             let _ = stdin.send(bytes);
         }
@@ -260,6 +264,12 @@ impl ChatSession {
         } else if let Some(pid) = g.pid {
             kill_pid(pid);
         }
+    }
+
+    pub fn set_unread(&self, unread: bool) {
+        let mut g = self.inner.lock();
+        g.unread = unread;
+        g.last_broadcast = None;
     }
 
     pub fn set_focus(&self, focused: bool) {
@@ -284,6 +294,7 @@ impl ChatSession {
             rows: 0,
             seq: g.seq,
             chat: true,
+            last_activity: g.last_activity,
         }
     }
 
@@ -306,11 +317,13 @@ impl ChatSession {
         g.last_status = status;
         let mut info = self.info_locked(&g, status);
         info.seq = 0;
+        info.last_activity = 0;
         if g.last_broadcast.as_ref() == Some(&info) {
             return None;
         }
         g.last_broadcast = Some(info.clone());
         info.seq = g.seq;
+        info.last_activity = g.last_activity;
         Some(info)
     }
 }

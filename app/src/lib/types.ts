@@ -12,6 +12,7 @@ export interface SessionInfo {
   args: string[];
   env: Record<string, string>;
   agent_session_id: string | null;
+  model: string | null;
   created_at: number;
   title: string | null;
   status: SessionStatus;
@@ -23,6 +24,8 @@ export interface SessionInfo {
   rows: number;
   seq: number;
   chat: boolean;
+  /** Wall-clock ms of the last output/input (0 = never). */
+  last_activity: number;
 }
 
 export interface Project {
@@ -97,7 +100,17 @@ export interface Settings {
   notifications: boolean;
   /** Toast once per shortcut when Erka keeps a key from the focused terminal. */
   shortcutHints: boolean;
+  projectFilter: "all" | "running" | "attention";
+  projectSort: "manual" | "recent";
   profiles: AgentProfile[];
+}
+
+export interface RecentItem {
+  kind: "session" | "project" | "file";
+  /** Session id, project id, or project-relative path for files. */
+  id: string;
+  projectId: string;
+  at: number;
 }
 
 export interface AppState {
@@ -106,6 +119,17 @@ export interface AppState {
   activeProject: string | null;
   workspaces: Record<string, Workspace>;
   settings: Settings;
+  recent: RecentItem[];
+  /** Projects whose session list is folded in the sidebar. */
+  collapsed: Record<string, boolean>;
+}
+
+export interface BranchInfo {
+  is_repo: boolean;
+  branch: string | null;
+  dirty: boolean;
+  ahead: number;
+  behind: number;
 }
 
 export interface DirEntry {

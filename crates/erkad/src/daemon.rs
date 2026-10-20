@@ -104,6 +104,20 @@ fn default_rows() -> u16 {
     32
 }
 
+/// `--model X`, `--model=X` or `-m X` in an agent's extra arguments.
+fn model_from_args(args: &[String]) -> Option<String> {
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        if a == "--model" || a == "-m" {
+            return it.next().cloned();
+        }
+        if let Some(m) = a.strip_prefix("--model=") {
+            return Some(m.to_string());
+        }
+    }
+    None
+}
+
 fn param<'a>(params: &'a Value, key: &str) -> Result<&'a Value> {
     params.get(key).ok_or_else(|| anyhow!("missing param `{key}`"))
 }
@@ -172,6 +186,7 @@ impl Daemon {
 
     pub fn create(&self, params: Value) -> Result<SessionInfo> {
         let p: CreateParams = serde_json::from_value(params).context("session.create params")?;
+        let model = model_from_args(&p.args);
         let spec = SessionSpec {
             id: p.id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
             project_id: p.project_id,
@@ -180,6 +195,7 @@ impl Daemon {
             cwd: p.cwd,
             args: p.args,
             env: p.env,
+            model,
             agent_session_id: p.agent_session_id,
             created_at: now_millis(),
         };
@@ -256,9 +272,17 @@ impl Daemon {
             if let Some(args) = params.get("args").and_then(Value::as_array) {
                 spec.args = args.iter().filter_map(|a| a.as_str().map(str::to_string)).collect();
             }
+            if let Some(model) = params.get("model") {
+                spec.model = model.as_str().map(str::to_string);
+            }
         }
         self.meta_dirty.store(true, Ordering::Relaxed);
-        Ok(entry.info())
+        // Spec changes are user-visible: broadcast now rather than waiting for a status change.
+        let info = entry.info();
+        if let Ok(v) = serde_json::to_value(&info) {
+            self.broadcast("session.updated", v);
+        }
+        Ok(info)
     }
 
     /// `erkad hook` reports from Claude Code / Codex running inside a session.
@@ -272,7 +296,7 @@ impl Daemon {
             .or_else(|| payload.get("type"))
             .and_then(Value::as_str)
             .unwrap_or("");
-        tracing::debug!(session_id, agent, event, "hook");
+        tracing::debug!(session_id, agent, event, keys = ?payload.as_object().map(|o| o.keys().cloned().collect::<Vec<_>>()), "hook");
         let agent_conv = match agent {
             "claude" => payload.get("session_id"),
             "codex" => payload.get("thread-id").or_else(|| payload.get("thread_id")),
@@ -283,6 +307,17 @@ impl Daemon {
             let mut spec = session.spec.lock();
             if spec.agent_session_id.as_deref() != Some(conv) {
                 spec.agent_session_id = Some(conv.to_string());
+                self.meta_dirty.store(true, Ordering::Relaxed);
+            }
+        }
+        // Claude's SessionStart carries the model (string or {id, display_name}).
+        let model = payload.get("model").and_then(|m| m.as_str().map(str::to_string).or_else(|| {
+            m.get("display_name").or_else(|| m.get("id")).and_then(Value::as_str).map(str::to_string)
+        }));
+        if let Some(model) = model {
+            let mut spec = session.spec.lock();
+            if spec.model.as_deref() != Some(model.as_str()) {
+                spec.model = Some(model);
                 self.meta_dirty.store(true, Ordering::Relaxed);
             }
         }
@@ -427,6 +462,14 @@ impl Daemon {
                 match self.entry(handle_of(&params)?)? {
                     Entry::Term(s) => s.set_focus(focused),
                     Entry::Chat(c) => c.set_focus(focused),
+                }
+                json!(true)
+            }
+            "session.set_unread" => {
+                let unread = params.get("unread").and_then(Value::as_bool).unwrap_or(true);
+                match self.entry(handle_of(&params)?)? {
+                    Entry::Term(s) => s.set_unread(unread),
+                    Entry::Chat(c) => c.set_unread(unread),
                 }
                 json!(true)
             }

@@ -1,7 +1,7 @@
 // Typed wrappers around the Tauri commands in app/src-tauri/src.
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { AttachReply, DirEntry, FileContent, GitStatus, SessionInfo } from "./types";
+import type { AttachReply, BranchInfo, DirEntry, FileContent, GitStatus, SessionInfo } from "./types";
 
 export const daemon = <T = unknown>(method: string, params: object = {}) =>
   invoke<T>("daemon_call", { method, params });
@@ -61,6 +61,7 @@ export const searchText = (root: string, query: string, regex: boolean, caseSens
   invoke<{ hits: TextHit[]; truncated: boolean; files_searched: number }>("search_text", { root, query, regex, caseSensitive });
 
 export const gitStatus = (root: string) => invoke<GitStatus>("git_status", { root });
+export const gitBranchInfo = (root: string) => invoke<BranchInfo>("git_branch_info", { root });
 export const gitFileVersions = (root: string, path: string, staged: boolean) =>
   invoke<{ original: string | null; modified: string | null }>("git_file_versions", { root, path, staged });
 export const gitStage = (root: string, paths: string[], stage: boolean) => invoke<void>("git_stage", { root, paths, stage });

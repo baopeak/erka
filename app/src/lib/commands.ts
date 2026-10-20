@@ -46,7 +46,7 @@ function zoom(delta: number) {
 }
 
 export const commands: Command[] = [
-  { id: "palette", label: "Command Palette", win: "mod+shift+p", mac: "mod+shift+p", run: () => store.setOverlay("palette") },
+  { id: "palette", label: "Search Everything", win: "mod+shift+p", mac: "mod+shift+p", run: () => store.setOverlay("palette") },
   { id: "quickopen", label: "Go to File…", win: "mod+shift+o", mac: "mod+p", run: () => store.setOverlay("quickopen"), when: hasProject },
   { id: "jump", label: "Jump to Session / Project…", win: "mod+shift+k", mac: "mod+k", run: () => store.setOverlay("jump") },
   { id: "dashboard", label: "Toggle Agent Dashboard", win: "mod+shift+m", mac: "mod+shift+m", run: () => store.setOverlay(store.overlay() === "dashboard" ? null : "dashboard") },
@@ -91,7 +91,7 @@ export const commands: Command[] = [
     id: "find", label: "Find in Terminal", win: "mod+shift+f", mac: "mod+f",
     run: () => window.dispatchEvent(new CustomEvent("erka:find")),
   },
-  { id: "settings", label: "Settings", win: "mod+,", mac: "mod+,", run: () => store.setOverlay("settings") },
+  { id: "settings", label: "Settings", win: "mod+,", mac: "mod+,", run: () => store.openSettings() },
   { id: "zoom.in", label: "Increase Font Size", win: "mod+=", mac: "mod+=", run: () => zoom(1) },
   { id: "zoom.out", label: "Decrease Font Size", win: "mod+-", mac: "mod+-", run: () => zoom(-1) },
   { id: "zoom.reset", label: "Reset Font Size", win: "mod+0", mac: "mod+0", run: () => zoom(0) },
@@ -169,8 +169,8 @@ function explainIntercept(cmd: Command) {
   if (!chord || explained.has(cmd.id) || !store.state.settings.shortcutHints) return;
   explained.add(cmd.id);
   store.notify(`${chordLabel(chord)} → ${cmd.label} (kept from the terminal)`, {
-    label: "Shortcuts",
-    run: () => store.setOverlay("settings"),
+    label: "Don't show again",
+    run: () => store.setSettings({ shortcutHints: false }),
   }, 5000);
 }
 

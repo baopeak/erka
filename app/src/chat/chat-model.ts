@@ -44,6 +44,7 @@ export interface AdapterContext {
   patch<T extends ChatItem>(id: string, fn: (item: T) => void): void;
   find(id: string): ChatItem | undefined;
   setConversation(id: string): void;
+  setModel(model: string | null): void;
   cwd: string;
   resumeId: string | null;
   replaying: () => boolean;
@@ -89,6 +90,11 @@ export class ChatController {
         if (this.state.conversationId === id) return;
         this.set("conversationId", id);
         void daemon("session.update", { handle: this.handle, agent_session_id: id }).catch(() => {});
+      },
+      setModel: (model) => {
+        if (this.state.model === model) return;
+        this.set("model", model);
+        if (model && !this.isReplaying) void daemon("session.update", { handle: this.handle, model }).catch(() => {});
       },
       cwd: this.cwd,
       resumeId: this.resumeId,

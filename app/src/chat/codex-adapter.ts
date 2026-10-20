@@ -142,7 +142,7 @@ export function createCodexAdapter(ctx: AdapterContext): Adapter {
           const thread = m.result?.thread;
           threadId = thread?.id ?? null;
           if (threadId) ctx.setConversation(threadId);
-          ctx.set("model", m.result?.model ?? null);
+          ctx.setModel(m.result?.model ?? null);
           renderTurns(thread?.turns);
           if (!ctx.replaying()) {
             for (const it of ctx.state.items) if (it.id.startsWith("queued-")) ctx.patch(it.id, (i: any) => (i.text = ""));

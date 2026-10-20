@@ -9,7 +9,8 @@ import { allPanes, findPane, leaf, removePane, replacePane, setRatio, splitPane 
 import { basename, uid } from "./platform";
 import { projectColors } from "./theme";
 import { disposeView, peekView, resetStreams } from "./terminal-host";
-import type { AppState, LayoutNode, Pane, Project, SessionInfo, SessionKind, Settings, Tab, Workspace } from "./types";
+import type { SettingsSection } from "./settings-catalog";
+import type { AppState, BranchInfo, LayoutNode, Pane, Project, RecentItem, SessionInfo, SessionKind, Settings, Tab, Workspace } from "./types";
 
 export const defaultSettings: Settings = {
   fontFamily: '"JetBrains Mono", "Cascadia Code", "Cascadia Mono", Menlo, Consolas, "Symbols Nerd Font Mono", monospace',
@@ -24,6 +25,8 @@ export const defaultSettings: Settings = {
   sidebarCollapsed: false,
   notifications: true,
   shortcutHints: true,
+  projectFilter: "all",
+  projectSort: "manual",
   profiles: [
     { kind: "claude", label: "Claude Code", args: [] },
     { kind: "codex", label: "Codex", args: [] },
@@ -31,7 +34,8 @@ export const defaultSettings: Settings = {
   ],
 };
 
-const emptyState = (): AppState => ({ version: 1, projects: [], activeProject: null, workspaces: {}, settings: { ...defaultSettings } });
+const emptyState = (): AppState => ({ version: 1, projects: [], activeProject: null, workspaces: {}, settings: { ...defaultSettings }, recent: [], collapsed: {} });
+const MAX_RECENT = 40;
 
 export type Overlay = null | "palette" | "quickopen" | "jump" | "dashboard" | "settings" | "newsession";
 
@@ -39,6 +43,8 @@ function createAppStore() {
   const [state, setState] = createStore<AppState>(emptyState());
   /** Daemon sessions keyed by stable session id. */
   const [sessions, setSessions] = createStore<Record<string, SessionInfo>>({});
+  /** Branch / dirty summary per project (sidebar subtitle). */
+  const [projectInfo, setProjectInfo] = createStore<Record<string, BranchInfo>>({});
   const [connected, setConnected] = createSignal(false);
   const [overlay, setOverlay] = createSignal<Overlay>(null);
   const [loaded, setLoaded] = createSignal(false);
@@ -46,6 +52,7 @@ function createAppStore() {
   /** Per-tab zoomed pane (transient, not persisted). */
   const [zoomed, setZoomed] = createSignal<Record<string, string>>({});
   const [lastSwitchMs, setLastSwitchMs] = createSignal<number | null>(null);
+  const [settingsSection, setSettingsSection] = createSignal<SettingsSection>("agents");
 
   // ---------- persistence ----------
   let saveTimer = 0;
@@ -71,6 +78,20 @@ function createAppStore() {
       else next[tabId] = paneId;
       return next;
     });
+  }
+
+  // ---------- recents & per-project git summary ----------
+  function recordRecent(kind: RecentItem["kind"], id: string, projectId: string) {
+    update((s) => {
+      s.recent = [{ kind, id, projectId, at: Date.now() }, ...(s.recent ?? []).filter((r) => !(r.kind === kind && r.id === id))].slice(0, MAX_RECENT);
+    });
+  }
+
+  async function refreshProjectInfo(projectId: string) {
+    const p = state.projects.find((x) => x.id === projectId);
+    if (!p) return;
+    const info = await ipc.gitBranchInfo(p.path).catch(() => null);
+    if (info) setProjectInfo(projectId, reconcile(info));
   }
 
   // ---------- sessions ----------
@@ -184,6 +205,8 @@ function createAppStore() {
     setLastSwitchMs(null);
     ensureWorkspace(id);
     update((s) => (s.activeProject = id));
+    recordRecent("project", id, id);
+    void refreshProjectInfo(id);
     // Measure until the new project's panes have painted.
     requestAnimationFrame(() => requestAnimationFrame(() => setLastSwitchMs(Math.round(performance.now() - t0))));
   }
@@ -228,6 +251,9 @@ function createAppStore() {
   }
 
   function focusPane(projectId: string, tabId: string, paneId: string) {
+    // Focus must never point at a pane hidden by another pane's maximize.
+    const z = zoomed()[tabId];
+    if (z && z !== paneId) toggleZoom(tabId, z);
     const ws = state.workspaces[projectId];
     const tab = ws?.tabs.find((t) => t.id === tabId);
     if (!tab || (tab.focus === paneId && ws.activeTab === tabId)) return;
@@ -290,6 +316,7 @@ function createAppStore() {
   /** Reveals a session: switches project/tab, or opens it in a new tab if not in any layout. */
   function revealSession(sessionId: string) {
     const loc = paneLocation(sessionId);
+    recordRecent("session", sessionId, sessions[sessionId]?.project_id ?? loc?.projectId ?? state.activeProject ?? "");
     if (loc) {
       switchProject(loc.projectId);
       focusPane(loc.projectId, loc.tabId, loc.paneId);
@@ -304,6 +331,7 @@ function createAppStore() {
 
   function openFile(projectId: string, path: string, opts: { line?: number; diff?: boolean; staged?: boolean } = {}) {
     const kind = opts.diff ? "diff" : "file";
+    if (!opts.diff) recordRecent("file", path, projectId);
     const ws = workspace(projectId);
     for (const tab of ws.tabs) {
       const pane = allPanes(tab.root).find((p) => p.kind === kind && p.path === path && !!p.staged === !!opts.staged);
@@ -361,6 +389,29 @@ function createAppStore() {
     });
   }
 
+  function openSettings(section?: SettingsSection) {
+    if (section) setSettingsSection(section);
+    setOverlay("settings");
+  }
+
+  function setCollapsed(projectId: string, folded: boolean) {
+    update((s) => {
+      s.collapsed ??= {};
+      if (folded) s.collapsed[projectId] = true;
+      else delete s.collapsed[projectId];
+    });
+  }
+
+  async function markUnread(sessionId: string, unread: boolean) {
+    const s = sessions[sessionId];
+    if (s) await ipc.daemon("session.set_unread", { handle: s.handle, unread }).catch((e) => notify(String(e)));
+  }
+
+  async function renameSession(sessionId: string, name: string | null) {
+    const s = sessions[sessionId];
+    if (s) await ipc.daemon("session.update", { handle: s.handle, name }).catch((e) => notify(String(e)));
+  }
+
   /** Shows a right-panel view without toggling it off when already shown. */
   function showRightPanel(panel: NonNullable<Workspace["rightPanel"]>) {
     const pid = state.activeProject;
@@ -380,6 +431,13 @@ function createAppStore() {
       setState(reconcile({ ...emptyState(), ...saved, settings: { ...defaultSettings, ...saved.settings } }));
     }
     setLoaded(true);
+    // Sidebar subtitles; git calls are capped at 3 in flight by the backend.
+    for (const p of state.projects) void refreshProjectInfo(p.id);
+    void ipc.onEvent<{ root: string; git: boolean }>("fs-changed", (e) => {
+      if (!e.git) return;
+      const p = state.projects.find((x) => x.path === e.root);
+      if (p) void refreshProjectInfo(p.id);
+    });
     await ipc.onEvent("daemon-event", onDaemonEvent);
     await ipc.onEvent<{ connected: boolean; error?: string }>("daemon-status", async (s) => {
       if (!s.connected) {
@@ -407,7 +465,9 @@ function createAppStore() {
     state, sessions, connected, overlay, setOverlay, loaded, toast, notify, lastSwitchMs,
     init, activeProject, workspace, activeTab, addProject, removeProject, renameProject, moveProject, switchProject,
     addTab, selectTab, cycleTab, focusPane, placePane, newSession, revealSession, openFile, closePane,
-    replacePaneIn, resizeSplit, setRightPanel, showRightPanel, setSettings, zoomed, toggleZoom, paneLocation, isSessionVisible, refreshSessions, setSessions,
+    replacePaneIn, resizeSplit, setRightPanel, showRightPanel, setSettings, zoomed, toggleZoom,
+    projectInfo, refreshProjectInfo, recordRecent, setCollapsed, markUnread, renameSession,
+    settingsSection, setSettingsSection, openSettings, paneLocation, isSessionVisible, refreshSessions, setSessions,
   };
 }
 

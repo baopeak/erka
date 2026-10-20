@@ -1,6 +1,6 @@
 // Files panel: header actions, a name filter over the project index, and Names / Contents modes
 // (Contents is search-in-files). Mirrors the explorer ergonomics users know from Orca/VS Code.
-import { For, Match, Show, Switch, createEffect, createSignal, on } from "solid-js";
+import { For, Match, Show, Switch, createEffect, createMemo, createSignal, on } from "solid-js";
 import { store } from "../lib/store";
 import { quickOpen, type QuickOpenHit } from "../lib/ipc";
 import { gitState } from "../lib/git-state";
@@ -17,12 +17,13 @@ export function Explorer(props: { project: Project }) {
   let seq = 0;
 
   createEffect(on(filter, (q) => {
-    if (!q.trim()) return setHits([]);
     const mine = ++seq;
-    void quickOpen(props.project.path, q, 200).then((h) => mine === seq && setHits(h)).catch(() => setHits([]));
+    if (!q.trim()) return setHits([]);
+    void quickOpen(props.project.path, q, 200).then((h) => mine === seq && setHits(h)).catch(() => mine === seq && setHits([]));
   }));
 
-  const deco = () => gitState.decorations();
+  const deco = createMemo(() => gitState.decorations());
+  const filtering = () => !!filter().trim();
 
   return (
     <div class="explorer">
@@ -44,9 +45,13 @@ export function Explorer(props: { project: Project }) {
           <button class={mode() === "contents" ? "on" : ""} onClick={() => store.showRightPanel("search")}>Contents</button>
         </div>
       </div>
+      <Show when={mode() === "contents"}><SearchPanel project={props.project} /></Show>
+      {/* The tree stays mounted (hidden) so expansion and scroll survive filtering. */}
+      <div style={{ display: mode() === "names" && !filtering() ? "contents" : "none" }}>
+        <FileTree project={props.project} api={(a) => (api = a)} />
+      </div>
       <Switch>
-        <Match when={mode() === "contents"}><SearchPanel project={props.project} /></Match>
-        <Match when={filter().trim()}>
+        <Match when={mode() === "names" && filtering()}>
           <div class="list">
             <For each={hits()} fallback={<div class="muted">No matching files</div>}>
               {(h) => {
@@ -63,7 +68,6 @@ export function Explorer(props: { project: Project }) {
             </For>
           </div>
         </Match>
-        <Match when={true}><FileTree project={props.project} api={(a) => (api = a)} /></Match>
       </Switch>
     </div>
   );

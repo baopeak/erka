@@ -103,6 +103,7 @@ pub fn run() {
             watcher::fs_watch,
             watcher::fs_unwatch,
             git::git_status,
+            git::git_branch_info,
             git::git_file_versions,
             git::git_stage,
             git::git_discard,

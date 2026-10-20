@@ -115,7 +115,7 @@ export function createClaudeAdapter(ctx: AdapterContext): Adapter {
       switch (m.type) {
         case "system":
           if (m.subtype === "init") {
-            ctx.set("model", m.model ?? null);
+            ctx.setModel(m.model ?? null);
             if (m.session_id) ctx.setConversation(m.session_id);
           } else if (m.subtype === "status") {
             ctx.set("status", m.status ?? null);
