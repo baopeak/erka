@@ -213,4 +213,4 @@ plans/               implementation plans and reports
 
 Version 0.1.0. Developed and tested on Windows 10; the macOS build is produced by CI but has had less hands-on testing. The UI design takes inspiration from [Orca](https://github.com/stablyai/orca).
 
-Licensed under the MIT license (as declared in `Cargo.toml`).
+Licensed under the [MIT license](LICENSE). The bundled ConPTY binaries in `third_party/conpty` are Microsoft's, also MIT — see [docs/third-party-conpty.md](docs/third-party-conpty.md).
