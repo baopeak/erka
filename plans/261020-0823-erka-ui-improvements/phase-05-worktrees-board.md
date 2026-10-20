@@ -1,4 +1,4 @@
-# Phase 5 — Worktree + workspace board (chờ quyết định)
+# Phase 5 — Worktree + workspace board (đã quyết: làm, giữ thư mục thường)
 
 ## Context
 

@@ -69,6 +69,19 @@ fn collect(daemon_pid: Option<u32>) -> MemoryStats {
     }
 }
 
+/// Which of `pids` are still running (e.g. while waiting for stopped sessions to exit).
+#[tauri::command]
+pub async fn processes_alive(pids: Vec<u32>) -> CmdResult<Vec<u32>> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut sys = SYS.lock();
+        let list: Vec<Pid> = pids.iter().map(|p| Pid::from_u32(*p)).collect();
+        sys.refresh_processes_specifics(ProcessesToUpdate::Some(&list), true, ProcessRefreshKind::nothing());
+        pids.into_iter().filter(|p| sys.process(Pid::from_u32(*p)).is_some()).collect()
+    })
+    .await
+    .map_err(err)
+}
+
 #[tauri::command]
 pub async fn memory_stats(daemon_pid: Option<u32>) -> CmdResult<MemoryStats> {
     tauri::async_runtime::spawn_blocking(move || collect(daemon_pid)).await.map_err(err)

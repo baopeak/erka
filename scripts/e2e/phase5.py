@@ -23,17 +23,27 @@ def git(*args):
     return subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True, check=True).stdout
 
 
-# Fresh repository with an .erka.yaml (leftovers of an earlier run are discarded first).
-for path in (repo, repo + "-worktrees"):
-    shutil.rmtree(path, ignore_errors=True)
-os.makedirs(repo)
-git("init", "-q", "-b", "main")
-git("config", "user.email", "e2e@erka.test")
-git("config", "user.name", "Erka e2e")
-open(os.path.join(repo, "README.md"), "w").write("worktree test\n")
-open(os.path.join(repo, ".erka.yaml"), "w").write("setup:\n  - echo erka-setup-ran\ntabs:\n  - shell\n")
-git("add", ".")
-git("commit", "-q", "-m", "init")
+def _writable_and_retry(func, path, _exc):
+    os.chmod(path, 0o666)  # git object files are read-only on Windows
+    func(path)
+
+
+def fresh_repo():
+    """Repository with an .erka.yaml; leftovers of an earlier run are discarded first."""
+    for path in (repo, repo + "-worktrees"):
+        if os.path.exists(path):
+            shutil.rmtree(path, onexc=_writable_and_retry)
+    os.makedirs(repo)
+    git("init", "-q", "-b", "main")
+    git("config", "user.email", "e2e@erka.test")
+    git("config", "user.name", "Erka e2e")
+    open(os.path.join(repo, "README.md"), "w").write("worktree test\n")
+    # The nonce makes this a file the user has not approved before (approvals are by content).
+    open(os.path.join(repo, ".erka.yaml"), "w").write(f"# run {time.time()}\nsetup:\n  - echo erka-setup-ran\ntabs:\n  - shell\n")
+    git("add", ".")
+    git("commit", "-q", "-m", "init")
+
+
 
 run = Run(shots)
 d = run.d
@@ -69,6 +79,8 @@ try:
     for s in daemon(d, "session.list"):
         daemon(d, "session.close", {"handle": s["handle"]})
     d.js(f"const s = {S}; for (const p of [...s.state.projects]) s.removeProject(p.id);")
+    time.sleep(1.5)  # let closed sessions release their folders
+    fresh_repo()
     repo_id = d.js(f"return {S}.addProject(arguments[0])", repo)
     d.wait(f"return {S}.projectInfo[arguments[0]]?.is_repo || null", 15, 0.25, repo_id)
 
@@ -78,9 +90,16 @@ try:
         d.js("[...document.querySelectorAll('.ctx-item')].find(e => e.innerText.startsWith('New worktree')).click()")
         d.wait("return !!document.querySelector('.worktree-dialog input')", 5)
         d.js("const i = document.querySelector('.worktree-dialog input'); i.value = arguments[0]; i.dispatchEvent(new Event('input', {bubbles: true}));", branch)
-        d.wait("return !!document.querySelector('.worktree-dialog .form-check')", 5)
+        d.wait("return !!document.querySelector('.worktree-dialog .form-check input')", 10)
+        ticked = d.js("return document.querySelector('.worktree-dialog .form-check input').checked")
         if i == 0:
+            shown = d.js("return document.querySelector('.erka-config-body').innerText")
+            run.check(".erka.yaml commands are shown before creating", "$ echo erka-setup-ran" in shown and "tab: shell" in shown, shown.replace(chr(10), " | "))
+            run.check("running .erka.yaml is opt-in the first time", ticked is False)
+            d.js("document.querySelector('.worktree-dialog .form-check input').click()")
             run.shot("p5-01-new-worktree")
+        elif i == 1:
+            run.check("an approved .erka.yaml is pre-selected next time", ticked is True)
         d.js("[...document.querySelectorAll('.worktree-dialog .btn')].find(b => b.innerText.startsWith('Create')).click()")
         d.wait("return !document.querySelector('.worktree-dialog')", 30)
     kids = children(repo_id)
@@ -129,7 +148,10 @@ try:
     d.js("document.querySelector(`[data-card='${arguments[0]}'] .pin`).click()", kids[2]["id"])
     run.check("pinning a card", d.js(f"return !!{S}.state.projects.find(p => p.id === arguments[0]).pinned", kids[2]["id"]))
     run.shot("p5-03-board")
-    d.js(f"document.querySelector(`[data-card='${{arguments[0]}}'] .board-card-name`).dispatchEvent(new PointerEvent('pointerdown', {{bubbles: true, button: 0, clientX: 10, clientY: 10}})); window.dispatchEvent(new PointerEvent('pointerup', {{clientX: 10, clientY: 10}}));", kids[0]["id"])
+    x, y = center(f"[data-card='{kids[0]['id']}'] .board-card-name")
+    d._req("POST", d.s("/actions"), {"actions": [{"type": "pointer", "id": "mouse", "parameters": {"pointerType": "mouse"}, "actions": [
+        {"type": "pointerMove", "x": int(x), "y": int(y), "duration": 0}, {"type": "pointerDown", "button": 0}, {"type": "pointerUp", "button": 0}]}]})
+    d._req("DELETE", d.s("/actions"))
     time.sleep(0.4)
     run.check("clicking a card opens its worktree", d.js(f"return {S}.state.activeProject") == kids[0]["id"] and d.js(f"return {S}.overlay()") is None)
 
@@ -150,12 +172,28 @@ try:
     run.check("other worktrees keep running", all(any(s["alive"] for s in sessions_of(k["id"])) for k in (kids[0], kids[2])))
     run.shot("p5-04-after-remove")
 
+    # ---------- a detached worktree with its own commit is protected ----------
+    det = os.path.join(repo + "-worktrees", "detached")
+    git("worktree", "add", "-q", "--detach", det)
+    subprocess.run(["git", "-C", det, "commit", "-q", "--allow-empty", "-m", "only here"], check=True, capture_output=True)
+    d.js(f"document.querySelector('[data-project=\"{repo_id}\"]').dispatchEvent(new MouseEvent('contextmenu', {{bubbles: true, clientX: 120, clientY: 140}}))")
+    d.js("[...document.querySelectorAll('.ctx-item')].find(e => e.innerText.startsWith('Add existing worktrees')).click()")
+    det_id = d.wait(f"return {S}.childrenOf(arguments[0]).find(p => p.path.toLowerCase().endsWith('detached'))?.id || null", 10, 0.25, repo_id)
+    run.check("existing worktrees are picked up (main worktree not duplicated)", det_id is not None and len(children(repo_id)) == 3, str([k["name"] for k in children(repo_id)]))
+    d.js(f"document.querySelector('[data-project=\"{det_id}\"]').dispatchEvent(new MouseEvent('contextmenu', {{bubbles: true, clientX: 120, clientY: 260}}))")
+    d.js("[...document.querySelectorAll('.ctx-item')].find(e => e.innerText.startsWith('Remove worktree')).click()")
+    toast = d.wait("const t = document.querySelector('.toast')?.innerText || ''; return t.includes('detached') ? t : null", 15)
+    run.check("removing a detached worktree with unique commits is refused", "detached HEAD" in toast and os.path.isdir(det), toast)
+    run.shot("p5-05-detached-protected")
+    d.js(f"{S}.removeProject(arguments[0])", det_id)
+    git("worktree", "remove", "--force", det)
+
     # ---------- state migration keeps a backup ----------
     data_dir = d.js_async("const done = arguments[arguments.length-1]; window.__TAURI_INTERNALS__.invoke('platform_info').then(i => done(i.data_dir));")
     state_file = os.path.join(data_dir, "app-state.json")
-    backup = os.path.join(data_dir, "app-state.v1.bak.json")
-    if os.path.exists(backup):
-        os.remove(backup)
+    import glob
+    for old in glob.glob(os.path.join(data_dir, "app-state.v1-*.bak.json")):
+        os.remove(old)
     time.sleep(1)
     st = json.load(open(state_file, encoding="utf8"))
     st["version"] = 1
@@ -164,7 +202,8 @@ try:
     time.sleep(2)
     run.boot()
     time.sleep(1)
-    run.check("an old state file is backed up before migration", os.path.exists(backup) and json.load(open(backup, encoding="utf8"))["version"] == 1)
+    backups = glob.glob(os.path.join(data_dir, "app-state.v1-*.bak.json"))
+    run.check("an old state file is backed up before migration", len(backups) == 1 and json.load(open(backups[0], encoding="utf8"))["version"] == 1, str(backups))
     run.check("and rewritten in the current format", json.load(open(state_file, encoding="utf8"))["version"] == 2
               and d.js(f"return {S}.childrenOf(arguments[0]).length", repo_id) == 2)
 

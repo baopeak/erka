@@ -10,7 +10,7 @@ import { switchToChat, switchToTerminal, supportsChat } from "../chat/mode-switc
 import { daemon } from "../lib/ipc";
 import { Icon, KindGlyph } from "./icons";
 import { canGoBack, canGoForward, navBack, navForward } from "../lib/nav-history";
-import { addExistingWorktrees, removeWorktree } from "../lib/worktrees";
+import { addExistingWorktrees, checkRemoval, removeWorktree } from "../lib/worktrees";
 import { openWorktreeDialog } from "./worktree-dialog";
 import { openContextMenu, type MenuItem } from "./context-menu";
 import type { Project, SessionInfo } from "../lib/types";
@@ -99,16 +99,36 @@ function sessionMenu(s: SessionInfo): MenuItem[] {
   return items;
 }
 
+/** One confirmation that states everything removal loses, asked before anything is stopped. */
 async function confirmRemoveWorktree(p: Project) {
-  const n = projectSessions(p.id).filter((s) => s.alive).length;
-  const what = `Remove worktree “${p.name}”?\n\n${p.path}\n\n${n ? `Its ${n} running session${n > 1 ? "s" : ""} will be stopped. ` : ""}The branch ${p.branch ?? ""} is kept.`;
-  if (!confirm(what)) return;
+  const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+  let check;
   try {
-    let result = await removeWorktree(p);
-    if (result === "dirty" && confirm(`“${p.name}” has uncommitted or untracked changes. Remove the folder anyway (they are lost; the branch is kept)?`)) {
-      result = await removeWorktree(p, { force: true });
-    }
-    if (result === "removed") store.notify(`Removed worktree ${p.name}; branch kept`);
+    check = await checkRemoval(p);
+  } catch (e) {
+    return store.notify(`Could not inspect the worktree: ${String(e)}`, undefined, 8000);
+  }
+  if (check.orphanCommits) {
+    return store.notify(
+      `“${p.name}” is on a detached HEAD with ${plural(check.orphanCommits, "commit")} no branch contains. Create a branch for them first (git switch -c <name>), then remove the worktree.`,
+      undefined, 15000,
+    );
+  }
+  const running = projectSessions(p.id).filter((s) => s.alive).length;
+  const text = [
+    `Remove worktree “${p.name}”?`,
+    p.path,
+    running ? `Its ${plural(running, "running session")} will be stopped.` : "",
+    check.changes ? `${plural(check.changes, "uncommitted or untracked file")} will be lost.` : "",
+    "Ignored files in the folder (e.g. .env, build output) are deleted too.",
+    check.branch ? `The branch ${check.branch} is kept.` : "",
+  ].filter(Boolean).join("\n\n");
+  if (!confirm(text)) return;
+  try {
+    const { leftover } = await removeWorktree(p, { force: check.changes > 0 });
+    store.notify(leftover
+      ? `Removed worktree ${p.name}, but its folder could not be fully deleted (a program still uses it): ${p.path}`
+      : `Removed worktree ${p.name}${check.branch ? `; branch ${check.branch} kept` : ""}`, undefined, leftover ? 12000 : 4000);
   } catch (e) {
     store.notify(`Could not remove worktree: ${String(e).replace(/^Error: /, "")}`, undefined, 8000);
   }

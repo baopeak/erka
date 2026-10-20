@@ -6,7 +6,7 @@ import { isPermissionGranted, requestPermission, sendNotification } from "@tauri
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import * as ipc from "./ipc";
 import { allPanes, findPane, leaf, removePane, replacePane, setRatio, splitPane } from "./layout";
-import { basename, uid } from "./platform";
+import { basename, normPath, uid } from "./platform";
 import { projectColors } from "./theme";
 import { disposeView, peekView, resetStreams } from "./terminal-host";
 import type { SettingsSection } from "./settings-catalog";
@@ -44,7 +44,7 @@ export const defaultSettings: Settings = {
 
 /** app-state.json format; older files are migrated (after a backup) on load. */
 const STATE_VERSION = 2;
-const emptyState = (): AppState => ({ version: STATE_VERSION, projects: [], activeProject: null, workspaces: {}, settings: { ...defaultSettings }, recent: [], collapsed: {}, keymap: {} });
+const emptyState = (): AppState => ({ version: STATE_VERSION, projects: [], activeProject: null, workspaces: {}, settings: { ...defaultSettings }, recent: [], collapsed: {}, keymap: {}, approvedSetups: {} });
 const MAX_RECENT = 40;
 
 export type Overlay = null | "palette" | "quickopen" | "jump" | "dashboard" | "settings" | "newsession" | "board" | "worktree";
@@ -68,7 +68,10 @@ function createAppStore() {
 
   // ---------- persistence ----------
   let saveTimer = 0;
+  /** Set when saving could destroy data we could not back up or do not understand. */
+  let persistBlocked = false;
   const persist = () => {
+    if (!loaded() || persistBlocked) return;
     clearTimeout(saveTimer);
     saveTimer = window.setTimeout(() => void ipc.saveState(JSON.parse(JSON.stringify(state))).catch(() => {}), 400);
   };
@@ -222,7 +225,7 @@ function createAppStore() {
     if (!state.workspaces[projectId]) update((s) => (s.workspaces[projectId] = { tabs: [], activeTab: null, rightPanel: "files" }));
   }
 
-  const samePath = (a: string, b: string) => a.replace(/[\\/]+$/, "").toLowerCase() === b.replace(/[\\/]+$/, "").toLowerCase();
+  const samePath = (a: string, b: string) => normPath(a) === normPath(b);
 
   /** Adds a folder (or, with `parentId`, a worktree of that project) and returns its id. */
   function addProject(path: string, opts: { parentId?: string; branch?: string; name?: string; open?: boolean } = {}): string {
@@ -277,6 +280,14 @@ function createAppStore() {
     });
   }
 
+  /** Remembers a `.erka.yaml` (by hash) the user agreed to run for this repository. */
+  function approveSetup(repoPath: string, hash: string) {
+    update((s) => {
+      s.approvedSetups ??= {};
+      s.approvedSetups[normPath(repoPath)] = hash;
+    });
+  }
+
   function togglePin(id: string) {
     update((s) => {
       const p = s.projects.find((x) => x.id === id);
@@ -296,7 +307,9 @@ function createAppStore() {
     update((s) => {
       const me = s.projects.find((p) => p.id === id);
       if (!me) return;
-      const siblings = s.projects.filter((p) => (p.parentId ?? null) === (me.parentId ?? null));
+      // A worktree whose repository is gone sits at the top level: move it among those.
+      const parentOf = (p: Project) => (p.parentId && s.projects.some((x) => x.id === p.parentId) ? p.parentId : null);
+      const siblings = s.projects.filter((p) => parentOf(p) === parentOf(me));
       const other = siblings[siblings.indexOf(me) + delta];
       if (!other) return;
       const i = s.projects.indexOf(me);
@@ -562,30 +575,43 @@ function createAppStore() {
 
   // ---------- boot ----------
   async function init() {
-    let saved: AppState | null = null;
-    let unreadable = false;
+    // Never let a default state silently replace a file we could not read or whose format we
+    // do not own: keep a copy first, and do not save at all when that is impossible.
+    let saved: any = null;
+    let problem: string | null = null;
     try {
-      saved = (await ipc.loadState()) as AppState | null;
-    } catch {
-      unreadable = true;
+      saved = await ipc.loadState();
+    } catch (e) {
+      problem = `could not be read (${String(e)})`;
     }
-    // Never let a fresh default state silently replace a file we could not read or that a
-    // different format version wrote: keep a copy first.
-    if (unreadable) {
+    const version = saved && typeof saved === "object" ? saved.version : undefined;
+    if (saved !== null && !problem && !(Number.isInteger(version) && version >= 1)) problem = "has an unknown format";
+    let migrate = false;
+    if (problem) {
       const copy = await ipc.stateBackup("unreadable").catch(() => null);
-      notify(`Saved app state could not be read${copy ? `; a copy was kept at ${copy}` : ""}. Starting fresh.`, undefined, 10000);
-    }
-    let migrated = false;
-    if (saved && typeof saved.version === "number") {
-      if (saved.version !== STATE_VERSION) {
-        await ipc.stateBackup(`v${saved.version}`).catch(() => null);
-        migrated = true;
+      if (copy) notify(`Saved app state ${problem}; a copy was kept at ${copy}. Starting fresh.`, undefined, 12000);
+      else {
+        persistBlocked = true;
+        notify(`Saved app state ${problem} and could not be backed up; changes in this session will not be saved.`, undefined, 15000);
       }
+      saved = null;
+    } else if (saved && version !== STATE_VERSION) {
+      const copy = await ipc.stateBackup(`v${version}`).catch(() => null);
+      if (version > STATE_VERSION) {
+        // Written by a newer Erka: use what we understand, never write it back in our format.
+        persistBlocked = true;
+        notify("App state was written by a newer version of Erka; changes in this session will not be saved.", undefined, 12000);
+      } else if (!copy) {
+        persistBlocked = true;
+        notify("App state could not be backed up before updating its format; changes in this session will not be saved.", undefined, 12000);
+      } else migrate = true;
+    }
+    if (saved) {
       // v1 → v2 only added optional fields (worktree parent/branch, board status, keymap).
       setState(reconcile({ ...emptyState(), ...saved, version: STATE_VERSION, settings: { ...defaultSettings, ...saved.settings } }));
     }
-    if (migrated) persist();
     setLoaded(true);
+    if (migrate) persist();
     // Sidebar subtitles; git calls are capped at 3 in flight by the backend.
     for (const p of state.projects) refreshProjectInfo(p.id, 0);
     void ipc.onEvent<{ root: string; git: boolean }>("fs-changed", (e) => {
@@ -623,7 +649,7 @@ function createAppStore() {
     init, activeProject, workspace, activeTab, addProject, removeProject, renameProject, moveProject, switchProject,
     addTab, selectTab, cycleTab, focusPane, placePane, newSession, revealSession, openFile, closePane,
     replacePaneIn, resizeSplit, setRightPanel, showRightPanel, setSettings, zoomed, toggleZoom,
-    topProjects, childrenOf, setProjectStatus, togglePin,
+    topProjects, childrenOf, setProjectStatus, togglePin, approveSetup,
     projectInfo, refreshProjectInfo, recordRecent, setCollapsed, markUnread, renameSession, profileLaunch, setShortcut, setProfile,
     settingsSection, setSettingsSection, settingsItem, openSettings, paneLocation, isSessionVisible, refreshSessions, setSessions,
   };

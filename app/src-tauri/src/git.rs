@@ -218,6 +218,8 @@ pub struct Worktree {
     branch: Option<String>,
     bare: bool,
     detached: bool,
+    /// Registered but its folder is gone (`git worktree prune` would drop it).
+    prunable: bool,
 }
 
 #[tauri::command]
@@ -226,7 +228,7 @@ pub async fn git_worktrees(root: String) -> CmdResult<Vec<Worktree>> {
     let out = git_ok(&dir, &["worktree", "list", "--porcelain"]).await?;
     let mut list = Vec::new();
     for block in out.split("\n\n") {
-        let mut wt = Worktree { path: String::new(), head: None, branch: None, bare: false, detached: false };
+        let mut wt = Worktree { path: String::new(), head: None, branch: None, bare: false, detached: false, prunable: false };
         for line in block.lines() {
             if let Some(p) = line.strip_prefix("worktree ") {
                 wt.path = p.to_string();
@@ -238,6 +240,8 @@ pub async fn git_worktrees(root: String) -> CmdResult<Vec<Worktree>> {
                 wt.bare = true;
             } else if line == "detached" {
                 wt.detached = true;
+            } else if line.starts_with("prunable") {
+                wt.prunable = true;
             }
         }
         if !wt.path.is_empty() {
@@ -251,11 +255,47 @@ pub async fn git_worktrees(root: String) -> CmdResult<Vec<Worktree>> {
 #[tauri::command]
 pub async fn git_worktree_add(root: String, path: String, branch: String, base: Option<String>) -> CmdResult<()> {
     let dir = guard(&root, "")?;
-    let mut args = vec!["worktree", "add", "-b", branch.as_str(), path.as_str()];
-    if let Some(b) = base.as_deref() {
+    let path = path.trim();
+    if !Path::new(path).is_absolute() {
+        return Err("the worktree folder must be an absolute path".into());
+    }
+    // A leading "-" would be read as an option, not a name.
+    if branch.starts_with('-') || base.as_deref().is_some_and(|b| b.trim().starts_with('-')) {
+        return Err("branch and base must not start with '-'".into());
+    }
+    let mut args = vec!["worktree", "add", "-b", branch.as_str(), "--", path];
+    if let Some(b) = base.as_deref().map(str::trim).filter(|b| !b.is_empty()) {
         args.push(b);
     }
     git_ok(&dir, &args).await.map(|_| ())
+}
+
+/// Drops worktree records whose folder is gone (after an interrupted removal).
+#[tauri::command]
+pub async fn git_worktree_prune(root: String) -> CmdResult<()> {
+    let dir = guard(&root, "")?;
+    git_ok(&dir, &["worktree", "prune"]).await.map(|_| ())
+}
+
+/// A file as committed at `rev` (e.g. the base of a new worktree); `None` when absent.
+#[tauri::command]
+pub async fn git_show_file(root: String, rev: String, path: String) -> CmdResult<Option<String>> {
+    let dir = guard(&root, "")?;
+    if rev.starts_with('-') || path.contains("..") {
+        return Err("invalid revision or path".into());
+    }
+    let spec = format!("{}:{}", if rev.trim().is_empty() { "HEAD" } else { rev.trim() }, path);
+    let out = git(&dir, &["show", spec.as_str()]).await?;
+    Ok(out.ok.then(|| String::from_utf8_lossy(&out.stdout).into_owned()))
+}
+
+/// Commits reachable from this worktree's HEAD but from no branch, tag or remote: they live
+/// only in its HEAD (detached checkouts) and would be lost with the worktree.
+#[tauri::command]
+pub async fn git_orphan_commits(root: String) -> CmdResult<u32> {
+    let dir = guard(&root, "")?;
+    let out = git_ok(&dir, &["rev-list", "--count", "HEAD", "--not", "--branches", "--tags", "--remotes"]).await?;
+    out.trim().parse().map_err(|_| "unexpected git output".to_string())
 }
 
 #[tauri::command]

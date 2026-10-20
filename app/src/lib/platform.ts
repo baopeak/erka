@@ -26,6 +26,9 @@ export function chordLabel(chord: string): string {
     .join(isMac ? "" : "+");
 }
 
+/** Comparable form of a folder path: forward slashes, no trailing slash, case-folded. */
+export const normPath = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+
 export function basename(p: string): string {
   const parts = p.replace(/\\/g, "/").replace(/\/+$/, "").split("/");
   return parts[parts.length - 1] || p;

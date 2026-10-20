@@ -4,6 +4,7 @@
 import { For, Show, createMemo, createSignal, onCleanup } from "solid-js";
 import { store } from "../lib/store";
 import { Icon, KindGlyph } from "./icons";
+import { openContextMenu, type MenuItem } from "./context-menu";
 import { StatusDot } from "./sidebar";
 import type { Project, WorkStatus } from "../lib/types";
 
@@ -24,13 +25,37 @@ interface Drag {
   over: WorkStatus | null;
 }
 
-function Card(props: { project: Project; ghost?: boolean; onPointerDown?: (e: PointerEvent) => void }) {
+function cardMenu(p: Project, open: () => void): MenuItem[] {
+  return [
+    { label: "Open", run: open },
+    { label: p.pinned ? "Unpin" : "Pin to top", run: () => store.togglePin(p.id) },
+    null,
+    ...COLUMNS.filter((c) => c.id !== (p.status ?? "todo")).map((c) => ({ label: `Move to ${c.label}`, run: () => store.setProjectStatus(p.id, c.id) })),
+  ];
+}
+
+function Card(props: { project: Project; ghost?: boolean; onPointerDown?: (e: PointerEvent) => void; onOpen?: () => void }) {
   const sessions = createMemo(() => Object.values(store.sessions).filter((s) => s.project_id === props.project.id && s.alive));
   const parent = () => store.state.projects.find((p) => p.id === props.project.parentId);
   const info = () => store.projectInfo[props.project.id];
   const attention = () => sessions().filter((s) => s.status === "waiting" || s.unread).length;
   return (
-    <div class={`board-card${props.ghost ? " ghost" : ""}${store.state.activeProject === props.project.id ? " current" : ""}`} data-card={props.project.id} onPointerDown={props.onPointerDown}>
+    <div
+      class={`board-card${props.ghost ? " ghost" : ""}${store.state.activeProject === props.project.id ? " current" : ""}`}
+      data-card={props.project.id}
+      tabIndex={props.ghost ? -1 : 0}
+      onPointerDown={props.onPointerDown}
+      // Keyboard: Enter opens, the context-menu key (or Shift+F10) moves between columns.
+      onKeyDown={(e) => {
+        if (e.key === "Enter") props.onOpen?.();
+        if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) {
+          e.preventDefault();
+          const r = e.currentTarget.getBoundingClientRect();
+          openContextMenu(new MouseEvent("contextmenu", { clientX: r.left + 20, clientY: r.bottom }), cardMenu(props.project, () => props.onOpen?.()));
+        }
+      }}
+      onContextMenu={(e) => !props.ghost && openContextMenu(e, cardMenu(props.project, () => props.onOpen?.()))}
+    >
       <div class="board-card-head">
         <Show when={parent()} fallback={<span class="project-swatch" style={{ background: props.project.color }}>{props.project.name.slice(0, 1).toUpperCase()}</span>}>
           <span class="wt-glyph" style={{ color: props.project.color }}><Icon name="branch" size={13} /></span>
@@ -74,22 +99,28 @@ export function Board() {
   };
 
   // Press → move ≥ 4 px starts a drag; release over a column moves the card there, a release
-  // without moving opens the project.
+  // without moving opens the project. The pointer is captured, so a release outside the window
+  // (or a cancelled pointer) still ends the drag.
   function startDrag(e: PointerEvent, id: string) {
     if (e.button !== 0) return;
     const card = e.currentTarget as HTMLElement;
+    card.setPointerCapture(e.pointerId);
     const rect = card.getBoundingClientRect();
     const start = { x: e.clientX, y: e.clientY };
     let moved = false;
     const columnAt = (x: number, y: number) => (document.elementFromPoint(x, y)?.closest("[data-col]") as HTMLElement | null)?.dataset.col as WorkStatus | undefined;
+    const cancel = () => {
+      detach?.();
+      setDrag(null);
+    };
     const move = (ev: PointerEvent) => {
+      if (ev.buttons === 0) return cancel();
       if (!moved && Math.hypot(ev.clientX - start.x, ev.clientY - start.y) < 4) return;
       moved = true;
       setDrag({ id, x: ev.clientX, y: ev.clientY, dx: start.x - rect.left, dy: start.y - rect.top, width: rect.width, over: columnAt(ev.clientX, ev.clientY) ?? null });
     };
     const up = (ev: PointerEvent) => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
+      detach?.();
       const target = moved ? columnAt(ev.clientX, ev.clientY) : undefined;
       setDrag(null);
       if (!moved) open(id);
@@ -99,9 +130,14 @@ export function Board() {
     detach = () => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
+      card.removeEventListener("pointercancel", cancel);
+      card.removeEventListener("lostpointercapture", cancel);
+      detach = null;
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
+    card.addEventListener("pointercancel", cancel);
+    card.addEventListener("lostpointercapture", cancel);
   }
 
   const dragged = () => (drag() ? store.state.projects.find((p) => p.id === drag()!.id) : undefined);
@@ -123,7 +159,7 @@ export function Board() {
                 <For each={byColumn()[col.id]}>
                   {(p) => (
                     <div style={{ opacity: drag()?.id === p.id ? 0.35 : 1 }}>
-                      <Card project={p} onPointerDown={(e) => startDrag(e, p.id)} />
+                      <Card project={p} onPointerDown={(e) => startDrag(e, p.id)} onOpen={() => open(p.id)} />
                     </div>
                   )}
                 </For>

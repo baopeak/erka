@@ -11,7 +11,8 @@ and the UI renders only what is on screen.
 Erka (Tauri app)                          erkad (session daemon, one per user)
 ├─ WebView: SolidJS UI, xterm.js, CM6     ├─ Session × N  (PTY + VT state + ring buffer)
 ├─ Rust core: daemon client, fs, git,     ├─ ChatSession × N (agent stdio JSON relay)
-│  search, file watcher                   ├─ status ticker (250 ms) + persistence (30 s)
+│  search, file watcher, transcript       ├─ status ticker (250 ms) + persistence (30 s)
+│  history, usage, memory meter           │
 └─ local socket ◄──────────────────────►  └─ local socket server
                                           erkad hook  ◄── agent hooks (Claude/Codex)
 ```
@@ -21,6 +22,11 @@ Erka (Tauri app)                          erkad (session daemon, one per user)
 | `Erka` | while the window is open | layout, settings (`app-state.json`), views |
 | `erkad` | until stopped explicitly (or logoff) | PTYs, agent processes, terminal state, `sessions.json`, snapshots |
 | agent CLIs | per session | — |
+
+`app-state.json` carries a format `version` (currently 2). A file with an older version, an
+unknown format or one that cannot be read is first copied to
+`app-state.<label>-<time>.bak.json`; if that copy fails, or the file comes from a newer Erka,
+the app runs without saving rather than overwrite it.
 
 Closing or crashing the app never stops a session. If `erkad` itself stops, sessions are
 restored as *exited* with their last screen and can be restarted (agents resume their
@@ -43,7 +49,9 @@ Frames (`crates/erka-proto`): `u32 LE length | u8 kind | payload`
 | 2 Output | daemon → app | `u32 handle \| u64 seq \| bytes` (`seq` = stream offset after the bytes) |
 | 3 Input | app → daemon | `u32 handle \| bytes` |
 
-RPC methods: `daemon.info|shutdown`, `session.list|create|attach|detach|input|resize|focus|kill|close|restart|update|read`, `chat.close_stdin`, `hook.report`.
+RPC methods: `daemon.info|shutdown`, `session.list|create|attach|detach|input|resize|focus|kill|close|restart|update|read|set_unread`, `chat.close_stdin`, `hook.report`.
+`daemon.info` reports an `api` feature level (`erka_proto::API_LEVEL`); an app built for a
+higher level offers to restart an older daemon still running from a previous version.
 Events: `session.updated` (coalesced, 250 ms), `session.closed`, `session.resync`, `session.clipboard`.
 
 ## Session threading (daemon)
@@ -122,8 +130,29 @@ transcript directory, or `thread/list`), stop the old front-end (Ctrl+C twice, t
 so there is never a second writer, and start the other front-end resuming the same id in
 the same pane. Claude history from before the switch is read from its transcript file.
 
+## App-side services (Rust core)
+
+| Module | Does |
+|---|---|
+| `agent_history.rs` | Lists past Claude / Codex / OMP conversations from their transcripts (`~/.claude/projects`, `~/.codex/sessions` incl. `.jsonl.zst`, `~/.omp/agent/sessions`). Only the first 512 KB of a file (plus Claude's tail for its latest title) is read; results are cached by mtime/size in `history-cache.json`. Prompt counts run on two background threads, resume from the last counted line of append-only files, and emit `agent-history-counted`. |
+| `usage.rs` | Claude (`api.anthropic.com/api/oauth/usage`) and Codex (`chatgpt.com/backend-api/wham/usage`) plan windows, using the agents' own OAuth sign-in. Tokens never leave this module; the webview gets percentages and reset times only. |
+| `sys_stats.rs` | Memory of the app + WebView tree, the daemon and its descendants (PID-reuse safe). |
+| `git.rs` | Status, branch summary, diffs, staging, commits, worktrees (`add` / `remove` / `prune`, file at a revision, commits only a detached HEAD reaches). |
+
+## Worktrees
+
+A git worktree is a project with `parentId` (its repository) and `branch`; it has its own
+tabs, layouts and sessions and switches like any project. Removal checks for changes and
+commits only the worktree holds, leaves the worktree, stops sessions in its folder and waits
+for their processes (Windows cannot delete a folder in use), then runs `git worktree remove`
+— never deleting the branch. `.erka.yaml` (setup commands, default tabs) is read from the base
+commit, shown in full, and runs only when the user opts in; approval is remembered per
+repository by the file's hash.
+
 ## Measured (Windows 10, see `plans/reports/`)
 
 - 20 sessions × 2 MiB output: 40 MiB in 3.9 s through the daemon, 0 sequence gaps.
 - Attach (snapshot) p50/p95: 4.4 / 5.8 ms.
 - Project switch (3 projects, rendered): p50 ≈ 55 ms, p95 ≈ 76 ms.
+- Session history, 421 transcripts / 1.2 GB (release build): first scan 0.5 s, later launches
+  (disk cache) 34 ms; the first full prompt count runs in the background (~15–30 s).

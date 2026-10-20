@@ -86,10 +86,37 @@ pub fn natural_cmp(a: &str, b: &str) -> Ordering {
     }
 }
 
+/// Runs file-system work on the blocking pool. Synchronous Tauri commands run on the main
+/// thread, where a slow disk, a huge file or a network path would freeze the whole window.
+pub async fn blocking<T: Send + 'static>(f: impl FnOnce() -> CmdResult<T> + Send + 'static) -> CmdResult<T> {
+    tauri::async_runtime::spawn_blocking(f).await.map_err(err)?
+}
+
 /// Whether `path` is an existing folder (no listing, so a large folder costs nothing).
 #[tauri::command]
-pub fn fs_is_dir(path: String) -> bool {
+pub async fn fs_is_dir(path: String) -> CmdResult<bool> {
+    crate::fs_ops::blocking(move || Ok(fs_is_dir_blocking(path))).await
+}
+
+fn fs_is_dir_blocking(path: String) -> bool {
     std::path::Path::new(&path).is_dir()
+}
+
+/// Canonical form of a folder (long names instead of 8.3 short ones, no `\\?\` prefix), for
+/// comparing paths that may be spelled differently; the input when it does not exist.
+#[tauri::command]
+pub async fn fs_canonical(path: String) -> CmdResult<String> {
+    crate::fs_ops::blocking(move || Ok(fs_canonical_blocking(path))).await
+}
+
+fn fs_canonical_blocking(path: String) -> String {
+    match std::fs::canonicalize(&path) {
+        Ok(p) => {
+            let s = p.to_string_lossy().into_owned();
+            s.strip_prefix(r"\\?\").map(str::to_string).unwrap_or(s)
+        }
+        Err(_) => path,
+    }
 }
 
 /// Async + blocking pool: listing a huge folder must never stall the UI thread.
@@ -152,7 +179,11 @@ fn mtime_of(meta: &std::fs::Metadata) -> u64 {
 
 /// Reads up to `max_bytes`. `as_base64` is for image viewers.
 #[tauri::command]
-pub fn fs_read_file(root: String, path: String, max_bytes: Option<u64>, as_base64: Option<bool>) -> CmdResult<FileContent> {
+pub async fn fs_read_file(root: String, path: String, max_bytes: Option<u64>, as_base64: Option<bool>) -> CmdResult<FileContent> {
+    crate::fs_ops::blocking(move || fs_read_file_blocking(root, path, max_bytes, as_base64)).await
+}
+
+fn fs_read_file_blocking(root: String, path: String, max_bytes: Option<u64>, as_base64: Option<bool>) -> CmdResult<FileContent> {
     use std::io::Read;
     let full = guard(&root, &path)?;
     let meta = std::fs::metadata(&full).map_err(err)?;
@@ -192,7 +223,11 @@ pub struct WriteResult {
 }
 
 #[tauri::command]
-pub fn fs_write_file(root: String, path: String, content: String, expected_mtime: Option<u64>, force: Option<bool>) -> CmdResult<WriteResult> {
+pub async fn fs_write_file(root: String, path: String, content: String, expected_mtime: Option<u64>, force: Option<bool>) -> CmdResult<WriteResult> {
+    crate::fs_ops::blocking(move || fs_write_file_blocking(root, path, content, expected_mtime, force)).await
+}
+
+fn fs_write_file_blocking(root: String, path: String, content: String, expected_mtime: Option<u64>, force: Option<bool>) -> CmdResult<WriteResult> {
     let full = guard(&root, &path)?;
     if let (Some(expected), false) = (expected_mtime, force.unwrap_or(false)) {
         if let Ok(meta) = std::fs::metadata(&full) {
@@ -218,7 +253,11 @@ pub fn fs_write_file(root: String, path: String, content: String, expected_mtime
 }
 
 #[tauri::command]
-pub fn fs_create(root: String, path: String, dir: bool) -> CmdResult<()> {
+pub async fn fs_create(root: String, path: String, dir: bool) -> CmdResult<()> {
+    crate::fs_ops::blocking(move || fs_create_blocking(root, path, dir)).await
+}
+
+fn fs_create_blocking(root: String, path: String, dir: bool) -> CmdResult<()> {
     let full = guard(&root, &path)?;
     if full.exists() {
         return Err(format!("{path} already exists"));
@@ -234,7 +273,11 @@ pub fn fs_create(root: String, path: String, dir: bool) -> CmdResult<()> {
 }
 
 #[tauri::command]
-pub fn fs_rename(root: String, from: String, to: String) -> CmdResult<()> {
+pub async fn fs_rename(root: String, from: String, to: String) -> CmdResult<()> {
+    crate::fs_ops::blocking(move || fs_rename_blocking(root, from, to)).await
+}
+
+fn fs_rename_blocking(root: String, from: String, to: String) -> CmdResult<()> {
     let (a, b) = (guard(&root, &from)?, guard(&root, &to)?);
     if b.exists() {
         return Err(format!("{to} already exists"));
@@ -244,7 +287,11 @@ pub fn fs_rename(root: String, from: String, to: String) -> CmdResult<()> {
 
 /// Moves to the OS trash (recoverable) rather than deleting.
 #[tauri::command]
-pub fn fs_delete(root: String, path: String) -> CmdResult<()> {
+pub async fn fs_delete(root: String, path: String) -> CmdResult<()> {
+    crate::fs_ops::blocking(move || fs_delete_blocking(root, path)).await
+}
+
+fn fs_delete_blocking(root: String, path: String) -> CmdResult<()> {
     let full = guard(&root, &path)?;
     if full == normalize(Path::new(&root)) {
         return Err("refusing to delete the project root".into());
@@ -254,7 +301,11 @@ pub fn fs_delete(root: String, path: String) -> CmdResult<()> {
 
 /// Shows the item in Explorer / Finder.
 #[tauri::command]
-pub fn fs_reveal(root: String, path: String) -> CmdResult<()> {
+pub async fn fs_reveal(root: String, path: String) -> CmdResult<()> {
+    crate::fs_ops::blocking(move || fs_reveal_blocking(root, path)).await
+}
+
+fn fs_reveal_blocking(root: String, path: String) -> CmdResult<()> {
     let full = guard(&root, &path)?;
     #[cfg(windows)]
     let result = std::process::Command::new("explorer").arg(format!("/select,{}", full.display())).spawn();

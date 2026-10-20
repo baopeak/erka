@@ -54,7 +54,11 @@ pub struct AgentSessionRef {
 
 /// Most recent session of `kind` started in `cwd` (Claude / OMP; Codex uses `thread/list`).
 #[tauri::command]
-pub fn agent_latest_session(kind: String, cwd: String) -> CmdResult<Option<AgentSessionRef>> {
+pub async fn agent_latest_session(kind: String, cwd: String) -> CmdResult<Option<AgentSessionRef>> {
+    crate::fs_ops::blocking(move || agent_latest_session_blocking(kind, cwd)).await
+}
+
+fn agent_latest_session_blocking(kind: String, cwd: String) -> CmdResult<Option<AgentSessionRef>> {
     match kind.as_str() {
         "claude" => Ok(newest(jsonl_in(&claude_project_dir(&cwd))).map(|p| AgentSessionRef {
             id: p.file_stem().unwrap_or_default().to_string_lossy().into_owned(),
@@ -96,7 +100,11 @@ fn normalize_cwd(p: &str) -> String {
 
 /// Raw JSONL lines of a Claude Code transcript (tail, capped), for rendering chat history.
 #[tauri::command]
-pub fn agent_claude_transcript(session_id: String, cwd: Option<String>) -> CmdResult<Vec<String>> {
+pub async fn agent_claude_transcript(session_id: String, cwd: Option<String>) -> CmdResult<Vec<String>> {
+    crate::fs_ops::blocking(move || agent_claude_transcript_blocking(session_id, cwd)).await
+}
+
+fn agent_claude_transcript_blocking(session_id: String, cwd: Option<String>) -> CmdResult<Vec<String>> {
     let file_name = format!("{session_id}.jsonl");
     if file_name.contains(['/', '\\']) {
         return Err("invalid session id".into());

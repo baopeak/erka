@@ -42,6 +42,7 @@ export const saveState = (state: unknown) => invoke<void>("state_save", { state 
 export const stateBackup = (label: string) => invoke<string | null>("state_backup", { label });
 export const platformInfo = () => invoke<{ os: string; home: string; data_dir: string; api: number }>("platform_info");
 
+export const canonicalPath = (path: string) => invoke<string>("fs_canonical", { path });
 export const isDir = (path: string) => invoke<boolean>("fs_is_dir", { path });
 export const listDir = (root: string, path: string) => invoke<DirEntry[]>("fs_list_dir", { root, path });
 export const readFile = (root: string, path: string, maxBytes?: number, asBase64 = false) =>
@@ -65,6 +66,10 @@ export const searchText = (root: string, query: string, regex: boolean, caseSens
 export const gitStatus = (root: string) => invoke<GitStatus>("git_status", { root });
 export const gitWorktrees = (root: string) => invoke<Worktree[]>("git_worktrees", { root });
 export const gitWorktreeAdd = (root: string, path: string, branch: string, base?: string) => invoke<void>("git_worktree_add", { root, path, branch, base });
+export const gitWorktreePrune = (root: string) => invoke<void>("git_worktree_prune", { root });
+export const gitShowFile = (root: string, rev: string, path: string) => invoke<string | null>("git_show_file", { root, rev, path });
+export const gitOrphanCommits = (root: string) => invoke<number>("git_orphan_commits", { root });
+export const processesAlive = (pids: number[]) => invoke<number[]>("processes_alive", { pids });
 export const gitWorktreeRemove = (root: string, path: string, force = false) => invoke<void>("git_worktree_remove", { root, path, force });
 export const gitBranchInfo = (root: string) => invoke<BranchInfo>("git_branch_info", { root });
 export const gitFileVersions = (root: string, path: string, staged: boolean) =>

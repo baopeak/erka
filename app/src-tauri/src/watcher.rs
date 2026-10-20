@@ -129,14 +129,22 @@ fn classify(root: &Path, path: &Path) -> Change {
     Change::Dir(parts[..parts.len().saturating_sub(1)].join("/"))
 }
 
+// Creating or dropping a recursive watcher on a large tree can take a long time on Windows;
+// off the main thread, a project switch never waits for it.
 #[tauri::command]
-pub fn fs_watch(watchers: tauri::State<'_, Arc<Watchers>>, root: String) -> CmdResult<()> {
-    watchers.watch(&root)
+pub async fn fs_watch(watchers: tauri::State<'_, Arc<Watchers>>, root: String) -> CmdResult<()> {
+    let w = watchers.inner().clone();
+    crate::fs_ops::blocking(move || w.watch(&root)).await
 }
 
 #[tauri::command]
-pub fn fs_unwatch(watchers: tauri::State<'_, Arc<Watchers>>, root: String) {
-    watchers.unwatch(&root)
+pub async fn fs_unwatch(watchers: tauri::State<'_, Arc<Watchers>>, root: String) -> CmdResult<()> {
+    let w = watchers.inner().clone();
+    crate::fs_ops::blocking(move || {
+        w.unwatch(&root);
+        Ok(())
+    })
+    .await
 }
 
 #[cfg(test)]

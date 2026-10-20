@@ -87,12 +87,13 @@ try:
     d.keys("echo erka-e2e-ok", "enter")
     ok = False
     for _ in range(40):
-        if "erka-e2e-ok" in screen_text(d, handles[active]).split("echo erka-e2e-ok", 1)[-1]:
+        # The output line itself: a long prompt may wrap the typed command across lines.
+        if "erka-e2e-ok" in [l.strip() for l in screen_text(d, handles[active]).splitlines()]:
             ok = True
             break
         time.sleep(0.25)
     check("keyboard input reaches PTY and output renders", ok)
-    check("xterm buffer shows command output", "erka-e2e-ok" in d.js(BUFFER_JS).split("echo erka-e2e-ok", 1)[-1])
+    check("xterm buffer shows command output", "erka-e2e-ok" in [l.strip() for l in d.js(BUFFER_JS).splitlines()])
     d.screenshot(os.path.join(shots, "01-terminal.png"))
 
     # Split right with the keyboard shortcut.

@@ -44,16 +44,27 @@ fn term_input(client: State<'_, Arc<DaemonClient>>, handle: u32, data: String, b
 
 /// App UI state (projects, layouts, settings) — a single JSON document owned by the UI.
 #[tauri::command]
-fn state_load() -> CmdResult<Value> {
+async fn state_load() -> CmdResult<Value> {
+    crate::fs_ops::blocking(move || state_load_blocking()).await
+}
+
+fn state_load_blocking() -> CmdResult<Value> {
     let path = erka_proto::data_dir().join("app-state.json");
     match std::fs::read(&path) {
         Ok(bytes) => serde_json::from_slice(&bytes).map_err(err),
-        Err(_) => Ok(Value::Null),
+        // Only a missing file means "no state yet"; a locked or unreadable one is an error the
+        // UI must not paper over with a fresh state (it would be saved over the file).
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Value::Null),
+        Err(e) => Err(err(e)),
     }
 }
 
 #[tauri::command]
-fn state_save(state: Value) -> CmdResult<()> {
+async fn state_save(state: Value) -> CmdResult<()> {
+    crate::fs_ops::blocking(move || state_save_blocking(state)).await
+}
+
+fn state_save_blocking(state: Value) -> CmdResult<()> {
     let dir = erka_proto::data_dir();
     std::fs::create_dir_all(&dir).map_err(err)?;
     let path = dir.join("app-state.json");
@@ -62,22 +73,25 @@ fn state_save(state: Value) -> CmdResult<()> {
     std::fs::rename(&tmp, &path).map_err(err)
 }
 
-/// Copies `app-state.json` to `app-state.<label>.bak.json` before a format migration rewrites
-/// it. An existing backup is kept: the first one holds the original data.
+/// Copies `app-state.json` to `app-state.<label>-<time>.bak.json` before a migration or a
+/// fresh start could rewrite it. Each call keeps its own copy.
 #[tauri::command]
-fn state_backup(label: String) -> CmdResult<Option<String>> {
+async fn state_backup(label: String) -> CmdResult<Option<String>> {
+    crate::fs_ops::blocking(move || state_backup_blocking(label)).await
+}
+
+fn state_backup_blocking(label: String) -> CmdResult<Option<String>> {
     if label.is_empty() || !label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
         return Err("invalid backup label".into());
     }
     let dir = erka_proto::data_dir();
     let src = dir.join("app-state.json");
-    let dst = dir.join(format!("app-state.{label}.bak.json"));
     if !src.exists() {
         return Ok(None);
     }
-    if !dst.exists() {
-        std::fs::copy(&src, &dst).map_err(err)?;
-    }
+    let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    let dst = dir.join(format!("app-state.{label}-{secs}.bak.json"));
+    std::fs::copy(&src, &dst).map_err(err)?;
     Ok(Some(dst.to_string_lossy().into_owned()))
 }
 
@@ -117,6 +131,7 @@ pub fn run() {
             platform_info,
             fs_ops::fs_list_dir,
             fs_ops::fs_is_dir,
+            fs_ops::fs_canonical,
             fs_ops::fs_read_file,
             fs_ops::fs_write_file,
             fs_ops::fs_create,
@@ -136,6 +151,10 @@ pub fn run() {
             git::git_worktrees,
             git::git_worktree_add,
             git::git_worktree_remove,
+            git::git_worktree_prune,
+            git::git_show_file,
+            git::git_orphan_commits,
+            sys_stats::processes_alive,
             agent_history::agent_latest_session,
             agent_history::agent_claude_transcript,
             agent_history::agent_history_list,

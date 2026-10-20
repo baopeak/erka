@@ -3,7 +3,7 @@
 import { parse as parseYaml } from "yaml";
 import { store } from "./store";
 import * as ipc from "./ipc";
-import { basename } from "./platform";
+import { basename, normPath } from "./platform";
 import { disposeView } from "./terminal-host";
 import type { Project, SessionKind } from "./types";
 
@@ -13,17 +13,25 @@ export interface ErkaConfig {
   setup: string[];
   /** Sessions opened in every new worktree: an agent/shell kind, or `{ command }`. */
   tabs: ({ kind: SessionKind } | { command: string })[];
+  /** Hash of the file's text: what the user approved to run. */
+  hash: string;
 }
 
 const KINDS: SessionKind[] = ["claude", "codex", "omp", "shell"];
+const MAX_CONFIG = 64 * 1024;
 
-/** Reads `.erka.yaml`; null when there is none. Throws with a readable message when invalid. */
-export async function loadErkaConfig(root: string): Promise<ErkaConfig | null> {
-  const file = await ipc.readFile(root, ".erka.yaml", 64 * 1024).catch(() => null);
-  if (!file?.text) return null;
+function hashText(text: string): string {
+  let h = 0x811c9dc5; // FNV-1a
+  for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 0x01000193);
+  return (h >>> 0).toString(16) + ":" + text.length;
+}
+
+/** Parses `.erka.yaml` text. Throws a readable message when it is invalid. */
+export function parseErkaConfig(text: string): ErkaConfig {
+  if (text.length > MAX_CONFIG) throw new Error(".erka.yaml is larger than 64 KB");
   let raw: any;
   try {
-    raw = parseYaml(file.text) ?? {};
+    raw = parseYaml(text) ?? {};
   } catch (e) {
     throw new Error(`.erka.yaml: ${String(e).split("\n")[0]}`);
   }
@@ -32,11 +40,23 @@ export async function loadErkaConfig(root: string): Promise<ErkaConfig | null> {
   const tabs: ErkaConfig["tabs"] = [];
   for (const t of list(raw.tabs)) {
     if (typeof t === "string" && KINDS.includes(t as SessionKind)) tabs.push({ kind: t as SessionKind });
-    else if (t && typeof t === "object" && typeof t.command === "string") tabs.push({ command: t.command });
+    else if (t && typeof t === "object" && typeof t.command === "string" && t.command.trim()) tabs.push({ command: t.command.trim() });
     else throw new Error(`.erka.yaml: unknown tab ${JSON.stringify(t)} (use claude, codex, omp, shell or { command: … })`);
   }
-  return { setup, tabs };
+  return { setup, tabs, hash: hashText(text) };
 }
+
+/**
+ * The `.erka.yaml` a new worktree based on `base` will contain — read from that commit, not
+ * from the repository's working copy, so what the user reviews is what would run.
+ */
+export async function configAtRef(repo: Project, base: string): Promise<ErkaConfig | null> {
+  const text = await ipc.gitShowFile(repo.path, base || "HEAD", ".erka.yaml");
+  return text === null ? null : parseErkaConfig(text);
+}
+
+/** Whether this exact config was approved for the repository before. */
+export const configApproved = (repo: Project, config: ErkaConfig) => store.state.approvedSetups?.[normPath(repo.path)] === config.hash;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -49,7 +69,7 @@ export async function applyErkaConfig(project: Project, config: ErkaConfig) {
   }
   for (const t of config.tabs) {
     if ("kind" in t) await store.newSession(project.id, t.kind);
-    else await store.newSession(project.id, "custom", { args: t.command.match(/"[^"]*"|\S+/g)!.map((a) => a.replace(/^"|"$/g, "")), name: t.command });
+    else await store.newSession(project.id, "custom", { args: (t.command.match(/"[^"]*"|\S+/g) ?? []).map((a) => a.replace(/^"|"$/g, "")), name: t.command });
   }
 }
 
@@ -63,15 +83,18 @@ export function worktreeFolder(repo: Project, branch: string): string {
   return [parent, `${basename(repo.path)}-worktrees`, branch.replace(/[\\/]/g, "-")].join(sep);
 }
 
-export async function createWorktree(repo: Project, opts: { branch: string; base?: string; path: string; runConfig: boolean }) {
+/**
+ * Creates the worktree and its project. `config` (already shown to and approved by the user)
+ * runs afterwards; its failures are reported, not thrown — the worktree exists by then.
+ */
+export async function createWorktree(repo: Project, opts: { branch: string; base?: string; path: string; config: ErkaConfig | null }) {
   if (!validBranch(opts.branch)) throw new Error(`"${opts.branch}" is not a valid branch name`);
-  await ipc.gitWorktreeAdd(repo.path, opts.path, opts.branch, opts.base || undefined);
-  const id = store.addProject(opts.path, { parentId: repo.id, branch: opts.branch, name: opts.branch });
+  await ipc.gitWorktreeAdd(repo.path, opts.path.trim(), opts.branch, opts.base?.trim() || undefined);
+  const id = store.addProject(opts.path.trim(), { parentId: repo.id, branch: opts.branch, name: opts.branch });
   const project = store.state.projects.find((p) => p.id === id)!;
-  if (opts.runConfig) {
-    // The new worktree has the repository's committed `.erka.yaml`.
-    const config = await loadErkaConfig(project.path);
-    if (config) await applyErkaConfig(project, config);
+  if (opts.config) {
+    store.approveSetup(repo.path, opts.config.hash);
+    void applyErkaConfig(project, opts.config).catch((e) => store.notify(`.erka.yaml: ${String(e)}`));
   }
   return project;
 }
@@ -79,49 +102,86 @@ export async function createWorktree(repo: Project, opts: { branch: string; base
 /** Adds the repository's other worktrees that are not in the sidebar yet; returns how many. */
 export async function addExistingWorktrees(repo: Project): Promise<number> {
   const list = await ipc.gitWorktrees(repo.path);
-  const norm = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+  // The first entry is always the main worktree: only a project that *is* the main worktree
+  // gets the others as children (not a subfolder of the repository, not a linked worktree).
+  // Compare canonical forms: the project may be spelled with 8.3 short names.
+  const canon = async (p: string) => normPath(await ipc.canonicalPath(p).catch(() => p));
+  if (!list.length || (await canon(list[0].path)) !== (await canon(repo.path))) return 0;
+  const known = await Promise.all(store.state.projects.map((p) => canon(p.path)));
   let added = 0;
-  for (const w of list) {
-    if (w.bare || norm(w.path) === norm(repo.path) || store.state.projects.some((p) => norm(p.path) === norm(w.path))) continue;
+  for (const w of list.slice(1)) {
+    if (w.bare || w.prunable || known.includes(await canon(w.path))) continue;
     store.addProject(w.path, { parentId: repo.id, branch: w.branch ?? undefined, name: w.branch ?? basename(w.path), open: false });
     added++;
   }
   return added;
 }
 
-/** Stops every session of a project and waits until the daemon reports them gone. */
-async function stopSessions(projectId: string, timeoutMs = 8000) {
-  const mine = () => Object.values(store.sessions).filter((s) => s.project_id === projectId);
+export interface RemovalCheck {
+  /** Live branch (null when HEAD is detached). */
+  branch: string | null;
+  /** Uncommitted or untracked files. */
+  changes: number;
+  /** Commits only this worktree's HEAD reaches (lost with it). */
+  orphanCommits: number;
+}
+
+/** What removing `wt` would lose, before anything is stopped. */
+export async function checkRemoval(wt: Project): Promise<RemovalCheck> {
+  const status = await ipc.gitStatus(wt.path);
+  const branch = status.branch ?? null;
+  const orphanCommits = branch ? 0 : await ipc.gitOrphanCommits(wt.path).catch(() => 0);
+  return { branch, changes: status.files.length, orphanCommits };
+}
+
+/**
+ * Stops every session belonging to the worktree or running inside its folder, and waits for
+ * their processes to exit (Windows refuses to delete a folder a process still uses).
+ */
+async function stopSessions(wt: Project, timeoutMs = 10_000) {
+  const root = normPath(wt.path);
+  const inside = (cwd: string) => normPath(cwd) === root || normPath(cwd).startsWith(root + "/");
+  const mine = () => Object.values(store.sessions).filter((s) => s.project_id === wt.id || inside(s.cwd));
+  const pids = mine().map((s) => s.pid).filter((p): p is number => typeof p === "number");
   for (const s of mine()) {
     disposeView(s.id);
     await ipc.daemon("session.close", { handle: s.handle }).catch(() => {});
   }
   const end = Date.now() + timeoutMs;
-  while (mine().length && Date.now() < end) await sleep(150);
-  return mine().length === 0;
+  while (Date.now() < end) {
+    const alive = pids.length ? await ipc.processesAlive(pids).catch(() => []) : [];
+    if (!mine().length && !alive.length) return true;
+    await sleep(200);
+  }
+  return false;
 }
 
 /**
- * Removes a worktree: leaves it (so Erka stops watching its folder), stops its sessions, then
- * `git worktree remove`. The branch is never deleted. Windows refuses to remove a folder a
- * process still uses, so removal is retried briefly while processes finish exiting.
+ * Removes a worktree the user confirmed (see `checkRemoval`): leaves it (so Erka stops
+ * watching its folder), stops its sessions, then `git worktree remove`. The branch is never
+ * deleted. If git already deleted the worktree but could not delete a folder still in use,
+ * the record is pruned and the leftover folder reported.
  */
-export async function removeWorktree(wt: Project, opts: { force?: boolean } = {}): Promise<"removed" | "dirty"> {
+export async function removeWorktree(wt: Project, opts: { force: boolean }): Promise<{ leftover: boolean }> {
   const repo = store.state.projects.find((p) => p.id === wt.parentId);
   if (!repo) throw new Error("This worktree's repository is not in the sidebar");
   if (store.state.activeProject === wt.id) store.switchProject(repo.id);
-  if (!(await stopSessions(wt.id))) throw new Error("Some sessions of this worktree did not stop");
+  if (!(await stopSessions(wt))) throw new Error("Some processes in this worktree did not stop; close them and try again");
   for (let attempt = 0; ; attempt++) {
     try {
-      await ipc.gitWorktreeRemove(repo.path, wt.path, !!opts.force);
+      await ipc.gitWorktreeRemove(repo.path, wt.path, opts.force);
       break;
     } catch (e) {
       const msg = String(e);
-      if (/modified or untracked|contains modified|is dirty|use --force/i.test(msg) && !opts.force) return "dirty";
+      if (/is not a working tree|not a working tree/i.test(msg)) {
+        // An earlier attempt got as far as deleting git's record: finish its cleanup.
+        await ipc.gitWorktreePrune(repo.path).catch(() => {});
+        break;
+      }
       if (attempt >= 5) throw e;
-      await sleep(400);
+      await sleep(500);
     }
   }
   store.removeProject(wt.id);
-  return "removed";
+  return { leftover: await ipc.isDir(wt.path).catch(() => false) };
 }

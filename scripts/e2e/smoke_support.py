@@ -31,6 +31,11 @@ class Run:
     def boot(self, tips=False):
         self.d.wait("return !!(window.__erka && window.__erka.store.loaded())", 60)
         self.d.wait("return window.__erka.store.connected()", 30)
+        # Scenarios close sessions and remove projects: never against the user's real data.
+        data_dir = self.d.js_async("const done = arguments[arguments.length-1]; window.__TAURI_INTERNALS__.invoke('platform_info').then(i => done(i.data_dir));")
+        real = os.path.join(os.environ.get("LOCALAPPDATA", ""), "Erka")
+        if not os.environ.get("ERKA_DATA_DIR") and os.path.normcase(os.path.normpath(data_dir)) == os.path.normcase(os.path.normpath(real)):
+            raise SystemExit(f"refusing to run e2e against the real data folder {data_dir}; start tauri-driver with ERKA_DATA_DIR set")
         # First-run tips would float over whatever a scenario clicks.
         if not tips:
             self.d.js("window.__erka.store.setSettings({ tips: false })")

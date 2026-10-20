@@ -49,6 +49,7 @@ export interface Worktree {
   branch: string | null;
   bare: boolean;
   detached: boolean;
+  prunable: boolean;
 }
 
 export type PaneKind = "terminal" | "chat" | "file" | "diff" | "empty";
@@ -204,6 +205,8 @@ export interface AppState {
   collapsed: Record<string, boolean>;
   /** Shortcut overrides by command id: a chord like "mod+alt+p", or "" for none. */
   keymap: Record<string, string>;
+  /** `.erka.yaml` contents (hash) the user agreed to run, by repository path. */
+  approvedSetups: Record<string, string>;
 }
 
 export interface BranchInfo {
