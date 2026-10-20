@@ -539,7 +539,7 @@ function createAppStore() {
     const p = state.settings.profiles.find((x) => x.kind === kind);
     const args = [...(p?.args ?? [])];
     if (p?.permission && kind === "claude") args.push("--permission-mode", p.permission);
-    if (p?.permission && kind === "codex") args.push("-c", `approval_policy="${p.permission}"`);
+    if (p?.permission && kind === "codex") args.push("-c", `approval_policy=${p.permission}`);
     return { args, env: p?.env && Object.keys(p.env).length ? { ...p.env } : undefined };
   }
 

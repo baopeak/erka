@@ -63,5 +63,5 @@ function go(delta: -1 | 1) {
 
 export const navBack = () => go(-1);
 export const navForward = () => go(1);
-export const canGoBack = () => index() > 0;
-export const canGoForward = () => index() < stack().length - 1;
+export const canGoBack = () => stack().slice(0, index()).some(exists);
+export const canGoForward = () => stack().slice(index() + 1).some(exists);

@@ -45,7 +45,7 @@ export function AgentSettings() {
             </Show>
             <label class="field">
               <span>Environment</span>
-              <textarea class="text-input" rows={2} placeholder="KEY=value, one per line"
+              <textarea class="text-input" rows={2} placeholder="KEY=value, one per line (stored in Erka's settings file as plain text)"
                 value={Object.entries(p.env ?? {}).map(([k, v]) => `${k}=${v}`).join("\n")}
                 onChange={(e) => update(p.kind, { env: parseEnv(e.currentTarget.value) })} />
             </label>

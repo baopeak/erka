@@ -10,6 +10,7 @@ import { Palette } from "./palette";
 import { Dashboard } from "./dashboard";
 import { SettingsPage } from "./settings/settings-page";
 import { Tips } from "./tips";
+import { setEditorTheme } from "../lib/codemirror";
 import { Board } from "./board";
 import { WorktreeDialog } from "./worktree-dialog";
 import { NewSessionMenu } from "./new-session-menu";
@@ -22,6 +23,7 @@ export function App() {
     const s = store.state.settings;
     const root = document.documentElement;
     root.dataset.theme = s.theme ?? "dark";
+    setEditorTheme(s.theme !== "light");
     root.dataset.density = s.density ?? "comfortable";
     root.style.setProperty("--ui-scale", String(s.uiScale ?? 1));
   });

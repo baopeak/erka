@@ -47,6 +47,11 @@ export function SettingsPage() {
 
   const close = () => store.setOverlay(null);
   const onKey = (e: KeyboardEvent) => {
+    if (e.key === "Escape" && !e.defaultPrevented) {
+      if (query()) setSettingsQuery("");
+      else close();
+      return;
+    }
     if ((isMac ? e.metaKey : e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "f") {
       e.preventDefault();
       search.focus();
@@ -61,11 +66,7 @@ export function SettingsPage() {
   onCleanup(() => window.removeEventListener("keydown", onKey));
 
   return (
-    <div class="settings-page" ref={page} tabIndex={-1} onKeyDown={(e) => {
-      if (e.key !== "Escape" || e.defaultPrevented) return;
-      if (query()) setSettingsQuery("");
-      else close();
-    }}>
+    <div class="settings-page" ref={page} tabIndex={-1}>
       <nav class="settings-nav">
         <button class="settings-back" onClick={close} title="Back (Esc)"><Icon name="back" size={14} /> Settings</button>
         <For each={groups()}>

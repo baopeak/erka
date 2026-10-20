@@ -10,6 +10,7 @@ import { allPanes } from "../lib/layout";
 import { isMac, joinPath } from "../lib/platform";
 import { peekView } from "../lib/terminal-host";
 import type { DirEntry, Project } from "../lib/types";
+import { openContextMenu, type MenuItem } from "./context-menu";
 
 const ROW_H = 24;
 
@@ -42,7 +43,6 @@ export function FileTree(props: { project: Project; api?: (api: FileTreeApi) => 
   const [selected, setSelected] = createSignal<string | null>(null);
   const [scrollTop, setScrollTop] = createSignal(0);
   const [height, setHeight] = createSignal(600);
-  const [menu, setMenu] = createSignal<{ x: number; y: number; entry: DirEntry | null } | null>(null);
   const [editing, setEditing] = createSignal<{ dir: string; kind: "file" | "dir" | "rename"; entry?: DirEntry } | null>(null);
   let scroller!: HTMLDivElement;
 
@@ -73,12 +73,9 @@ export function FileTree(props: { project: Project; api?: (api: FileTreeApi) => 
       if (e.root !== root()) return;
       for (const d of e.dirs) if (children[d]) void load(d);
     });
-    const closeMenu = () => setMenu(null);
-    window.addEventListener("pointerdown", closeMenu);
     onCleanup(() => {
       ro.disconnect();
       void un.then((f) => f());
-      window.removeEventListener("pointerdown", closeMenu);
     });
   });
 
@@ -146,7 +143,7 @@ export function FileTree(props: { project: Project; api?: (api: FileTreeApi) => 
 
   const menuItems = (entry: DirEntry | null) => {
     const dir = entry ? (entry.is_dir ? entry.path : parentOf(entry.path)) : "";
-    const items: ({ label: string; run: () => void; danger?: boolean } | null)[] = [
+    const items: MenuItem[] = [
       { label: "New File…", run: () => { setExpanded(dir, true); setEditing({ dir, kind: "file" }); } },
       { label: "New Folder…", run: () => { setExpanded(dir, true); setEditing({ dir, kind: "dir" }); } },
     ];
@@ -179,7 +176,7 @@ export function FileTree(props: { project: Project; api?: (api: FileTreeApi) => 
         ref={scroller}
         tabIndex={0}
         onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
-        onContextMenu={(e) => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY, entry: null }); }}
+        onContextMenu={(e) => openContextMenu(e, menuItems(null))}
       >
         <div style={{ height: `${rows().length * ROW_H + ROW_H}px`, position: "relative" }}>
           <For each={visible()}>
@@ -191,7 +188,7 @@ export function FileTree(props: { project: Project; api?: (api: FileTreeApi) => 
                   class={`tree-row${selected() === row.entry.path ? " selected" : ""}${row.ignored ? " ignored" : ""}${status() ? ` g-${status() === "•" ? "M" : status()}` : ""}`}
                   style={{ top: `${row.index * ROW_H}px`, "padding-left": `${8 + row.depth * 14}px` }}
                   onClick={() => activate(row.entry)}
-                  onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setSelected(row.entry.path); setMenu({ x: e.clientX, y: e.clientY, entry: row.entry }); }}
+                  onContextMenu={(e) => { setSelected(row.entry.path); openContextMenu(e, menuItems(row.entry)); }}
                   title={row.entry.path}
                 >
                   <FileIcon entry={row.entry} open={!!expanded[row.entry.path]} />
@@ -211,21 +208,6 @@ export function FileTree(props: { project: Project; api?: (api: FileTreeApi) => 
           </Show>
         </div>
       </div>
-      <Show when={menu()}>
-        {(m) => (
-          <div class="ctx-menu" style={{ left: `${Math.min(m().x, window.innerWidth - 210)}px`, top: `${Math.min(m().y, window.innerHeight - 300)}px` }} onPointerDown={(e) => e.stopPropagation()}>
-            <For each={menuItems(m().entry)}>
-              {(item) =>
-                item ? (
-                  <div class={`ctx-item${item.danger ? " danger" : ""}`} onClick={() => { setMenu(null); item.run(); }}>{item.label}</div>
-                ) : (
-                  <div class="ctx-sep" />
-                )
-              }
-            </For>
-          </div>
-        )}
-      </Show>
     </>
   );
 }

@@ -42,6 +42,7 @@ export const saveState = (state: unknown) => invoke<void>("state_save", { state 
 export const stateBackup = (label: string) => invoke<string | null>("state_backup", { label });
 export const platformInfo = () => invoke<{ os: string; home: string; data_dir: string; api: number }>("platform_info");
 
+export const isDir = (path: string) => invoke<boolean>("fs_is_dir", { path });
 export const listDir = (root: string, path: string) => invoke<DirEntry[]>("fs_list_dir", { root, path });
 export const readFile = (root: string, path: string, maxBytes?: number, asBase64 = false) =>
   invoke<FileContent>("fs_read_file", { root, path, maxBytes, asBase64 });

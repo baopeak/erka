@@ -39,6 +39,10 @@
   --syn-punct: #abb2bf;
   --syn-variable: #d7dce6;
   --ui-scale: 1;
+  --scroll-thumb: rgba(255,255,255,0.07);
+  --scroll-thumb-hover: rgba(255,255,255,0.14);
+  --checker-a: #151923;
+  --checker-b: #11141b;
   color-scheme: dark;
 }
 
@@ -80,6 +84,10 @@
   --syn-property: #e45649;
   --syn-punct: #5c6370;
   --syn-variable: #1d2330;
+  --scroll-thumb: rgba(0,0,0,0.14);
+  --scroll-thumb-hover: rgba(0,0,0,0.26);
+  --checker-a: #eef0f4;
+  --checker-b: #ffffff;
   color-scheme: light;
 }
 :root[data-theme="light"] .overlay { background: rgba(30,35,45,.25); }
@@ -109,8 +117,8 @@ body {
 button { font: inherit; color: inherit; }
 input, textarea, select { font: inherit; color: var(--text); }
 ::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.07); border-radius: 6px; border: 2px solid transparent; background-clip: padding-box; }
-::-webkit-scrollbar-thumb:hover { background-color: rgba(255,255,255,0.14); }
+::-webkit-scrollbar-thumb { background: var(--scroll-thumb); border-radius: 6px; border: 2px solid transparent; background-clip: padding-box; }
+::-webkit-scrollbar-thumb:hover { background-color: var(--scroll-thumb-hover); }
 ::-webkit-scrollbar-corner { background: transparent; }
 
 .app { display: flex; height: 100%; }
@@ -301,7 +309,7 @@ input, textarea, select { font: inherit; color: var(--text); }
 .cm-host { flex: 1; min-height: 0; overflow: hidden; }
 .cm-host .cm-editor { height: 100%; }
 .cm-host .cm-editor.cm-focused { outline: none; }
-.image-view { flex: 1; overflow: auto; display: grid; place-items: center; background: repeating-conic-gradient(#151923 0% 25%, #11141b 0% 50%) 50% / 20px 20px; }
+.image-view { flex: 1; overflow: auto; display: grid; place-items: center; background: repeating-conic-gradient(var(--checker-a) 0% 25%, var(--checker-b) 0% 50%) 50% / 20px 20px; }
 .image-view img { max-width: 95%; max-height: 95%; image-rendering: auto; box-shadow: 0 10px 30px rgba(0,0,0,.4); }
 .markdown { flex: 1; overflow: auto; padding: 24px 40px; user-select: text; max-width: 980px; line-height: 1.65; }
 .markdown pre, .markdown code { font-family: var(--font-mono); font-size: 12.5px; }
@@ -531,6 +539,7 @@ input, textarea, select { font: inherit; color: var(--text); }
 .shortcut-key { display: flex; align-items: center; gap: 8px; }
 .shortcut-key .kbd.live { color: var(--accent); border-color: var(--accent); }
 .shortcut-key .changed { font-size: 10.5px; color: var(--accent); }
+.shortcut-key .clash { font-size: 10.5px; color: var(--danger); }
 .shortcut-actions { display: flex; gap: 4px; justify-content: flex-end; }
 .shortcut-row .shortcut-actions .btn { visibility: hidden; }
 .shortcut-row:hover .shortcut-actions .btn, .shortcut-row.recording .shortcut-actions .btn { visibility: visible; }

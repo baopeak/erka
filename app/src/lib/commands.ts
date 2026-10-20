@@ -103,8 +103,8 @@ export const commands: Command[] = [
   },
   { id: "settings", label: "Settings", win: "mod+,", mac: "mod+,", run: () => store.openSettings() },
   // Alt+Shift+Arrow, not Alt+Arrow: shells use Alt+Arrow for word movement.
-  { id: "nav.back", label: "Go Back", win: "shift+alt+arrowleft", mac: "ctrl+-", run: navBack, when: hasProject },
-  { id: "nav.forward", label: "Go Forward", win: "shift+alt+arrowright", mac: "ctrl+shift+-", run: navForward, when: hasProject },
+  { id: "nav.back", label: "Go Back", win: "shift+alt+arrowleft", mac: "mod+alt+arrowleft", run: navBack, when: () => hasProject() && store.overlay() === null },
+  { id: "nav.forward", label: "Go Forward", win: "shift+alt+arrowright", mac: "mod+alt+arrowright", run: navForward, when: () => hasProject() && store.overlay() === null },
   { id: "zoom.in", label: "Increase Font Size", win: "mod+=", mac: "mod+=", run: () => zoom(1) },
   { id: "zoom.out", label: "Decrease Font Size", win: "mod+-", mac: "mod+-", run: () => zoom(-1) },
   { id: "zoom.reset", label: "Reset Font Size", win: "mod+0", mac: "mod+0", run: () => zoom(0) },
@@ -155,6 +155,8 @@ export function eventChord(e: KeyboardEvent): string {
   else if (e.code === "Minus") key = "-";
   else if (e.code === "Comma") key = ",";
   else if (/^Key[A-Z]$/.test(e.code)) key = e.code.slice(3).toLowerCase();
+  // Numpad keys by name: "+" itself would be read as a separator.
+  else if (/^Numpad/.test(e.code)) key = e.code.toLowerCase();
   parts.push(key);
   return parts.join("+");
 }
@@ -163,7 +165,7 @@ const MODIFIER_ORDER = ["mod", "ctrl", "meta", "shift", "alt"];
 
 /** Canonical form for comparing chords: "ctrl" is `mod` off macOS, modifiers in a fixed order. */
 export function normalizeChord(chord: string): string {
-  const parts = chord.toLowerCase().split("+").map((p) => (!isMac && p === "ctrl" ? "mod" : p));
+  const parts = chord.toLowerCase().split("+").filter(Boolean).map((p) => (!isMac && p === "ctrl" ? "mod" : p));
   const key = parts.pop() ?? "";
   const mods = [...new Set(parts)].sort((a, b) => MODIFIER_ORDER.indexOf(a) - MODIFIER_ORDER.indexOf(b));
   return [...mods, key].join("+");

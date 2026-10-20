@@ -86,6 +86,12 @@ pub fn natural_cmp(a: &str, b: &str) -> Ordering {
     }
 }
 
+/// Whether `path` is an existing folder (no listing, so a large folder costs nothing).
+#[tauri::command]
+pub fn fs_is_dir(path: String) -> bool {
+    std::path::Path::new(&path).is_dir()
+}
+
 /// Async + blocking pool: listing a huge folder must never stall the UI thread.
 #[tauri::command]
 pub async fn fs_list_dir(root: String, path: String) -> CmdResult<Vec<DirEntry>> {

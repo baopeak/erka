@@ -3,7 +3,7 @@
 import { For, Show, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { store } from "../lib/store";
-import { agentHistoryList, listDir, onEvent } from "../lib/ipc";
+import { agentHistoryList, isDir, onEvent } from "../lib/ipc";
 import { isMac, relTimeShort } from "../lib/platform";
 import { newChat, supportsChat } from "../chat/mode-switch";
 import { Icon, KindGlyph } from "./icons";
@@ -48,7 +48,10 @@ function dayLabel(ms: number): string {
 function resumeCommand(it: HistoryItem): string {
   const run = { claude: `claude --resume ${it.id}`, codex: `codex resume ${it.id}`, omp: `omp --resume ${it.id}` }[it.agent];
   if (!it.cwd) return run;
-  return isMac || !/^[a-z]:|^\\\\/i.test(it.cwd) ? `cd "${it.cwd}" && ${run}` : `Set-Location -LiteralPath "${it.cwd}"; ${run}`;
+  // Single quotes: no `$`, backtick or wildcard expansion of the folder name.
+  return isMac || !/^[a-z]:|^\\\\/i.test(it.cwd)
+    ? `cd '${it.cwd.replace(/'/g, "'\\''")}' && ${run}`
+    : `Set-Location -LiteralPath '${it.cwd.replace(/'/g, "''")}'; ${run}`;
 }
 
 /** The sidebar project owning the folder (deepest match), adding the folder as a project if none. */
@@ -113,7 +116,7 @@ export function HistoryPanel(props: { project: Project }) {
     resuming.add(key);
     try {
       // A deleted folder (e.g. a removed worktree) must not turn into a dead project.
-      if (!(await listDir(it.cwd, "").then(() => true, () => false))) return store.notify(`Folder no longer exists: ${it.cwd}`);
+      if (!(await isDir(it.cwd).catch(() => false))) return store.notify(`Folder no longer exists: ${it.cwd}`);
       const pid = projectFor(it);
       const info = chat
         ? await newChat(pid, it.agent, "tab", { resume: it.id, cwd: it.cwd })

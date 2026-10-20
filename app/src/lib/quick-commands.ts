@@ -26,7 +26,8 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
  *  asked for them and turns newlines into Enter keys, exactly as when the user pastes. */
 async function typeInto(s: SessionInfo, text: string, enter: boolean, enterDelay: number) {
   const view = peekView(s.id);
-  if (view) view.paste(text);
+  // A view between attachments (e.g. during a daemon reconnect) would drop the paste.
+  if (view?.handle != null) view.paste(text);
   else await sendInput(s.handle, text.replace(/\r?\n/g, "\r"));
   if (!enter) return;
   // Agent TUIs treat Enter that follows a burst of input as part of the paste (Codex: within

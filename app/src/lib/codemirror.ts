@@ -1,7 +1,7 @@
 // Shared CodeMirror 6 setup: colours come from the app's CSS variables (dark / light themes
 // restyle open editors live), lazy language loading.
-import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection, highlightSpecialChars, rectangularSelection, crosshairCursor } from "@codemirror/view";
-import { EditorState, type Extension } from "@codemirror/state";
+import { EditorView, ViewPlugin, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection, highlightSpecialChars, rectangularSelection, crosshairCursor } from "@codemirror/view";
+import { Compartment, EditorState, type Extension } from "@codemirror/state";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { searchKeymap, highlightSelectionMatches } from "@codemirror/search";
 import { bracketMatching, foldGutter, foldKeymap, indentOnInput, syntaxHighlighting, HighlightStyle, LanguageDescription } from "@codemirror/language";
@@ -24,8 +24,7 @@ const syntax = HighlightStyle.define([
   { tag: t.invalid, color: "var(--danger)" },
 ]);
 
-export const erkaTheme = EditorView.theme(
-  {
+const themeSpec = {
     "&": { backgroundColor: "var(--term-bg)", color: "var(--text)", fontSize: "13px", height: "100%" },
     ".cm-content": { fontFamily: '"JetBrains Mono", "Cascadia Code", Menlo, Consolas, monospace', caretColor: "var(--accent)" },
     ".cm-scroller": { fontFamily: '"JetBrains Mono", "Cascadia Code", Menlo, Consolas, monospace', lineHeight: "1.55" },
@@ -48,8 +47,26 @@ export const erkaTheme = EditorView.theme(
     ".cm-deletedChunk, .cm-deletedLine": { backgroundColor: "rgba(255,107,122,0.12)" },
     ".cm-merge-a .cm-changedText": { backgroundColor: "rgba(255,107,122,0.22)" },
     ".cm-merge-b .cm-changedText": { backgroundColor: "rgba(139,213,139,0.22)" },
-  },
-);
+};
+
+// Colours come from CSS variables; the dark flag picks CodeMirror's matching base theme for
+// everything Erka does not style (fold placeholders, completion lists, merge gutters).
+const darkTheme = EditorView.theme(themeSpec, { dark: true });
+const lightTheme = EditorView.theme(themeSpec, { dark: false });
+const themeSlot = new Compartment();
+let dark = true;
+const live = new Set<EditorView>();
+const tracker = ViewPlugin.define((view) => {
+  live.add(view);
+  return { destroy: () => void live.delete(view) };
+});
+
+/** Switches every open editor (and new ones) to the dark or light base theme. */
+export function setEditorTheme(isDark: boolean) {
+  if (dark === isDark) return;
+  dark = isDark;
+  for (const v of live) v.dispatch({ effects: themeSlot.reconfigure(isDark ? darkTheme : lightTheme) });
+}
 
 export function baseExtensions(opts: { readOnly?: boolean; onSave?: () => void } = {}): Extension[] {
   const exts: Extension[] = [
@@ -75,7 +92,8 @@ export function baseExtensions(opts: { readOnly?: boolean; onSave?: () => void }
       ...historyKeymap,
       ...foldKeymap,
     ]),
-    erkaTheme,
+    themeSlot.of(dark ? darkTheme : lightTheme),
+    tracker,
   ];
   if (opts.readOnly) exts.push(EditorState.readOnly.of(true), EditorView.editable.of(false));
   return exts;

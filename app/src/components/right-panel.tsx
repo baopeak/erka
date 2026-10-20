@@ -23,7 +23,9 @@ export function RightPanel(props: { project: Project }) {
     el.setPointerCapture(e.pointerId);
     const startX = e.clientX;
     const startW = store.state.settings.rightPanelWidth;
-    const move = (ev: PointerEvent) => store.setSettings({ rightPanelWidth: Math.min(700, Math.max(200, startW - (ev.clientX - startX))) });
+    // The panel is zoomed by the interface scale; its width is in unzoomed pixels.
+    const scale = store.state.settings.uiScale || 1;
+    const move = (ev: PointerEvent) => store.setSettings({ rightPanelWidth: Math.min(700, Math.max(200, startW - (ev.clientX - startX) / scale)) });
     const up = () => {
       el.removeEventListener("pointermove", move);
       el.removeEventListener("pointerup", up);

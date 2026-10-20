@@ -14,12 +14,24 @@ interface Pending {
   tui: string | null;
 }
 
-/** Why a chord would be taken away from shells and agent TUIs, if it would. */
+/** Chords that can never be a shortcut (they would stop a character from being typed). */
+function unusable(chord: string): string | null {
+  const mods = chord.split("+").slice(0, -1);
+  if (!mods.length) return "Add Ctrl, Alt or Cmd: a single key belongs to the terminal.";
+  if (mods.every((m) => m === "shift")) return "Shift alone only changes the character typed; add Ctrl, Alt or Cmd.";
+  return null;
+}
+
+/** Why a chord would be taken away from shells, agent TUIs or text editing, if it would. */
 function tuiConflict(chord: string): string | null {
   const parts = chord.split("+");
   const key = parts[parts.length - 1];
   const mods = parts.slice(0, -1);
   const letter = /^[a-z\[\]\\]$/.test(key);
+  const is = (...m: string[]) => mods.length === m.length && m.every((x) => mods.includes(x));
+  if (!isMac && is("mod", "shift") && (key === "c" || key === "v")) return `Ctrl+Shift+${key.toUpperCase()} copies / pastes in terminals.`;
+  if (isMac && is("mod") && "cvxza".includes(key) && key.length === 1) return `⌘${key.toUpperCase()} is copy, paste, cut, undo or select-all everywhere.`;
+  if (!isMac && is("mod", "alt")) return `Ctrl+Alt is AltGr on many keyboard layouts: ${key.toUpperCase()} may type a character there (e.g. @ € { }).`;
   if (!isMac && mods.length === 1 && mods[0] === "mod" && letter)
     return `Ctrl+${key.toUpperCase()} is used by shells and agent TUIs (Ctrl+C, Ctrl+R history, Ctrl+P/N, Ctrl+J…); terminals would no longer receive it.`;
   if (isMac && mods.includes("ctrl") && !mods.includes("mod") && letter)
@@ -35,6 +47,7 @@ export function ShortcutSettings() {
   const [filter, setFilter] = createSignal("");
   const [recording, setRecording] = createSignal<string | null>(null);
   const [pending, setPending] = createSignal<Pending | null>(null);
+  const [hint, setHint] = createSignal<string | null>(null);
 
   // The page search filters the table too, unless it matched the section itself.
   const query = () => {
@@ -53,7 +66,17 @@ export function ShortcutSettings() {
     window.removeEventListener("keydown", onKey, true);
     suspendKeymap(false);
     setRecording(null);
+    setHint(null);
   };
+
+  /** Back to the default key, unless another command holds it now. */
+  function reset(id: string) {
+    const c = commands.find((x) => x.id === id)!;
+    const chord = defaultChordOf(c);
+    const conflicts = chord ? commandsWithChord(chord, id).map((x) => x.label) : [];
+    if (!chord || !conflicts.length) return store.setShortcut(id, null);
+    setPending({ id, chord, conflicts, tui: null });
+  }
   onCleanup(stop);
 
   function onKey(e: KeyboardEvent) {
@@ -64,8 +87,8 @@ export function ShortcutSettings() {
     if (e.key === "Escape") return stop();
     if (MODIFIER_KEYS.has(e.key)) return;
     const chord = normalizeChord(eventChord(e));
-    const hasModifier = chord.includes("+");
-    if (!hasModifier && !/^f\d{1,2}$/.test(chord)) return; // bare keys belong to the terminal
+    const problem = /^f\d{1,2}$/.test(chord.split("+").pop() ?? "") ? null : unusable(chord);
+    if (problem) return setHint(problem); // keep recording
     stop();
     const next: Pending = { id, chord, conflicts: commandsWithChord(chord, id).map((c) => c.label), tui: tuiConflict(chord) };
     if (!next.conflicts.length && !next.tui) assign(next);
@@ -74,6 +97,7 @@ export function ShortcutSettings() {
 
   function record(id: string) {
     setPending(null);
+    setHint(null);
     setRecording(id);
     suspendKeymap(true);
     window.addEventListener("keydown", onKey, true);
@@ -114,14 +138,15 @@ export function ShortcutSettings() {
                   <span class="shortcut-label">{c.label}</span>
                   <span class="shortcut-key">
                     <Show when={recording() === c.id} fallback={<Show when={chord()} fallback={<span class="muted-inline">—</span>}><span class="kbd">{chordLabel(chord()!)}</span></Show>}>
-                      <span class="kbd live">Press keys… (Esc cancels)</span>
+                      <span class="kbd live">{hint() ?? "Press keys… (Esc cancels)"}</span>
                     </Show>
+                    <Show when={chord() && commandsWithChord(chord()!, c.id).length}><span class="clash" title={`Also bound to ${commandsWithChord(chord()!, c.id).map((x) => x.label).join(", ")}`}>clash</span></Show>
                     <Show when={overridden()}><span class="changed" title={`Default: ${defaultChordOf(c) ? chordLabel(defaultChordOf(c)!) : "none"}`}>changed</span></Show>
                   </span>
                   <span class="shortcut-actions">
                     <button class="btn mini" onClick={() => record(c.id)}>Change</button>
                     <Show when={chord()}><button class="btn mini" onClick={() => store.setShortcut(c.id, "")}>Remove</button></Show>
-                    <Show when={overridden()}><button class="btn mini" onClick={() => store.setShortcut(c.id, null)}>Reset</button></Show>
+                    <Show when={overridden()}><button class="btn mini" onClick={() => reset(c.id)}>Reset</button></Show>
                   </span>
                 </div>
               );

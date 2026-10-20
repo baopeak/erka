@@ -4,6 +4,7 @@ export const isMac = /Mac|iPhone|iPad/.test(navigator.platform) || navigator.use
 export function chordLabel(chord: string): string {
   return chord
     .split("+")
+    .filter(Boolean)
     .map((k) => {
       switch (k) {
         case "mod": return isMac ? "⌘" : "Ctrl";
@@ -15,6 +16,10 @@ export function chordLabel(chord: string): string {
         case "arrowup": return "↑";
         case "arrowdown": return "↓";
         case "enter": return isMac ? "↩" : "Enter";
+        case "numpadadd": return "Num+";
+        case "numpadsubtract": return "Num-";
+        case "numpadmultiply": return "Num*";
+        case "numpaddivide": return "Num/";
         default: return k.length === 1 ? k.toUpperCase() : k[0].toUpperCase() + k.slice(1);
       }
     })

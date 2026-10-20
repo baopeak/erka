@@ -116,6 +116,7 @@ pub fn run() {
             state_backup,
             platform_info,
             fs_ops::fs_list_dir,
+            fs_ops::fs_is_dir,
             fs_ops::fs_read_file,
             fs_ops::fs_write_file,
             fs_ops::fs_create,

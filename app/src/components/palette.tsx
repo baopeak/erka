@@ -88,6 +88,12 @@ function sessionItem(s: SessionInfo, marks?: number[]): Item {
   };
 }
 
+function projectChord(index: number): string | undefined {
+  const c = index >= 0 && index < 9 ? commands.find((x) => x.id === `project.${index + 1}`) : undefined;
+  const k = c && chordOf(c);
+  return k ? chordLabel(k) : undefined;
+}
+
 function projectItem(p: Project, marks?: number[]): Item {
   const i = store.topProjects().indexOf(p);
   const info = store.projectInfo[p.id];
@@ -98,7 +104,7 @@ function projectItem(p: Project, marks?: number[]): Item {
     label: parent ? `${parent.name} › ${p.name}` : p.name,
     marks: parent && marks ? marks.map((m) => m + parent.name.length + 3) : marks,
     hint: `${info?.branch ? info.branch + (info.dirty ? "*" : "") + " · " : ""}${p.path}`,
-    chord: i >= 0 && i < 9 ? chordLabel(chordOf(commands.find((c) => c.id === `project.${i + 1}`)!) ?? "") : undefined,
+    chord: projectChord(i),
     icon: () => <span class="project-swatch" style={{ background: p.color, width: "16px", height: "16px", "font-size": "9px" }}>{p.name[0]?.toUpperCase()}</span>,
     run: () => store.switchProject(p.id),
   };
