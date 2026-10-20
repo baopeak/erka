@@ -286,7 +286,7 @@ input, textarea, select { font: inherit; color: var(--text); }
 .statusbar .clickable:hover { color: var(--text); }
 .conn { width: 7px; height: 7px; border-radius: 50%; background: var(--danger); }
 .conn.on { background: var(--idle); }
-.toast { position: fixed; bottom: 36px; left: 50%; transform: translateX(-50%); background: var(--bg-elev-2); border: 1px solid var(--border-strong); padding: 9px 14px; border-radius: 9px; z-index: 120; box-shadow: 0 12px 30px rgba(0,0,0,.5); max-width: 70vw; }
+.toast { position: fixed; bottom: 36px; left: 50%; transform: translateX(-50%); background: var(--bg-elev-2); border: 1px solid var(--border-strong); padding: 8px 10px 8px 14px; border-radius: 9px; z-index: 120; box-shadow: 0 12px 30px rgba(0,0,0,.5); max-width: 70vw; display: flex; align-items: center; }
 
 /* ---------- chat ---------- */
 .chat { position: absolute; inset: 0; display: flex; flex-direction: column; background: var(--term-bg); }
@@ -317,3 +317,25 @@ input, textarea, select { font: inherit; color: var(--text); }
 .composer-row { display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--text-faint); }
 .composer-row .spacer { flex: 1; }
 .typing { color: var(--text-faint); font-size: 12px; display: flex; gap: 6px; align-items: center; }
+
+/* ---------- key hints ---------- */
+.key-hints { display: flex; gap: 14px; align-items: center; padding: 7px 12px; border-top: 1px solid var(--border); font-size: 11.5px; color: var(--text-faint); }
+.modal .key-hints { border-top: 0; padding: 0; }
+.key-hints .hint { display: inline-flex; gap: 6px; align-items: center; }
+
+/* ---------- explorer ---------- */
+.explorer { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+.explorer-head { display: flex; align-items: center; gap: 2px; padding: 8px 8px 4px 12px; }
+.explorer-title { flex: 1; min-width: 0; font-weight: 600; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.explorer-head .icon-btn { width: 24px; height: 24px; }
+.explorer-tools { display: flex; flex-direction: column; gap: 6px; padding: 2px 10px 8px; border-bottom: 1px solid var(--border); }
+.explorer-tools .text-input { height: 28px; }
+.seg { display: flex; background: var(--bg); border: 1px solid var(--border-strong); border-radius: 7px; padding: 2px; }
+.seg button { flex: 1; border: 0; background: transparent; color: var(--text-dim); border-radius: 5px; padding: 3px 0; cursor: pointer; font-size: 12px; }
+.seg button.on { background: var(--bg-active); color: var(--text); }
+.explorer .search-box { border-top: 0; }
+
+/* ---------- pane tools ---------- */
+.pane-tools { position: absolute; top: 6px; right: 10px; z-index: 8; display: flex; gap: 2px; padding: 2px; border-radius: 7px; background: rgba(22,26,35,.92); border: 1px solid var(--border-strong); opacity: 0; transition: opacity .12s; pointer-events: none; }
+.pane:hover > .pane-tools { opacity: 1; pointer-events: auto; }
+.pane-tools .icon-btn { width: 24px; height: 24px; }

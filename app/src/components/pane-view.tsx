@@ -21,10 +21,31 @@ export function PaneView(props: { pane: Pane; project: Project; tab: Tab }) {
     if (s?.alive && s.kind !== "shell" && !confirm(`Stop ${s.kind} and close this pane?`)) return;
     void store.closePane(props.project.id, props.tab.id, props.pane.id);
   };
+  const split = (where: "right" | "down") => {
+    focus();
+    void store.newSession(props.project.id, "shell", { where });
+  };
+  const zoomedHere = () => store.zoomed()[props.tab.id] === props.pane.id;
+  const tools = () => (
+    <>
+      <button class="icon-btn" title="Split right" onClick={() => split("right")}><Icon name="splitRight" size={13} /></button>
+      <button class="icon-btn" title="Split down" onClick={() => split("down")}><Icon name="splitDown" size={13} /></button>
+      <Show when={multi() || zoomedHere()}>
+        <button class={`icon-btn${zoomedHere() ? " active" : ""}`} title={zoomedHere() ? "Restore layout" : "Maximize pane"} onClick={() => store.toggleZoom(props.tab.id, props.pane.id)}>
+          <Icon name={zoomedHere() ? "minimize" : "maximize"} size={13} />
+        </button>
+      </Show>
+      <button class="icon-btn" title="Close pane" onClick={close}><Icon name="close" size={12} /></button>
+    </>
+  );
+  const hasHeader = () => multi() || zoomedHere() || (session() && supportsChat(session()!.kind));
 
   return (
     <div class={`pane${focused() && multi() ? " focused" : ""}`} onPointerDown={focus}>
-      <Show when={multi() || (session() && supportsChat(session()!.kind))}>
+      <Show when={!hasHeader()}>
+        <div class="pane-tools">{tools()}</div>
+      </Show>
+      <Show when={hasHeader()}>
         <div class="pane-header">
           <Show when={session()} fallback={<Icon name="files" size={13} />}>
             {(s) => <><StatusDot s={s()} /><KindGlyph kind={s().kind} size={14} /></>}
@@ -38,7 +59,7 @@ export function PaneView(props: { pane: Pane; project: Project; tab: Tab }) {
               <button class="icon-btn" title="Back to terminal (TUI)" onClick={() => void switchToTerminal(props.project, props.tab, props.pane)}><Icon name="terminal" size={14} /></button>
             </Show>
           </Show>
-          <button class="icon-btn" title="Close pane" onClick={close}><Icon name="close" size={12} /></button>
+          {tools()}
         </div>
       </Show>
       <div class="pane-body">

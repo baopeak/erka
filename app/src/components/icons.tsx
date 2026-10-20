@@ -27,6 +27,15 @@ const paths: Record<string, () => JSX.Element> = {
   more: () => <><circle cx="4" cy="8" r=".8" /><circle cx="8" cy="8" r=".8" /><circle cx="12" cy="8" r=".8" /></>,
   up: () => <path d="M4 10l4-4 4 4" />,
   down: () => <path d="M4 6l4 4 4-4" />,
+  maximize: () => <path d="M3 6V3h3M10 3h3v3M13 10v3h-3M6 13H3v-3" />,
+  minimize: () => <path d="M6 3v3H3M10 3v3h3M13 10h-3v3M3 10h3v3" />,
+  history: () => <><path d="M3 8a5 5 0 1 0 1.5-3.6" /><path d="M3 2.5v3h3" /><path d="M8 5.5V8l2 1.5" /></>,
+  back: () => <path d="M9.5 4L5.5 8l4 4" />,
+  forward: () => <path d="M6.5 4l4 4-4 4" />,
+  bolt: () => <path d="M9 2L4 9h4l-1 5 5-7H8z" />,
+  board: () => <><rect x="2.5" y="3" width="3" height="10" rx="1" /><rect x="6.5" y="3" width="3" height="7" rx="1" /><rect x="10.5" y="3" width="3" height="5" rx="1" /></>,
+  branch: () => <><circle cx="5" cy="4" r="1.5" /><circle cx="5" cy="12" r="1.5" /><circle cx="11" cy="5" r="1.5" /><path d="M5 5.5v5M11 6.5c0 3-6 2-6 4" /></>,
+  filter: () => <path d="M2.5 3.5h11l-4.5 5v4l-2 1v-5z" />,
 };
 
 export function Icon(props: { name: keyof typeof paths | string; size?: number }) {

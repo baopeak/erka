@@ -1,6 +1,7 @@
 import { For, Show, createSignal, onMount } from "solid-js";
 import { store } from "../lib/store";
 import { KindGlyph, kindMeta } from "./icons";
+import { KeyHints } from "./key-hints";
 import { newChat, supportsChat } from "../chat/mode-switch";
 import type { SessionKind } from "../lib/types";
 
@@ -68,6 +69,8 @@ export function NewSessionMenu() {
           </div>
         </div>
         <div class="footer">
+          <KeyHints items={[["Enter", "Start"], ["Esc", "Cancel"]]} />
+          <span style={{ flex: 1 }} />
           <button class="btn" onClick={() => store.setOverlay(null)}>Cancel</button>
           <button class="btn primary" onClick={start}>Start</button>
         </div>

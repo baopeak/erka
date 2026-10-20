@@ -23,6 +23,7 @@ export const defaultSettings: Settings = {
   sidebarWidth: 232,
   sidebarCollapsed: false,
   notifications: true,
+  shortcutHints: true,
   profiles: [
     { kind: "claude", label: "Claude Code", args: [] },
     { kind: "codex", label: "Codex", args: [] },
@@ -41,7 +42,9 @@ function createAppStore() {
   const [connected, setConnected] = createSignal(false);
   const [overlay, setOverlay] = createSignal<Overlay>(null);
   const [loaded, setLoaded] = createSignal(false);
-  const [toast, setToast] = createSignal<string | null>(null);
+  const [toast, setToast] = createSignal<Toast | null>(null);
+  /** Per-tab zoomed pane (transient, not persisted). */
+  const [zoomed, setZoomed] = createSignal<Record<string, string>>({});
   const [lastSwitchMs, setLastSwitchMs] = createSignal<number | null>(null);
 
   // ---------- persistence ----------
@@ -55,9 +58,19 @@ function createAppStore() {
     persist();
   };
 
-  function notify(msg: string) {
-    setToast(msg);
-    setTimeout(() => setToast((t) => (t === msg ? null : t)), 3500);
+  function notify(text: string, action?: Toast["action"], ms = 3500) {
+    const t: Toast = { text, action };
+    setToast(t);
+    setTimeout(() => setToast((cur) => (cur === t ? null : cur)), ms);
+  }
+
+  function toggleZoom(tabId: string, paneId: string) {
+    setZoomed((z) => {
+      const next = { ...z };
+      if (next[tabId] === paneId) delete next[tabId];
+      else next[tabId] = paneId;
+      return next;
+    });
   }
 
   // ---------- sessions ----------
@@ -230,6 +243,8 @@ function createAppStore() {
   function placePane(projectId: string, pane: Pane, where: "tab" | "right" | "down" = "tab") {
     const tab = activeTab(projectId);
     if (where === "tab" || !tab) return addTab(projectId, pane);
+    // Splitting while a pane is maximized would hide the new pane: restore the layout first.
+    if (zoomed()[tab.id]) toggleZoom(tab.id, zoomed()[tab.id]);
     setTabRoot(projectId, tab.id, splitPane(tab.root, tab.focus, pane, where === "right" ? "row" : "col"), pane.id);
   }
 
@@ -346,6 +361,14 @@ function createAppStore() {
     });
   }
 
+  /** Shows a right-panel view without toggling it off when already shown. */
+  function showRightPanel(panel: NonNullable<Workspace["rightPanel"]>) {
+    const pid = state.activeProject;
+    if (!pid) return;
+    ensureWorkspace(pid);
+    update((s) => (s.workspaces[pid].rightPanel = panel));
+  }
+
   function setSettings(patch: Partial<Settings>) {
     update((s) => Object.assign(s.settings, patch));
   }
@@ -384,8 +407,13 @@ function createAppStore() {
     state, sessions, connected, overlay, setOverlay, loaded, toast, notify, lastSwitchMs,
     init, activeProject, workspace, activeTab, addProject, removeProject, renameProject, moveProject, switchProject,
     addTab, selectTab, cycleTab, focusPane, placePane, newSession, revealSession, openFile, closePane,
-    replacePaneIn, resizeSplit, setRightPanel, setSettings, paneLocation, isSessionVisible, refreshSessions, setSessions,
+    replacePaneIn, resizeSplit, setRightPanel, showRightPanel, setSettings, zoomed, toggleZoom, paneLocation, isSessionVisible, refreshSessions, setSessions,
   };
+}
+
+export interface Toast {
+  text: string;
+  action?: { label: string; run: () => void };
 }
 
 export const store = createRoot(createAppStore);

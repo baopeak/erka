@@ -28,8 +28,11 @@ export function isTerminalReply(data: string): boolean {
 }
 
 /** Set by the keymap: returns true when the event is an app shortcut xterm must not eat. */
-let isAppShortcut: (e: KeyboardEvent) => boolean = () => false;
-export const setAppShortcutMatcher = (fn: (e: KeyboardEvent) => boolean) => (isAppShortcut = fn);
+let isAppShortcut: (e: KeyboardEvent, fromTerminal: boolean) => boolean = () => false;
+export const setAppShortcutMatcher = (fn: (e: KeyboardEvent, fromTerminal: boolean) => boolean) => (isAppShortcut = fn);
+/** True while a palette/dialog is open: keys must not reach the terminal underneath. */
+let overlayOpen: () => boolean = () => false;
+export const setOverlayCheck = (fn: () => boolean) => (overlayOpen = fn);
 
 export class TermView {
   readonly el = document.createElement("div");
@@ -101,8 +104,9 @@ export class TermView {
   }
 
   private onKey(e: KeyboardEvent): boolean {
+    if (overlayOpen()) return false;
     if (e.type !== "keydown") return true;
-    if (isAppShortcut(e)) return false;
+    if (isAppShortcut(e, true)) return false;
     const key = e.key.toLowerCase();
     if (!isMac && e.ctrlKey && !e.altKey) {
       if (key === "c" && (e.shiftKey || this.term.hasSelection())) {

@@ -95,6 +95,8 @@ export interface Settings {
   sidebarWidth: number;
   sidebarCollapsed: boolean;
   notifications: boolean;
+  /** Toast once per shortcut when Erka keeps a key from the focused terminal. */
+  shortcutHints: boolean;
   profiles: AgentProfile[];
 }
 
@@ -112,6 +114,7 @@ export interface DirEntry {
   is_dir: boolean;
   is_symlink: boolean;
   size: number;
+  ignored: boolean;
 }
 
 export interface FileContent {

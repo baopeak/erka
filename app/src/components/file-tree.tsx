@@ -1,7 +1,7 @@
 // Virtualized, lazily-loaded file tree. Only rows inside the viewport exist in the DOM, and a
 // directory is read from disk the first time it is expanded (then refreshed by the watcher).
 import { For, Show, createMemo, createSignal, onCleanup, onMount } from "solid-js";
-import { createStore } from "solid-js/store";
+import { createStore, reconcile } from "solid-js/store";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { store } from "../lib/store";
 import { createEntry, deleteEntry, listDir, onEvent, renameEntry, revealEntry } from "../lib/ipc";
@@ -30,7 +30,12 @@ function FileIcon(props: { entry: DirEntry; open: boolean }) {
 
 interface Row { entry: DirEntry; depth: number; index: number }
 
-export function FileTree(props: { project: Project }) {
+export interface FileTreeApi {
+  collapseAll(): void;
+  refresh(): void;
+}
+
+export function FileTree(props: { project: Project; api?: (api: FileTreeApi) => void }) {
   const root = () => props.project.path;
   const [children, setChildren] = createStore<Record<string, DirEntry[]>>({});
   const [expanded, setExpanded] = createStore<Record<string, boolean>>({ "": true });
@@ -53,6 +58,12 @@ export function FileTree(props: { project: Project }) {
 
   onMount(() => {
     void load("");
+    props.api?.({
+      collapseAll: () => setExpanded(reconcile({ "": true })),
+      refresh: () => {
+        for (const d of Object.keys(children)) void load(d);
+      },
+    });
     const ro = new ResizeObserver(() => setHeight(scroller.clientHeight));
     ro.observe(scroller);
     const un = onEvent<{ root: string; dirs: string[] }>("fs-changed", (e) => {
@@ -173,7 +184,7 @@ export function FileTree(props: { project: Project }) {
               const renaming = () => editing()?.kind === "rename" && editing()?.entry?.path === row.entry.path;
               return (
                 <div
-                  class={`tree-row${selected() === row.entry.path ? " selected" : ""}${status() ? ` g-${status() === "•" ? "M" : status()}` : ""}`}
+                  class={`tree-row${selected() === row.entry.path ? " selected" : ""}${row.entry.ignored ? " ignored" : ""}${status() ? ` g-${status() === "•" ? "M" : status()}` : ""}`}
                   style={{ top: `${row.index * ROW_H}px`, "padding-left": `${8 + row.depth * 14}px` }}
                   onClick={() => activate(row.entry)}
                   onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setSelected(row.entry.path); setMenu({ x: e.clientX, y: e.clientY, entry: row.entry }); }}

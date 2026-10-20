@@ -92,9 +92,23 @@ const PARENT_AGENT_ENV: &[&str] = &[
     "ERKA_SESSION_ID",
 ];
 
+/// Environment an editor host (VS Code, Electron) injects into its children.
+fn inherits_editor_host(key: &str) -> bool {
+    key == "ELECTRON_RUN_AS_NODE" || key == "ELECTRON_NO_ATTACH_CONSOLE" || key.starts_with("VSCODE_")
+}
+
 fn serve() -> Result<()> {
     // Single-threaded at this point, so mutating the process environment is sound.
     for key in PARENT_AGENT_ENV {
+        std::env::remove_var(key);
+    }
+    // Launched from VS Code (or any Electron host)? Its IPC hooks and run-as-node switch would
+    // leak into every session and break `code .` or Electron apps started from a terminal.
+    let inherited: Vec<String> = std::env::vars_os()
+        .filter_map(|(k, _)| k.into_string().ok())
+        .filter(|k| inherits_editor_host(k))
+        .collect();
+    for key in inherited {
         std::env::remove_var(key);
     }
     let data_dir = erka_proto::data_dir();
@@ -184,4 +198,17 @@ fn hook(args: &[String]) {
         };
         let _ = tokio::time::timeout(std::time::Duration::from_secs(2), send).await;
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::inherits_editor_host;
+
+    #[test]
+    fn scrubs_editor_host_env() {
+        assert!(inherits_editor_host("ELECTRON_RUN_AS_NODE"));
+        assert!(inherits_editor_host("VSCODE_IPC_HOOK"));
+        assert!(!inherits_editor_host("PATH"));
+        assert!(!inherits_editor_host("TERM_PROGRAM"));
+    }
 }

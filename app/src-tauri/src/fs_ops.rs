@@ -45,6 +45,8 @@ pub struct DirEntry {
     is_dir: bool,
     is_symlink: bool,
     size: u64,
+    /// Matched by .gitignore / .ignore (shown dimmed, still listed).
+    ignored: bool,
 }
 
 /// "file9" < "file10": digit runs compare numerically, the rest case-insensitively.
@@ -100,9 +102,22 @@ pub fn fs_list_dir(root: String, path: String) -> CmdResult<Vec<DirEntry>> {
             let meta = if is_symlink { std::fs::metadata(e.path()).ok() } else { e.metadata().ok() };
             let is_dir = meta.as_ref().is_some_and(|m| m.is_dir());
             let rel = Path::new(&path).join(&name).to_string_lossy().replace('\\', "/");
-            Some(DirEntry { name, path: rel.trim_start_matches("./").to_string(), is_dir, is_symlink, size: meta.map(|m| m.len()).unwrap_or(0) })
+            Some(DirEntry { name, path: rel.trim_start_matches("./").to_string(), is_dir, is_symlink, size: meta.map(|m| m.len()).unwrap_or(0), ignored: false })
         })
         .collect();
+    // One-level, ignore-aware walk: whatever it does not yield is ignored.
+    let visible: std::collections::HashSet<std::ffi::OsString> = ignore::WalkBuilder::new(&dir)
+        .max_depth(Some(1))
+        .hidden(false)
+        .parents(true)
+        .build()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.depth() == 1)
+        .map(|e| e.file_name().to_os_string())
+        .collect();
+    for e in &mut entries {
+        e.ignored = !visible.contains(std::ffi::OsStr::new(&e.name));
+    }
     entries.sort_by(|a, b| b.is_dir.cmp(&a.is_dir).then_with(|| natural_cmp(&a.name, &b.name)));
     Ok(entries)
 }

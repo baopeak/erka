@@ -51,7 +51,14 @@ export function App() {
         <Match when={["palette", "quickopen", "jump"].includes(store.overlay() ?? "")}><Palette mode={store.overlay() as "palette" | "quickopen" | "jump"} /></Match>
       </Switch>
       <Show when={store.toast()}>
-        <div class="toast">{store.toast()}</div>
+        {(t) => (
+          <div class="toast">
+            <span>{t().text}</span>
+            <Show when={t().action}>
+              {(a) => <button class="btn" style={{ height: "24px", "margin-left": "10px" }} onClick={() => a().run()}>{a().label}</button>}
+            </Show>
+          </div>
+        )}
       </Show>
     </div>
   );

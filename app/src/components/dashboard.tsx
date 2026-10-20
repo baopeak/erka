@@ -23,7 +23,7 @@ export function Dashboard() {
     store.revealSession(s.id);
   };
   return (
-    <div class="dashboard">
+    <div class="dashboard" tabIndex={-1} ref={(el) => queueMicrotask(() => el.focus())}>
       <div class="dash-head">
         <h2>Agents</h2>
         <span class="stats">

@@ -4,6 +4,7 @@ import { chordOf, commands } from "../lib/commands";
 import { chordLabel, relTime } from "../lib/platform";
 import { quickOpen, type QuickOpenHit } from "../lib/ipc";
 import { KindGlyph } from "./icons";
+import { KeyHints } from "./key-hints";
 import { StatusDot } from "./sidebar";
 
 type Mode = "palette" | "quickopen" | "jump";
@@ -172,6 +173,7 @@ export function Palette(props: { mode: Mode }) {
             <div class="muted">{props.mode === "quickopen" && !query() ? "Indexing…" : "No matches"}</div>
           </Show>
         </div>
+        <KeyHints items={[["Enter", "Open"], ["Esc", "Close"], ["↑↓", "Move"]]} />
       </div>
     </div>
   );

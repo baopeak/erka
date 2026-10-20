@@ -1,15 +1,22 @@
 import { Show, createMemo, createSignal } from "solid-js";
 import { store } from "../lib/store";
-import { allPanes } from "../lib/layout";
+import { allPanes, findPane } from "../lib/layout";
 import type { LayoutNode, LeafNode, Project, SplitNode, Tab } from "../lib/types";
 import { PaneView } from "./pane-view";
 
 /** Renders a tab's split tree. Nodes are keyed by id so splitting one pane keeps the others. */
 export function SplitView(props: { project: Project; tab: Tab }) {
   const multi = createMemo(() => allPanes(props.tab.root).length > 1);
+  // A maximized pane renders alone; the others are parked like any hidden pane.
+  const zoomedPane = createMemo(() => {
+    const id = store.zoomed()[props.tab.id];
+    return id ? findPane(props.tab.root, id) : undefined;
+  });
   return (
     <div class={multi() ? "multi" : ""} style={{ position: "absolute", inset: 0 }}>
-      <NodeView node={props.tab.root} project={props.project} tab={props.tab} />
+      <Show when={zoomedPane()} keyed fallback={<NodeView node={props.tab.root} project={props.project} tab={props.tab} />}>
+        {(pane) => <PaneView pane={pane} project={props.project} tab={props.tab} />}
+      </Show>
     </div>
   );
 }

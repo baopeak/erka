@@ -6,8 +6,8 @@
 import { open } from "@tauri-apps/plugin-dialog";
 import { store } from "./store";
 import { cyclePane } from "./layout";
-import { isMac } from "./platform";
-import { allViews, peekView, setAppShortcutMatcher } from "./terminal-host";
+import { chordLabel, isMac } from "./platform";
+import { allViews, peekView, setAppShortcutMatcher, setOverlayCheck } from "./terminal-host";
 import type { SessionKind } from "./types";
 
 export interface Command {
@@ -81,7 +81,11 @@ export const commands: Command[] = [
   { id: "tab.prev", label: "Previous Tab", win: "ctrl+shift+tab", mac: "ctrl+shift+tab", run: () => store.cycleTab(-1) },
   { id: "panel.files", label: "Toggle Explorer", win: "mod+shift+e", mac: "mod+shift+e", run: () => store.setRightPanel("files"), when: hasProject },
   { id: "panel.git", label: "Toggle Source Control", win: "mod+shift+g", mac: "mod+shift+g", run: () => store.setRightPanel("git"), when: hasProject },
-  { id: "panel.search", label: "Search in Files", win: "mod+shift+h", mac: "mod+shift+f", run: () => store.setRightPanel("search"), when: hasProject },
+  { id: "panel.search", label: "Search in Files", win: "mod+shift+h", mac: "mod+shift+f", run: () => store.showRightPanel("search"), when: hasProject },
+  {
+    id: "pane.zoom", label: "Toggle Maximize Pane", win: "mod+shift+enter", mac: "mod+shift+enter", when: hasProject,
+    run: () => { const f = focusedPane(); if (f) store.toggleZoom(f.tab.id, f.paneId); },
+  },
   { id: "sidebar", label: "Toggle Sidebar", win: "mod+shift+b", mac: "mod+b", run: () => store.setSettings({ sidebarCollapsed: !store.state.settings.sidebarCollapsed }) },
   {
     id: "find", label: "Find in Terminal", win: "mod+shift+f", mac: "mod+f",
@@ -157,8 +161,26 @@ function match(e: KeyboardEvent): Command | undefined {
   });
 }
 
+/** Chords already explained this session (one toast per chord). */
+const explained = new Set<string>();
+
+function explainIntercept(cmd: Command) {
+  const chord = chordOf(cmd);
+  if (!chord || explained.has(cmd.id) || !store.state.settings.shortcutHints) return;
+  explained.add(cmd.id);
+  store.notify(`${chordLabel(chord)} → ${cmd.label} (kept from the terminal)`, {
+    label: "Shortcuts",
+    run: () => store.setOverlay("settings"),
+  }, 5000);
+}
+
 export function installKeymap() {
-  setAppShortcutMatcher((e) => !!match(e));
+  setOverlayCheck(() => store.overlay() !== null);
+  setAppShortcutMatcher((e, fromTerminal) => {
+    const cmd = match(e);
+    if (cmd && fromTerminal) explainIntercept(cmd);
+    return !!cmd;
+  });
   window.addEventListener(
     "keydown",
     (e) => {
@@ -167,6 +189,8 @@ export function installKeymap() {
       if (!cmd) return;
       e.preventDefault();
       e.stopPropagation();
+      // The terminal never sees this key; tell the user once why.
+      if ((e.target as HTMLElement | null)?.closest?.(".xterm")) explainIntercept(cmd);
       cmd.run();
     },
     true,

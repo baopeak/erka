@@ -2,9 +2,8 @@ import { Match, Switch, createEffect, onCleanup } from "solid-js";
 import { store } from "../lib/store";
 import { unwatchRoot, watchRoot } from "../lib/ipc";
 import { gitState } from "../lib/git-state";
-import { FileTree } from "./file-tree";
+import { Explorer } from "./explorer";
 import { GitPanel } from "./git-panel";
-import { SearchPanel } from "./search-panel";
 import type { Project } from "../lib/types";
 
 export function RightPanel(props: { project: Project }) {
@@ -32,8 +31,8 @@ export function RightPanel(props: { project: Project }) {
     el.addEventListener("pointerup", up);
   };
 
-  const tab = (id: "files" | "git" | "search", label: string) => (
-    <button class={`ptab${panel() === id ? " active" : ""}`} onClick={() => store.setRightPanel(id)}>
+  const tab = (id: "files" | "git", label: string) => (
+    <button class={`ptab${panel() === id || (id === "files" && panel() === "search") ? " active" : ""}`} onClick={() => store.showRightPanel(id)}>
       {label}
       {id === "git" && gitState.status()?.files.length ? ` ${gitState.status()!.files.length}` : ""}
     </button>
@@ -45,13 +44,11 @@ export function RightPanel(props: { project: Project }) {
       <div class="panel-tabs">
         {tab("files", "Files")}
         {tab("git", "Changes")}
-        {tab("search", "Search")}
       </div>
       <div class="panel-body">
         <Switch>
-          <Match when={panel() === "files"}><FileTree project={props.project} /></Match>
+          <Match when={panel() === "files" || panel() === "search"}><Explorer project={props.project} /></Match>
           <Match when={panel() === "git"}><GitPanel project={props.project} /></Match>
-          <Match when={panel() === "search"}><SearchPanel project={props.project} /></Match>
         </Switch>
       </div>
     </aside>
