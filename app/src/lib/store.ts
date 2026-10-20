@@ -10,7 +10,7 @@ import { basename, uid } from "./platform";
 import { projectColors } from "./theme";
 import { disposeView, peekView, resetStreams } from "./terminal-host";
 import type { SettingsSection } from "./settings-catalog";
-import type { AgentProfile, AppState, BranchInfo, LayoutNode, Pane, Project, RecentItem, SessionInfo, SessionKind, Settings, Tab, Workspace } from "./types";
+import type { WorkStatus, AgentProfile, AppState, BranchInfo, LayoutNode, Pane, Project, RecentItem, SessionInfo, SessionKind, Settings, Tab, Workspace } from "./types";
 
 export const defaultSettings: Settings = {
   fontFamily: '"JetBrains Mono", "Cascadia Code", "Cascadia Mono", Menlo, Consolas, "Symbols Nerd Font Mono", monospace',
@@ -42,10 +42,12 @@ export const defaultSettings: Settings = {
   ],
 };
 
-const emptyState = (): AppState => ({ version: 1, projects: [], activeProject: null, workspaces: {}, settings: { ...defaultSettings }, recent: [], collapsed: {}, keymap: {} });
+/** app-state.json format; older files are migrated (after a backup) on load. */
+const STATE_VERSION = 2;
+const emptyState = (): AppState => ({ version: STATE_VERSION, projects: [], activeProject: null, workspaces: {}, settings: { ...defaultSettings }, recent: [], collapsed: {}, keymap: {} });
 const MAX_RECENT = 40;
 
-export type Overlay = null | "palette" | "quickopen" | "jump" | "dashboard" | "settings" | "newsession";
+export type Overlay = null | "palette" | "quickopen" | "jump" | "dashboard" | "settings" | "newsession" | "board" | "worktree";
 
 function createAppStore() {
   const [state, setState] = createStore<AppState>(emptyState());
@@ -220,24 +222,66 @@ function createAppStore() {
     if (!state.workspaces[projectId]) update((s) => (s.workspaces[projectId] = { tabs: [], activeTab: null, rightPanel: "files" }));
   }
 
-  function addProject(path: string) {
-    const existing = state.projects.find((p) => p.path.toLowerCase() === path.toLowerCase());
-    if (existing) return switchProject(existing.id);
-    const project: Project = { id: uid(), name: basename(path), path, color: projectColors[state.projects.length % projectColors.length] };
+  const samePath = (a: string, b: string) => a.replace(/[\\/]+$/, "").toLowerCase() === b.replace(/[\\/]+$/, "").toLowerCase();
+
+  /** Adds a folder (or, with `parentId`, a worktree of that project) and returns its id. */
+  function addProject(path: string, opts: { parentId?: string; branch?: string; name?: string; open?: boolean } = {}): string {
+    const existing = state.projects.find((p) => samePath(p.path, path));
+    if (existing) {
+      if (opts.open !== false) switchProject(existing.id);
+      return existing.id;
+    }
+    const parent = opts.parentId ? state.projects.find((p) => p.id === opts.parentId) : undefined;
+    const project: Project = {
+      id: uid(),
+      name: opts.name ?? basename(path),
+      path,
+      // Worktrees share their repository's colour.
+      color: parent?.color ?? projectColors[topProjects().length % projectColors.length],
+      ...(parent ? { parentId: parent.id, branch: opts.branch } : {}),
+    };
     update((s) => s.projects.push(project));
     ensureWorkspace(project.id);
-    switchProject(project.id);
+    refreshProjectInfo(project.id, 0);
+    if (opts.open !== false) switchProject(project.id);
+    return project.id;
   }
 
+  /** Removes a project from the sidebar (files and running sessions are not touched); its
+   *  worktree children go with it. */
   function removeProject(id: string) {
+    const ids = new Set([id, ...state.projects.filter((p) => p.parentId === id).map((p) => p.id)]);
     update((s) => {
-      s.projects = s.projects.filter((p) => p.id !== id);
-      delete s.workspaces[id];
-      if (s.collapsed) delete s.collapsed[id];
-      s.recent = (s.recent ?? []).filter((r) => r.projectId !== id && !(r.kind === "project" && r.id === id));
-      if (s.activeProject === id) s.activeProject = s.projects[0]?.id ?? null;
+      s.projects = s.projects.filter((p) => !ids.has(p.id));
+      for (const x of ids) {
+        delete s.workspaces[x];
+        if (s.collapsed) delete s.collapsed[x];
+      }
+      s.recent = (s.recent ?? []).filter((r) => !ids.has(r.projectId) && !(r.kind === "project" && ids.has(r.id)));
+      if (s.activeProject && ids.has(s.activeProject)) s.activeProject = s.projects.find((p) => !p.parentId)?.id ?? s.projects[0]?.id ?? null;
     });
-    setProjectInfo(produce((m) => delete m[id]));
+    setProjectInfo(produce((m) => ids.forEach((x) => delete m[x])));
+  }
+
+  /** Projects shown at the top level of the sidebar (worktrees sit under their repository). */
+  function topProjects(): Project[] {
+    return state.projects.filter((p) => !p.parentId || !state.projects.some((x) => x.id === p.parentId));
+  }
+
+  const childrenOf = (id: string) => state.projects.filter((p) => p.parentId === id);
+
+  function setProjectStatus(id: string, status: WorkStatus) {
+    update((s) => {
+      const p = s.projects.find((x) => x.id === id);
+      if (p) p.status = status;
+    });
+  }
+
+  function togglePin(id: string) {
+    update((s) => {
+      const p = s.projects.find((x) => x.id === id);
+      if (p) p.pinned = !p.pinned;
+    });
   }
 
   function renameProject(id: string, name: string) {
@@ -247,13 +291,18 @@ function createAppStore() {
     });
   }
 
+  /** Moves a project among its siblings (top-level projects, or worktrees of one repository). */
   function moveProject(id: string, delta: number) {
     update((s) => {
-      const i = s.projects.findIndex((p) => p.id === id);
-      const j = i + delta;
-      if (i < 0 || j < 0 || j >= s.projects.length) return;
-      const [p] = s.projects.splice(i, 1);
-      s.projects.splice(j, 0, p);
+      const me = s.projects.find((p) => p.id === id);
+      if (!me) return;
+      const siblings = s.projects.filter((p) => (p.parentId ?? null) === (me.parentId ?? null));
+      const other = siblings[siblings.indexOf(me) + delta];
+      if (!other) return;
+      const i = s.projects.indexOf(me);
+      const j = s.projects.indexOf(other);
+      s.projects[i] = other;
+      s.projects[j] = me;
     });
   }
 
@@ -513,10 +562,29 @@ function createAppStore() {
 
   // ---------- boot ----------
   async function init() {
-    const saved = (await ipc.loadState().catch(() => null)) as AppState | null;
-    if (saved && saved.version === 1) {
-      setState(reconcile({ ...emptyState(), ...saved, settings: { ...defaultSettings, ...saved.settings } }));
+    let saved: AppState | null = null;
+    let unreadable = false;
+    try {
+      saved = (await ipc.loadState()) as AppState | null;
+    } catch {
+      unreadable = true;
     }
+    // Never let a fresh default state silently replace a file we could not read or that a
+    // different format version wrote: keep a copy first.
+    if (unreadable) {
+      const copy = await ipc.stateBackup("unreadable").catch(() => null);
+      notify(`Saved app state could not be read${copy ? `; a copy was kept at ${copy}` : ""}. Starting fresh.`, undefined, 10000);
+    }
+    let migrated = false;
+    if (saved && typeof saved.version === "number") {
+      if (saved.version !== STATE_VERSION) {
+        await ipc.stateBackup(`v${saved.version}`).catch(() => null);
+        migrated = true;
+      }
+      // v1 → v2 only added optional fields (worktree parent/branch, board status, keymap).
+      setState(reconcile({ ...emptyState(), ...saved, version: STATE_VERSION, settings: { ...defaultSettings, ...saved.settings } }));
+    }
+    if (migrated) persist();
     setLoaded(true);
     // Sidebar subtitles; git calls are capped at 3 in flight by the backend.
     for (const p of state.projects) refreshProjectInfo(p.id, 0);
@@ -555,6 +623,7 @@ function createAppStore() {
     init, activeProject, workspace, activeTab, addProject, removeProject, renameProject, moveProject, switchProject,
     addTab, selectTab, cycleTab, focusPane, placePane, newSession, revealSession, openFile, closePane,
     replacePaneIn, resizeSplit, setRightPanel, showRightPanel, setSettings, zoomed, toggleZoom,
+    topProjects, childrenOf, setProjectStatus, togglePin,
     projectInfo, refreshProjectInfo, recordRecent, setCollapsed, markUnread, renameSession, profileLaunch, setShortcut, setProfile,
     settingsSection, setSettingsSection, settingsItem, openSettings, paneLocation, isSessionVisible, refreshSessions, setSessions,
   };

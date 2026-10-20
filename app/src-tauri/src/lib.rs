@@ -62,6 +62,25 @@ fn state_save(state: Value) -> CmdResult<()> {
     std::fs::rename(&tmp, &path).map_err(err)
 }
 
+/// Copies `app-state.json` to `app-state.<label>.bak.json` before a format migration rewrites
+/// it. An existing backup is kept: the first one holds the original data.
+#[tauri::command]
+fn state_backup(label: String) -> CmdResult<Option<String>> {
+    if label.is_empty() || !label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        return Err("invalid backup label".into());
+    }
+    let dir = erka_proto::data_dir();
+    let src = dir.join("app-state.json");
+    let dst = dir.join(format!("app-state.{label}.bak.json"));
+    if !src.exists() {
+        return Ok(None);
+    }
+    if !dst.exists() {
+        std::fs::copy(&src, &dst).map_err(err)?;
+    }
+    Ok(Some(dst.to_string_lossy().into_owned()))
+}
+
 #[tauri::command]
 fn platform_info() -> Value {
     serde_json::json!({
@@ -94,6 +113,7 @@ pub fn run() {
             term_input,
             state_load,
             state_save,
+            state_backup,
             platform_info,
             fs_ops::fs_list_dir,
             fs_ops::fs_read_file,

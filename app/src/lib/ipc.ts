@@ -1,7 +1,7 @@
 // Typed wrappers around the Tauri commands in app/src-tauri/src.
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { AttachReply, BranchInfo, DirEntry, FileContent, GitStatus, HistoryItem, MemoryStats, SessionInfo, UsageReport } from "./types";
+import type { AttachReply, BranchInfo, Worktree, DirEntry, FileContent, GitStatus, HistoryItem, MemoryStats, SessionInfo, UsageReport } from "./types";
 
 export const daemon = <T = unknown>(method: string, params: object = {}) =>
   invoke<T>("daemon_call", { method, params });
@@ -39,6 +39,7 @@ export const sendInput = (handle: number, data: string, binary = false) =>
 
 export const loadState = () => invoke<unknown>("state_load");
 export const saveState = (state: unknown) => invoke<void>("state_save", { state });
+export const stateBackup = (label: string) => invoke<string | null>("state_backup", { label });
 export const platformInfo = () => invoke<{ os: string; home: string; data_dir: string; api: number }>("platform_info");
 
 export const listDir = (root: string, path: string) => invoke<DirEntry[]>("fs_list_dir", { root, path });
@@ -61,6 +62,9 @@ export const searchText = (root: string, query: string, regex: boolean, caseSens
   invoke<{ hits: TextHit[]; truncated: boolean; files_searched: number }>("search_text", { root, query, regex, caseSensitive });
 
 export const gitStatus = (root: string) => invoke<GitStatus>("git_status", { root });
+export const gitWorktrees = (root: string) => invoke<Worktree[]>("git_worktrees", { root });
+export const gitWorktreeAdd = (root: string, path: string, branch: string, base?: string) => invoke<void>("git_worktree_add", { root, path, branch, base });
+export const gitWorktreeRemove = (root: string, path: string, force = false) => invoke<void>("git_worktree_remove", { root, path, force });
 export const gitBranchInfo = (root: string) => invoke<BranchInfo>("git_branch_info", { root });
 export const gitFileVersions = (root: string, path: string, staged: boolean) =>
   invoke<{ original: string | null; modified: string | null }>("git_file_versions", { root, path, staged });

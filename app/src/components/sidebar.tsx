@@ -10,6 +10,8 @@ import { switchToChat, switchToTerminal, supportsChat } from "../chat/mode-switc
 import { daemon } from "../lib/ipc";
 import { Icon, KindGlyph } from "./icons";
 import { canGoBack, canGoForward, navBack, navForward } from "../lib/nav-history";
+import { addExistingWorktrees, removeWorktree } from "../lib/worktrees";
+import { openWorktreeDialog } from "./worktree-dialog";
 import { openContextMenu, type MenuItem } from "./context-menu";
 import type { Project, SessionInfo } from "../lib/types";
 
@@ -43,6 +45,10 @@ function RenameInput(props: { value: string; onDone: (value: string | null) => v
     />
   );
 }
+
+// Store proxies are stable, so returning the previous array when the order is unchanged
+// keeps <For> from remounting every row on each session update.
+const sameList = <T,>(prev: T[] | undefined, next: T[]) => (prev && prev.length === next.length && prev.every((x, i) => x === next[i]) ? prev : next);
 
 /** Ticks every 30 s so relative ages stay fresh without per-row timers. */
 const [now, setNow] = createSignal(Date.now());
@@ -93,16 +99,50 @@ function sessionMenu(s: SessionInfo): MenuItem[] {
   return items;
 }
 
+async function confirmRemoveWorktree(p: Project) {
+  const n = projectSessions(p.id).filter((s) => s.alive).length;
+  const what = `Remove worktree “${p.name}”?\n\n${p.path}\n\n${n ? `Its ${n} running session${n > 1 ? "s" : ""} will be stopped. ` : ""}The branch ${p.branch ?? ""} is kept.`;
+  if (!confirm(what)) return;
+  try {
+    let result = await removeWorktree(p);
+    if (result === "dirty" && confirm(`“${p.name}” has uncommitted or untracked changes. Remove the folder anyway (they are lost; the branch is kept)?`)) {
+      result = await removeWorktree(p, { force: true });
+    }
+    if (result === "removed") store.notify(`Removed worktree ${p.name}; branch kept`);
+  } catch (e) {
+    store.notify(`Could not remove worktree: ${String(e).replace(/^Error: /, "")}`, undefined, 8000);
+  }
+}
+
 function projectMenu(p: Project): MenuItem[] {
   const folded = !!store.state.collapsed?.[p.id];
+  const repo = !p.parentId && store.projectInfo[p.id]?.is_repo;
+  const worktree = !!p.parentId;
   return [
+    ...(repo
+      ? [
+          { label: "New worktree…", run: () => openWorktreeDialog(p.id) },
+          {
+            label: "Add existing worktrees",
+            run: () => void addExistingWorktrees(p).then((n) => store.notify(n ? `Added ${n} worktree${n > 1 ? "s" : ""}` : "No other worktrees")).catch((e) => store.notify(String(e))),
+          },
+          null,
+        ]
+      : []),
     { label: "Rename…", run: () => setRenaming(`p:${p.id}`) },
     { label: folded ? "Show sessions" : "Hide sessions", run: () => store.setCollapsed(p.id, !folded) },
     { label: isMac ? "Reveal in Finder" : "Reveal in Explorer", run: () => void revealEntry(p.path, "") },
     { label: "Move up", run: () => store.moveProject(p.id, -1) },
     { label: "Move down", run: () => store.moveProject(p.id, 1) },
     null,
-    { label: "Remove from Erka", danger: true, run: () => { if (confirm(`Remove ${p.name} from the sidebar? Files and running sessions are not touched.`)) store.removeProject(p.id); } },
+    ...(worktree ? [{ label: "Remove worktree…", danger: true, run: () => void confirmRemoveWorktree(p) }] : []),
+    {
+      label: "Remove from Erka", danger: true,
+      run: () => {
+        const kids = store.childrenOf(p.id).length;
+        if (confirm(`Remove ${p.name}${kids ? ` and its ${kids} worktree${kids > 1 ? "s" : ""}` : ""} from the sidebar? Files and running sessions are not touched.`)) store.removeProject(p.id);
+      },
+    },
   ];
 }
 
@@ -128,7 +168,9 @@ function SessionRow(props: { s: SessionInfo }) {
 }
 
 function ProjectRow(props: { project: Project }) {
-  const index = createMemo(() => store.state.projects.indexOf(props.project));
+  const index = createMemo(() => store.topProjects().indexOf(props.project));
+  const worktree = () => !!props.project.parentId;
+  const children = createMemo<Project[]>((prev) => sameList(prev, store.childrenOf(props.project.id)));
   const active = () => store.state.activeProject === props.project.id;
   const sessions = createMemo(() => projectSessions(props.project.id));
   const counts = createMemo(() => {
@@ -155,14 +197,17 @@ function ProjectRow(props: { project: Project }) {
         class={`project${active() ? " active" : ""}`}
         onClick={() => store.switchProject(props.project.id)}
         onContextMenu={(e) => openContextMenu(e, projectMenu(props.project))}
-        title={`${props.project.path}${index() < 9 ? `  (${switchChord()})` : ""}`}
+        title={`${props.project.path}${index() >= 0 && index() < 9 ? `  (${switchChord()})` : ""}`}
+        data-project={props.project.id}
       >
-        <Show when={!collapsedSidebar() && sessions().length}>
+        <Show when={!collapsedSidebar() && (sessions().length || children().length)}>
           <button class="chev" title={folded() ? "Show sessions" : "Hide sessions"} onClick={(e) => { e.stopPropagation(); store.setCollapsed(props.project.id, !folded()); }}>
             <Icon name={folded() ? "chevronRight" : "chevronDown"} size={11} />
           </button>
         </Show>
-        <span class="project-swatch" style={{ background: props.project.color }}>{props.project.name.slice(0, 1).toUpperCase()}</span>
+        <Show when={worktree()} fallback={<span class="project-swatch" style={{ background: props.project.color }}>{props.project.name.slice(0, 1).toUpperCase()}</span>}>
+          <span class="wt-glyph" style={{ color: props.project.color }}><Icon name="branch" size={13} /></span>
+        </Show>
         <Show when={!collapsedSidebar()}>
           <span class="project-text">
             <Show when={renaming() === `p:${props.project.id}`} fallback={<span class="project-name">{props.project.name}</span>}>
@@ -170,9 +215,11 @@ function ProjectRow(props: { project: Project }) {
             </Show>
             <Show when={info()?.is_repo}>
               <span class="project-sub">
-                <Icon name="branch" size={10} />
-                {info()!.branch ?? "detached"}{info()!.dirty ? "*" : ""}
+                <Show when={!worktree()}><Icon name="branch" size={10} /> {info()!.branch ?? "detached"}</Show>
+                <Show when={worktree() && info()!.branch !== props.project.name}>{info()!.branch ?? "detached"}</Show>
+                {info()!.dirty ? "*" : ""}
                 <Show when={info()!.ahead || info()!.behind}> ↑{info()!.ahead}↓{info()!.behind}</Show>
+                <Show when={children().length}><span class="primary-tag">primary</span></Show>
               </span>
             </Show>
           </span>
@@ -189,6 +236,11 @@ function ProjectRow(props: { project: Project }) {
       <Show when={!collapsedSidebar() && !folded() && sessions().length}>
         <div class="session-list">
           <For each={sessions()}>{(s) => <SessionRow s={s} />}</For>
+        </div>
+      </Show>
+      <Show when={!collapsedSidebar() && !folded() && children().length}>
+        <div class="worktree-list">
+          <For each={children()}>{(c) => <ProjectRow project={c} />}</For>
         </div>
       </Show>
     </div>
@@ -208,19 +260,18 @@ export function Sidebar() {
     const c = commands.find((x) => x.id === "palette");
     return c && chordOf(c) ? chordLabel(chordOf(c)!) : "";
   };
-  // Store proxies are stable, so returning the previous array when the order is unchanged
-  // keeps <For> from remounting every row on each session update.
-  const sameList = <T,>(prev: T[] | undefined, next: T[]) => (prev && prev.length === next.length && prev.every((x, i) => x === next[i]) ? prev : next);
   const projects = createMemo<Project[]>((prev) => {
     const filter = store.state.settings.projectFilter ?? "all";
-    let list = [...store.state.projects];
+    let list = [...store.topProjects()];
+    // A repository counts with its worktrees.
+    const family = (p: Project) => [p.id, ...store.childrenOf(p.id).map((c) => c.id)];
     if (filter !== "all") {
       list = list.filter((p) =>
-        p.id === store.state.activeProject ||
-        projectSessions(p.id).some((s) => s.alive && (filter === "running" ? true : s.status === "waiting" || s.unread)),
+        family(p).includes(store.state.activeProject ?? "") ||
+        family(p).some((id) => projectSessions(id).some((s) => s.alive && (filter === "running" ? true : s.status === "waiting" || s.unread))),
       );
     }
-    if (store.state.settings.projectSort === "recent") list.sort((a, b) => lastActivity(b.id) - lastActivity(a.id));
+    if (store.state.settings.projectSort === "recent") list.sort((a, b) => Math.max(...family(b).map(lastActivity)) - Math.max(...family(a).map(lastActivity)));
     return sameList(prev, list);
   });
   // Sessions whose project was removed from the sidebar keep running; list them here.
@@ -274,6 +325,7 @@ export function Sidebar() {
       </div>
       <div class="sidebar-footer">
         <button class="icon-btn" data-tip="dashboard" title="Agent dashboard" onClick={() => store.setOverlay("dashboard")}><Icon name="dashboard" /></button>
+        <button class="icon-btn" title={`Workspace board${navHint("board")}`} onClick={() => store.setOverlay("board")}><Icon name="board" /></button>
         <button class="icon-btn" title="Settings" onClick={() => store.openSettings()}><Icon name="settings" /></button>
         <span style={{ flex: 1 }} />
         <button class="icon-btn" title="Toggle sidebar" onClick={() => store.setSettings({ sidebarCollapsed: !collapsed() })}><Icon name="sidebar" /></button>

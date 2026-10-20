@@ -89,12 +89,14 @@ function sessionItem(s: SessionInfo, marks?: number[]): Item {
 }
 
 function projectItem(p: Project, marks?: number[]): Item {
-  const i = store.state.projects.indexOf(p);
+  const i = store.topProjects().indexOf(p);
   const info = store.projectInfo[p.id];
+  const parent = p.parentId ? store.state.projects.find((x) => x.id === p.parentId) : undefined;
   return {
     key: "p" + p.id,
-    label: p.name,
-    marks,
+    // Worktrees read as "repo › branch"; marks index into the name, so keep it last.
+    label: parent ? `${parent.name} › ${p.name}` : p.name,
+    marks: parent && marks ? marks.map((m) => m + parent.name.length + 3) : marks,
     hint: `${info?.branch ? info.branch + (info.dirty ? "*" : "") + " · " : ""}${p.path}`,
     chord: i >= 0 && i < 9 ? chordLabel(chordOf(commands.find((c) => c.id === `project.${i + 1}`)!) ?? "") : undefined,
     icon: () => <span class="project-swatch" style={{ background: p.color, width: "16px", height: "16px", "font-size": "9px" }}>{p.name[0]?.toUpperCase()}</span>,

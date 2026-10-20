@@ -10,6 +10,8 @@ import { Palette } from "./palette";
 import { Dashboard } from "./dashboard";
 import { SettingsPage } from "./settings/settings-page";
 import { Tips } from "./tips";
+import { Board } from "./board";
+import { WorktreeDialog } from "./worktree-dialog";
 import { NewSessionMenu } from "./new-session-menu";
 import { Welcome } from "./welcome";
 import { ContextMenuHost } from "./context-menu";
@@ -58,6 +60,8 @@ export function App() {
         <Match when={store.overlay() === "dashboard"}><Dashboard /></Match>
         <Match when={store.overlay() === "settings"}><SettingsPage /></Match>
         <Match when={store.overlay() === "newsession"}><NewSessionMenu /></Match>
+        <Match when={store.overlay() === "board"}><Board /></Match>
+        <Match when={store.overlay() === "worktree"}><WorktreeDialog /></Match>
         <Match when={["palette", "quickopen", "jump"].includes(store.overlay() ?? "") && store.overlay()} keyed>
           {(o) => <Palette scope={o === "quickopen" ? "files" : o === "jump" ? "sessions" : "all"} />}
         </Match>

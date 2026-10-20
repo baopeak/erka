@@ -58,8 +58,7 @@ function projectFor(it: HistoryItem): string {
     .filter((p) => paths.some((f) => within(f, norm(p.path))))
     .sort((a, b) => b.path.length - a.path.length)[0];
   if (owner) return owner.id;
-  store.addProject(it.folder || it.cwd);
-  return store.state.activeProject!;
+  return store.addProject(it.folder || it.cwd);
 }
 
 /** Conversations being resumed right now (double clicks must not start a second writer). */

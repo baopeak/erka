@@ -9,6 +9,7 @@ import { cyclePane } from "./layout";
 import { chordLabel, isMac } from "./platform";
 import { allViews, peekView, setAppShortcutMatcher, setOverlayCheck } from "./terminal-host";
 import { navBack, navForward } from "./nav-history";
+import { addExistingWorktrees } from "./worktrees";
 import type { SessionKind } from "./types";
 
 export interface Command {
@@ -37,7 +38,11 @@ function newSession(kind: SessionKind, where: "tab" | "right" | "down" = "tab") 
 
 export async function pickProjectFolder() {
   const dir = await open({ directory: true, multiple: false, title: "Add project folder" });
-  if (typeof dir === "string") store.addProject(dir);
+  if (typeof dir !== "string") return;
+  const id = store.addProject(dir);
+  // A repository's other worktrees come along, under it.
+  const p = store.state.projects.find((x) => x.id === id);
+  if (p && !p.parentId) void addExistingWorktrees(p).catch(() => {});
 }
 
 function zoom(delta: number) {
@@ -52,6 +57,7 @@ export const commands: Command[] = [
   { id: "jump", label: "Jump to Session / Project…", win: "mod+shift+k", mac: "mod+k", run: () => store.setOverlay("jump") },
   { id: "dashboard", label: "Toggle Agent Dashboard", win: "mod+shift+m", mac: "mod+shift+m", run: () => store.setOverlay(store.overlay() === "dashboard" ? null : "dashboard") },
   { id: "project.add", label: "Add Project Folder…", run: () => void pickProjectFolder() },
+  { id: "board", label: "Toggle Workspace Board", win: "mod+shift+j", mac: "mod+shift+j", run: () => store.setOverlay(store.overlay() === "board" ? null : "board") },
   { id: "new.shell", label: "New Terminal", win: "mod+shift+t", mac: "mod+t", run: () => newSession("shell"), when: hasProject },
   { id: "panel.history", label: "Agent Session History", run: () => store.showRightPanel("history"), when: hasProject },
   { id: "new.menu", label: "New Session…", win: "mod+shift+n", mac: "mod+shift+n", run: () => store.setOverlay("newsession"), when: hasProject },
@@ -126,7 +132,7 @@ for (let i = 1; i <= 9; i++) {
     win: `alt+${i}`,
     mac: `mod+${i}`,
     run: () => {
-      const p = store.state.projects[i - 1];
+      const p = store.topProjects()[i - 1];
       if (p) store.switchProject(p.id);
     },
   });

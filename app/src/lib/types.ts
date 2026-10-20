@@ -28,11 +28,27 @@ export interface SessionInfo {
   last_activity: number;
 }
 
+export type WorkStatus = "todo" | "progress" | "review" | "done";
+
 export interface Project {
   id: string;
   name: string;
   path: string;
   color: string;
+  /** Set for a git worktree shown under its repository's project. */
+  parentId?: string;
+  branch?: string;
+  /** Workspace board column (default todo) and pin. */
+  status?: WorkStatus;
+  pinned?: boolean;
+}
+
+export interface Worktree {
+  path: string;
+  head: string | null;
+  branch: string | null;
+  bare: boolean;
+  detached: boolean;
 }
 
 export type PaneKind = "terminal" | "chat" | "file" | "diff" | "empty";
@@ -177,7 +193,8 @@ export interface RecentItem {
 }
 
 export interface AppState {
-  version: 1;
+  /** 2: projects may be worktrees (parentId/branch) with a board status. */
+  version: 2;
   projects: Project[];
   activeProject: string | null;
   workspaces: Record<string, Workspace>;
