@@ -180,6 +180,7 @@ impl Daemon {
                 session.ingest(&snapshot);
                 session.ingest(b"\r\n\x1b[0;2m[session ended when Erka's daemon stopped - restart to continue]\x1b[0m\r\n");
             }
+            session.set_last_activity(saved.last_activity);
             self.sessions.write().insert(handle, Entry::Term(session));
         }
     }
@@ -277,12 +278,16 @@ impl Daemon {
             }
         }
         self.meta_dirty.store(true, Ordering::Relaxed);
-        // Spec changes are user-visible: broadcast now rather than waiting for a status change.
-        let info = entry.info();
-        if let Ok(v) = serde_json::to_value(&info) {
+        // Spec changes are user-visible: broadcast now (via tick, so the 250 ms ticker does not
+        // send the same change a second time).
+        let ticked = match &entry {
+            Entry::Term(s) => s.tick(Instant::now()),
+            Entry::Chat(c) => c.tick(Instant::now()),
+        };
+        if let Some(v) = ticked.and_then(|i| serde_json::to_value(&i).ok()) {
             self.broadcast("session.updated", v);
         }
-        Ok(info)
+        Ok(entry.info())
     }
 
     /// `erkad hook` reports from Claude Code / Codex running inside a session.
@@ -337,7 +342,14 @@ impl Daemon {
             .values()
             .map(|e| {
                 let info = e.info();
-                SavedSession { spec: info.spec, title: info.title, cols: info.cols, rows: info.rows, chat: info.chat }
+                SavedSession {
+                    spec: info.spec,
+                    title: info.title,
+                    cols: info.cols,
+                    rows: info.rows,
+                    chat: info.chat,
+                    last_activity: info.last_activity,
+                }
             })
             .collect()
     }
@@ -410,6 +422,7 @@ impl Daemon {
             "daemon.info" => json!({
                 "version": env!("CARGO_PKG_VERSION"),
                 "protocol": erka_proto::PROTOCOL_VERSION,
+                "api": erka_proto::API_LEVEL,
                 "pid": std::process::id(),
                 "data_dir": self.data_dir,
                 "endpoint": erka_proto::endpoint().display(),

@@ -17,6 +17,8 @@ pub struct SavedSession {
     pub rows: u16,
     #[serde(default)]
     pub chat: bool,
+    #[serde(default)]
+    pub last_activity: u64,
 }
 
 pub struct Store {

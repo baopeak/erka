@@ -14,6 +14,11 @@ use std::io;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 pub const PROTOCOL_VERSION: u32 = 1;
+
+/// Feature level of the daemon's RPC surface. Unlike `PROTOCOL_VERSION` (which names the
+/// endpoint, so changing it orphans running daemons) this only lets a newer app notice an
+/// older daemon that is still running and offer to restart it.
+pub const API_LEVEL: u32 = 2;
 pub const KIND_JSON: u8 = 1;
 pub const KIND_OUTPUT: u8 = 2;
 pub const KIND_INPUT: u8 = 3;

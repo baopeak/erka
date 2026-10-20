@@ -66,6 +66,8 @@ fn platform_info() -> Value {
         "os": std::env::consts::OS,
         "home": std::env::var(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).unwrap_or_default(),
         "data_dir": erka_proto::data_dir(),
+        // The daemon feature level this app was built against.
+        "api": erka_proto::API_LEVEL,
     })
 }
 

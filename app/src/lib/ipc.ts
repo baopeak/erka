@@ -39,7 +39,7 @@ export const sendInput = (handle: number, data: string, binary = false) =>
 
 export const loadState = () => invoke<unknown>("state_load");
 export const saveState = (state: unknown) => invoke<void>("state_save", { state });
-export const platformInfo = () => invoke<{ os: string; home: string; data_dir: string }>("platform_info");
+export const platformInfo = () => invoke<{ os: string; home: string; data_dir: string; api: number }>("platform_info");
 
 export const listDir = (root: string, path: string) => invoke<DirEntry[]>("fs_list_dir", { root, path });
 export const readFile = (root: string, path: string, maxBytes?: number, asBase64 = false) =>

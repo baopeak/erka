@@ -83,15 +83,54 @@ function createAppStore() {
   // ---------- recents & per-project git summary ----------
   function recordRecent(kind: RecentItem["kind"], id: string, projectId: string) {
     update((s) => {
-      s.recent = [{ kind, id, projectId, at: Date.now() }, ...(s.recent ?? []).filter((r) => !(r.kind === kind && r.id === id))].slice(0, MAX_RECENT);
+      // A file's id is project-relative, so the project is part of its identity.
+      const same = (r: RecentItem) => r.kind === kind && r.id === id && r.projectId === projectId;
+      s.recent = [{ kind, id, projectId, at: Date.now() }, ...(s.recent ?? []).filter((r) => !same(r))].slice(0, MAX_RECENT);
     });
   }
 
-  async function refreshProjectInfo(projectId: string) {
+  // Branch summaries: debounced and single-flight per project. Watcher events arrive every
+  // ~150 ms while an agent writes files; each would otherwise queue a `git status`.
+  const infoJobs = new Map<string, { timer: number; running: boolean; again: boolean }>();
+  function refreshProjectInfo(projectId: string, delay = 300) {
+    let job = infoJobs.get(projectId);
+    if (!job) infoJobs.set(projectId, (job = { timer: 0, running: false, again: false }));
+    clearTimeout(job.timer);
+    job.timer = window.setTimeout(() => void runProjectInfo(projectId), delay);
+  }
+  async function runProjectInfo(projectId: string) {
+    const job = infoJobs.get(projectId)!;
+    if (job.running) {
+      job.again = true;
+      return;
+    }
     const p = state.projects.find((x) => x.id === projectId);
     if (!p) return;
-    const info = await ipc.gitBranchInfo(p.path).catch(() => null);
-    if (info) setProjectInfo(projectId, reconcile(info));
+    job.running = true;
+    try {
+      const info = await ipc.gitBranchInfo(p.path).catch(() => null);
+      if (info && state.projects.some((x) => x.id === projectId)) setProjectInfo(projectId, reconcile(info));
+    } finally {
+      job.running = false;
+      if (job.again) {
+        job.again = false;
+        void runProjectInfo(projectId);
+      }
+    }
+  }
+
+  /** An older daemon left running across an app upgrade lacks newer RPCs: offer a restart. */
+  async function checkDaemonApi() {
+    const [info, app] = await Promise.all([ipc.daemon<{ api?: number }>("daemon.info", {}), ipc.platformInfo()]).catch(() => [null, null]);
+    if (!info || !app || (info.api ?? 1) >= app.api) return;
+    notify("The session daemon is older than this app; some features are unavailable until it restarts.", {
+      label: "Restart daemon",
+      run: () => {
+        if (confirm("Restart the session daemon? Running sessions stop; their screens are kept and they can be restarted.")) {
+          void ipc.daemon("daemon.shutdown", { kill_sessions: true }).catch(() => {});
+        }
+      },
+    }, 15000);
   }
 
   // ---------- sessions ----------
@@ -128,11 +167,17 @@ function createAppStore() {
         const prev = sessions[p.id];
         setSessions(p.id, reconcile(p as SessionInfo));
         void maybeNotify(prev, p);
+        // Background projects are not watched: an agent finishing a turn may have committed
+        // or switched branch, so refresh that project's subtitle.
+        if (prev?.status === "working" && p.status !== "working" && p.project_id) refreshProjectInfo(p.project_id, 1000);
         break;
       }
       case "session.closed": {
         const s = byHandle(p.handle);
-        if (s) setSessions(produce((m) => delete m[s.id]));
+        if (s) {
+          setSessions(produce((m) => delete m[s.id]));
+          if (state.recent?.some((r) => r.kind === "session" && r.id === s.id)) update((st) => (st.recent = st.recent.filter((r) => !(r.kind === "session" && r.id === s.id))));
+        }
         break;
       }
       case "session.resync": {
@@ -178,8 +223,11 @@ function createAppStore() {
     update((s) => {
       s.projects = s.projects.filter((p) => p.id !== id);
       delete s.workspaces[id];
+      if (s.collapsed) delete s.collapsed[id];
+      s.recent = (s.recent ?? []).filter((r) => r.projectId !== id && !(r.kind === "project" && r.id === id));
       if (s.activeProject === id) s.activeProject = s.projects[0]?.id ?? null;
     });
+    setProjectInfo(produce((m) => delete m[id]));
   }
 
   function renameProject(id: string, name: string) {
@@ -432,11 +480,11 @@ function createAppStore() {
     }
     setLoaded(true);
     // Sidebar subtitles; git calls are capped at 3 in flight by the backend.
-    for (const p of state.projects) void refreshProjectInfo(p.id);
+    for (const p of state.projects) refreshProjectInfo(p.id, 0);
     void ipc.onEvent<{ root: string; git: boolean }>("fs-changed", (e) => {
       if (!e.git) return;
       const p = state.projects.find((x) => x.path === e.root);
-      if (p) void refreshProjectInfo(p.id);
+      if (p) refreshProjectInfo(p.id);
     });
     await ipc.onEvent("daemon-event", onDaemonEvent);
     await ipc.onEvent<{ connected: boolean; error?: string }>("daemon-status", async (s) => {
@@ -451,11 +499,13 @@ function createAppStore() {
       // Fresh handles first, then flip `connected` so panes attach to the right sessions.
       await refreshSessions().catch(() => {});
       setConnected(true);
+      void checkDaemonApi();
     });
     // The connection may predate our listener.
     try {
       await refreshSessions();
       setConnected(true);
+      void checkDaemonApi();
     } catch {
       /* connection event will follow */
     }

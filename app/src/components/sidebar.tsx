@@ -16,6 +16,33 @@ export function StatusDot(props: { s: SessionInfo }) {
   return <span class={`dot ${props.s.alive ? props.s.status : "exited"}${props.s.unread ? " unread" : ""}`} title={props.s.alive ? props.s.status : "exited"} />;
 }
 
+/** Row being renamed inline: `s:<session id>` or `p:<project id>`. */
+const [renaming, setRenaming] = createSignal<string | null>(null);
+
+function RenameInput(props: { value: string; onDone: (value: string | null) => void }) {
+  let done = false;
+  const finish = (v: string | null) => {
+    if (done) return;
+    done = true;
+    setRenaming(null);
+    props.onDone(v);
+  };
+  return (
+    <input
+      class="rename-input"
+      value={props.value}
+      ref={(el) => queueMicrotask(() => (el.focus(), el.select()))}
+      onClick={(e) => e.stopPropagation()}
+      onKeyDown={(e) => {
+        e.stopPropagation();
+        if (e.key === "Enter") finish(e.currentTarget.value);
+        if (e.key === "Escape") finish(null);
+      }}
+      onBlur={(e) => finish(e.currentTarget.value)}
+    />
+  );
+}
+
 /** Ticks every 30 s so relative ages stay fresh without per-row timers. */
 const [now, setNow] = createSignal(Date.now());
 setInterval(() => setNow(Date.now()), 30_000);
@@ -46,7 +73,7 @@ async function inPane(s: SessionInfo, fn: typeof switchToChat) {
 
 function sessionMenu(s: SessionInfo): MenuItem[] {
   const items: MenuItem[] = [
-    { label: "Rename…", run: () => { const n = prompt("Session name (empty = automatic)", s.name ?? ""); if (n !== null) void store.renameSession(s.id, n.trim() || null); } },
+    { label: "Rename…", run: () => setRenaming(`s:${s.id}`) },
     s.unread ? { label: "Mark as read", run: () => void store.markUnread(s.id, false) } : { label: "Mark as unread", run: () => void store.markUnread(s.id, true) },
   ];
   if (!s.alive && !s.chat) items.push({ label: s.agent_session_id ? "Resume" : "Restart", run: () => void daemon("session.restart", { handle: s.handle }).catch((e) => store.notify(String(e))) });
@@ -59,7 +86,7 @@ function sessionMenu(s: SessionInfo): MenuItem[] {
       const loc = store.paneLocation(s.id);
       if (s.alive && s.kind !== "shell" && !confirm(`Stop ${sessionLabel(s)}?`)) return;
       if (loc) void store.closePane(loc.projectId, loc.tabId, loc.paneId);
-      else void daemon("session.close", { handle: s.handle });
+      else void daemon("session.close", { handle: s.handle }).catch((e) => store.notify(String(e)));
     },
   });
   return items;
@@ -68,7 +95,7 @@ function sessionMenu(s: SessionInfo): MenuItem[] {
 function projectMenu(p: Project): MenuItem[] {
   const folded = !!store.state.collapsed?.[p.id];
   return [
-    { label: "Rename…", run: () => { const n = prompt("Project name", p.name); if (n?.trim()) store.renameProject(p.id, n.trim()); } },
+    { label: "Rename…", run: () => setRenaming(`p:${p.id}`) },
     { label: folded ? "Show sessions" : "Hide sessions", run: () => store.setCollapsed(p.id, !folded) },
     { label: isMac ? "Reveal in Finder" : "Reveal in Explorer", run: () => void revealEntry(p.path, "") },
     { label: "Move up", run: () => store.moveProject(p.id, -1) },
@@ -89,7 +116,9 @@ function SessionRow(props: { s: SessionInfo }) {
       <StatusDot s={props.s} />
       <KindGlyph kind={props.s.kind} size={14} />
       <span class="session-text">
-        <span class="name">{sessionLabel(props.s)}</span>
+        <Show when={renaming() === `s:${props.s.id}`} fallback={<span class="name">{sessionLabel(props.s)}</span>}>
+          <RenameInput value={props.s.name ?? sessionLabel(props.s)} onDone={(v) => v !== null && void store.renameSession(props.s.id, v.trim() || null)} />
+        </Show>
         <Show when={props.s.model}><span class="model">{shortModel(props.s.model)}</span></Show>
       </span>
       <span class="age">{relTimeShort(props.s.last_activity || props.s.created_at, now())}</span>
@@ -97,7 +126,8 @@ function SessionRow(props: { s: SessionInfo }) {
   );
 }
 
-function ProjectRow(props: { project: Project; index: number }) {
+function ProjectRow(props: { project: Project }) {
+  const index = createMemo(() => store.state.projects.indexOf(props.project));
   const active = () => store.state.activeProject === props.project.id;
   const sessions = createMemo(() => projectSessions(props.project.id));
   const counts = createMemo(() => {
@@ -114,7 +144,7 @@ function ProjectRow(props: { project: Project; index: number }) {
   const info = () => store.projectInfo[props.project.id];
   const collapsedSidebar = () => store.state.settings.sidebarCollapsed;
   const switchChord = () => {
-    const c = commands.find((x) => x.id === `project.${props.index + 1}`);
+    const c = commands.find((x) => x.id === `project.${index() + 1}`);
     return c && chordOf(c) ? chordLabel(chordOf(c)!) : "";
   };
 
@@ -124,7 +154,7 @@ function ProjectRow(props: { project: Project; index: number }) {
         class={`project${active() ? " active" : ""}`}
         onClick={() => store.switchProject(props.project.id)}
         onContextMenu={(e) => openContextMenu(e, projectMenu(props.project))}
-        title={`${props.project.path}${props.index < 9 ? `  (${switchChord()})` : ""}`}
+        title={`${props.project.path}${index() < 9 ? `  (${switchChord()})` : ""}`}
       >
         <Show when={!collapsedSidebar() && sessions().length}>
           <button class="chev" title={folded() ? "Show sessions" : "Hide sessions"} onClick={(e) => { e.stopPropagation(); store.setCollapsed(props.project.id, !folded()); }}>
@@ -134,7 +164,9 @@ function ProjectRow(props: { project: Project; index: number }) {
         <span class="project-swatch" style={{ background: props.project.color }}>{props.project.name.slice(0, 1).toUpperCase()}</span>
         <Show when={!collapsedSidebar()}>
           <span class="project-text">
-            <span class="project-name">{props.project.name}</span>
+            <Show when={renaming() === `p:${props.project.id}`} fallback={<span class="project-name">{props.project.name}</span>}>
+              <RenameInput value={props.project.name} onDone={(v) => v?.trim() && store.renameProject(props.project.id, v.trim())} />
+            </Show>
             <Show when={info()?.is_repo}>
               <span class="project-sub">
                 <Icon name="branch" size={10} />
@@ -170,17 +202,26 @@ export function Sidebar() {
     const c = commands.find((x) => x.id === "palette");
     return c && chordOf(c) ? chordLabel(chordOf(c)!) : "";
   };
-  const projects = createMemo(() => {
+  // Store proxies are stable, so returning the previous array when the order is unchanged
+  // keeps <For> from remounting every row on each session update.
+  const sameList = <T,>(prev: T[] | undefined, next: T[]) => (prev && prev.length === next.length && prev.every((x, i) => x === next[i]) ? prev : next);
+  const projects = createMemo<Project[]>((prev) => {
     const filter = store.state.settings.projectFilter ?? "all";
-    let list = store.state.projects.map((p, index) => ({ p, index }));
+    let list = [...store.state.projects];
     if (filter !== "all") {
-      list = list.filter(({ p }) =>
+      list = list.filter((p) =>
         p.id === store.state.activeProject ||
         projectSessions(p.id).some((s) => s.alive && (filter === "running" ? true : s.status === "waiting" || s.unread)),
       );
     }
-    if (store.state.settings.projectSort === "recent") list = [...list].sort((a, b) => lastActivity(b.p.id) - lastActivity(a.p.id));
-    return list;
+    if (store.state.settings.projectSort === "recent") list.sort((a, b) => lastActivity(b.id) - lastActivity(a.id));
+    return sameList(prev, list);
+  });
+  // Sessions whose project was removed from the sidebar keep running; list them here.
+  const orphans = createMemo<SessionInfo[]>((prev) => {
+    const known = new Set(store.state.projects.map((p) => p.id));
+    const list = Object.values(store.sessions).filter((s) => !s.project_id || !known.has(s.project_id)).sort((a, b) => a.created_at - b.created_at);
+    return sameList(prev, list);
   });
   const cycleFilter = () => {
     const order = ["all", "running", "attention"] as const;
@@ -212,7 +253,13 @@ export function Sidebar() {
         </div>
       </Show>
       <div class="project-list">
-        <For each={projects()}>{({ p, index }) => <ProjectRow project={p} index={index} />}</For>
+        <For each={projects()}>{(p) => <ProjectRow project={p} />}</For>
+        <Show when={!collapsed() && orphans().length}>
+          <div class="section-label other-label">Other sessions</div>
+          <div class="session-list">
+            <For each={orphans()}>{(s) => <SessionRow s={s} />}</For>
+          </div>
+        </Show>
         <Show when={collapsed()}>
           <button class="icon-btn" title="Add project" onClick={() => void pickProjectFolder()} style={{ margin: "6px 6px" }}><Icon name="plus" /></button>
         </Show>

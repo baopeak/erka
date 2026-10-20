@@ -159,6 +159,8 @@ struct Inner {
     last_broadcast: Option<SessionInfo>,
     working_since: Option<Instant>,
     last_activity: u64,
+    /// `last_activity` as of the last broadcast; output alone re-broadcasts at most every 30 s.
+    broadcast_activity: u64,
 }
 
 pub struct Session {
@@ -166,6 +168,9 @@ pub struct Session {
     pub spec: Mutex<SessionSpec>,
     inner: Mutex<Inner>,
 }
+
+/// How stale a broadcast `last_activity` may get while a session keeps printing.
+pub const ACTIVITY_REBROADCAST_MS: u64 = 30_000;
 
 pub fn now_millis() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
@@ -193,6 +198,7 @@ impl Session {
                 last_broadcast: None,
                 working_since: None,
                 last_activity: 0,
+                broadcast_activity: 0,
             }),
         })
     }
@@ -412,6 +418,13 @@ impl Session {
         g.last_broadcast = None;
     }
 
+    /// Restored sessions keep the activity time of their previous life, not the replay's.
+    pub fn set_last_activity(&self, at: u64) {
+        let mut g = self.inner.lock();
+        g.last_activity = at;
+        g.broadcast_activity = at;
+    }
+
     pub fn set_focus(&self, focused: bool) {
         let mut g = self.inner.lock();
         g.focused = focused;
@@ -486,10 +499,11 @@ impl Session {
         // seq / activity time change constantly; not a reason to broadcast
         info.seq = 0;
         info.last_activity = 0;
-        if g.last_broadcast.as_ref() == Some(&info) {
+        if g.last_broadcast.as_ref() == Some(&info) && g.last_activity < g.broadcast_activity + ACTIVITY_REBROADCAST_MS {
             return None;
         }
         g.last_broadcast = Some(info.clone());
+        g.broadcast_activity = g.last_activity;
         info.seq = g.seq;
         info.last_activity = g.last_activity;
         Some(info)

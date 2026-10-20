@@ -18,6 +18,9 @@ ROWS_JS = "return [...document.querySelectorAll('.session-row')].map(r => r.inne
 
 try:
     run.boot()
+    # Leftover sessions of earlier runs would show under "Other sessions".
+    for s in daemon(d, "session.list"):
+        daemon(d, "session.close", {"handle": s["handle"]})
     d.js("const s = window.__erka.store; for (const p of [...s.state.projects]) s.removeProject(p.id);")
     for p in [REPO, os.path.join(os.path.dirname(REPO), "orca-ref", "orca"), scratch]:
         d.js("window.__erka.store.addProject(arguments[0]);", p)

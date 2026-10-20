@@ -55,6 +55,8 @@ struct Inner {
     last_broadcast: Option<SessionInfo>,
     working_since: Option<Instant>,
     last_activity: u64,
+    /// `last_activity` as of the last broadcast; output alone re-broadcasts at most every 30 s.
+    broadcast_activity: u64,
 }
 
 pub struct ChatSession {
@@ -86,6 +88,7 @@ impl ChatSession {
                 last_broadcast: None,
                 working_since: None,
                 last_activity: 0,
+                broadcast_activity: 0,
             }),
         })
     }
@@ -318,10 +321,11 @@ impl ChatSession {
         let mut info = self.info_locked(&g, status);
         info.seq = 0;
         info.last_activity = 0;
-        if g.last_broadcast.as_ref() == Some(&info) {
+        if g.last_broadcast.as_ref() == Some(&info) && g.last_activity < g.broadcast_activity + crate::session::ACTIVITY_REBROADCAST_MS {
             return None;
         }
         g.last_broadcast = Some(info.clone());
+        g.broadcast_activity = g.last_activity;
         info.seq = g.seq;
         info.last_activity = g.last_activity;
         Some(info)

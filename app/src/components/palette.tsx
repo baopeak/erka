@@ -140,7 +140,7 @@ export function Palette(props: { scope: SearchScope }) {
     const p = project();
     if (!p || (sc !== "files" && sc !== "all") || (sc === "all" && !q)) return setFiles([]);
     const mine = ++seq;
-    void quickOpen(p.path, q, sc === "files" ? 60 : 8).then((hits) => mine === seq && setFiles(hits)).catch(() => setFiles([]));
+    void quickOpen(p.path, q, sc === "files" ? 60 : 8).then((hits) => mine === seq && setFiles(hits)).catch(() => mine === seq && setFiles([]));
   }));
 
   const groups = createMemo<Group[]>(() => {
@@ -219,7 +219,16 @@ export function Palette(props: { scope: SearchScope }) {
   }
 
   const flat = createMemo(() => groups().flatMap((g) => g.items));
-  createEffect(on(flat, () => setSel(0)));
+  // Results rebuild whenever any of 20 agents changes status: keep the highlight on the same
+  // item (by key) so Enter never opens something the user did not pick. New queries start at
+  // the top.
+  let selKey: string | undefined;
+  createEffect(() => (selKey = flat()[sel()]?.key));
+  createEffect(on(flat, (items) => {
+    const i = selKey ? items.findIndex((x) => x.key === selKey) : -1;
+    setSel(i >= 0 ? i : 0);
+  }, { defer: true }));
+  createEffect(on([query, scope], () => setSel(0), { defer: true }));
   createEffect(() => list?.querySelector(`[data-index="${sel()}"]`)?.scrollIntoView({ block: "nearest" }));
 
   const choose = (item?: Item) => {
