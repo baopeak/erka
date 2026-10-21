@@ -4,12 +4,16 @@
 import { For, Show, createEffect, createResource, createSignal, on, onMount } from "solid-js";
 import { store } from "../lib/store";
 import { configAtRef, configApproved, createWorktree, validBranch, worktreeFolder, type ErkaConfig } from "../lib/worktrees";
+import { gitRefs } from "../lib/ipc";
 import { KeyHints } from "./key-hints";
 
 const [repoId, setRepoId] = createSignal<string | null>(null);
+const [initialBranch, setInitialBranch] = createSignal<string | null>(null);
 
-export function openWorktreeDialog(repo: string) {
+/** `branch`: a name typed elsewhere (search), turned into a valid branch name. */
+export function openWorktreeDialog(repo: string, branch?: string) {
   setRepoId(repo);
+  setInitialBranch(branch ? branch.trim().replace(/\s+/g, "-").replace(/[^A-Za-z0-9._/-]/g, "").replace(/^[-./]+|[./]+$/g, "") || null : null);
   store.setOverlay("worktree");
 }
 
@@ -28,11 +32,13 @@ type ConfigState = { config: ErkaConfig | null } | { error: string };
 export function WorktreeDialog() {
   const repo = () => store.state.projects.find((p) => p.id === repoId());
   const existing = () => store.state.projects.filter((p) => p.parentId === repoId()).map((p) => p.branch ?? "");
-  const [branch, setBranch] = createSignal(suggestBranch(existing()));
+  const [branch, setBranch] = createSignal(initialBranch() ?? suggestBranch(existing()));
   const [base, setBase] = createSignal(store.projectInfo[repoId() ?? ""]?.branch ?? "HEAD");
   const [folderEdited, setFolderEdited] = createSignal<string | null>(null);
   const folder = () => folderEdited() ?? (repo() ? worktreeFolder(repo()!, branch()) : "");
   const [runConfig, setRunConfig] = createSignal(false);
+  // Start-from suggestions: local and remote branches, tags (a commit id works too).
+  const [refs] = createResource(() => repo()?.path, (root) => gitRefs(root).catch(() => []));
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
 
@@ -86,7 +92,10 @@ export function WorktreeDialog() {
         </div>
         <div class="form-row">
           <label>From</label>
-          <input class="text-input" value={base()} placeholder="HEAD" onInput={(e) => setBase(e.currentTarget.value)} />
+          <input class="text-input" list="wt-refs" value={base()} placeholder="HEAD, a branch, origin/branch, a tag or a commit" onInput={(e) => setBase(e.currentTarget.value)} />
+          <datalist id="wt-refs">
+            <For each={refs() ?? []}>{(r) => <option value={r.name}>{r.kind}</option>}</For>
+          </datalist>
         </div>
         <div class="form-row">
           <label>Folder</label>
@@ -105,6 +114,8 @@ export function WorktreeDialog() {
                     <div class="erka-config-body">
                       <For each={cfg().setup}>{(cmd) => <div class="mono">$ {cmd}</div>}</For>
                       <For each={cfg().tabs}>{(t) => <div class="mono">+ tab: {"kind" in t ? t.kind : t.command}</div>}</For>
+                      <For each={cfg().copy}>{(f) => <div class="mono">copy: {f}</div>}</For>
+                      <For each={cfg().link}>{(f) => <div class="mono">link: {f}</div>}</For>
                     </div>
                   </div>
                 )}

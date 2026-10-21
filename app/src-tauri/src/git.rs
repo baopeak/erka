@@ -204,7 +204,8 @@ pub async fn git_discard(root: String, paths: Vec<String>, untracked: Vec<String
 #[tauri::command]
 pub async fn git_commit(root: String, message: String, amend: bool) -> CmdResult<String> {
     let dir = guard(&root, "")?;
-    let mut args = vec!["commit", "-m", message.as_str()];
+    // Amending without a new message keeps the old one.
+    let mut args = if amend && message.trim().is_empty() { vec!["commit", "--no-edit"] } else { vec!["commit", "-m", message.as_str()] };
     if amend {
         args.push("--amend");
     }
@@ -298,9 +299,48 @@ pub async fn git_orphan_commits(root: String) -> CmdResult<u32> {
     out.trim().parse().map_err(|_| "unexpected git output".to_string())
 }
 
+/// Removes the symlinks / junctions inside a worktree (the links only, never what they point
+/// at): shared folders such as a linked `node_modules` must survive the worktree's deletion.
+fn unlink_shared(dir: &Path) {
+    let mut stack = vec![dir.to_path_buf()];
+    let mut seen = 0usize;
+    while let Some(d) = stack.pop() {
+        let Ok(rd) = std::fs::read_dir(&d) else { continue };
+        for e in rd.flatten() {
+            seen += 1;
+            if seen > 200_000 {
+                return;
+            }
+            let p = e.path();
+            let Ok(meta) = std::fs::symlink_metadata(&p) else { continue };
+            #[cfg(windows)]
+            let is_link = {
+                use std::os::windows::fs::MetadataExt;
+                meta.file_attributes() & 0x400 != 0 // FILE_ATTRIBUTE_REPARSE_POINT: symlink or junction
+            };
+            #[cfg(not(windows))]
+            let is_link = meta.file_type().is_symlink();
+            if is_link {
+                // A directory link is removed with remove_dir (Windows), a file link with remove_file.
+                let _ = std::fs::remove_dir(&p).or_else(|_| std::fs::remove_file(&p));
+            } else if meta.is_dir() && e.file_name() != ".git" {
+                stack.push(p);
+            }
+        }
+    }
+}
+
 #[tauri::command]
 pub async fn git_worktree_remove(root: String, path: String, force: bool) -> CmdResult<()> {
     let dir = guard(&root, "")?;
+    // Only ever inside a linked worktree git knows about (never the main checkout).
+    let canon = |p: &str| std::fs::canonicalize(p).ok();
+    let registered = git_worktrees(root.clone()).await.unwrap_or_default();
+    let linked = canon(&path).is_some_and(|c| registered.iter().skip(1).any(|w| canon(&w.path).as_ref() == Some(&c)));
+    if linked {
+        let wt = std::path::PathBuf::from(&path);
+        tokio::task::spawn_blocking(move || unlink_shared(&wt)).await.map_err(err)?;
+    }
     let mut args = vec!["worktree", "remove"];
     if force {
         args.push("--force");

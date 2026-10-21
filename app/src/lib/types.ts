@@ -1,6 +1,7 @@
 /** Mirrors `SessionInfo` from erkad (crates/erkad/src/session.rs). */
 export type SessionStatus = "idle" | "working" | "waiting" | "exited";
-export type SessionKind = "shell" | "claude" | "codex" | "omp" | "custom";
+/** shell | custom | claude | codex | omp, or a preset agent id from `agent.presets` (gemini, cursor…). */
+export type SessionKind = string;
 
 export interface SessionInfo {
   handle: number;
@@ -135,6 +136,25 @@ export interface Settings {
   /** First-run tips; `tipsSeen` holds the ids already dismissed. */
   tips: boolean;
   tipsSeen: string[];
+  /** manual: each agent asks as it normally does; yolo: launch with its skip-permission flags. */
+  agentPermissions: "manual" | "yolo";
+  /** Agent kinds left out of launchers. */
+  hiddenAgents: string[];
+  /** Stop finished background agents after `hibernateMinutes` idle; resume when shown again. */
+  hibernate: boolean;
+  hibernateMinutes: number;
+  /** Prevent idle sleep: never, while an agent works, or always. */
+  keepAwake: "off" | "agents" | "always";
+  /** A short chime with desktop notifications. */
+  notificationSound: boolean;
+  /** Terminal colour theme id (lib/terminal-themes.ts); "default" follows the app theme. */
+  terminalTheme: string;
+  /** Editor soft wrap. */
+  wordWrap: boolean;
+  /** Agent for AI actions (commit message, pull request text). */
+  aiAgent: "claude" | "codex";
+  /** Global floating terminal (not tied to a project). */
+  floatingTerminal: boolean;
 }
 
 export interface QuickCommand {
@@ -185,6 +205,59 @@ export interface MemoryStats {
   session_processes: number;
 }
 
+/** Notification inbox / activity feed entry. */
+export interface InboxItem {
+  id: string;
+  at: number;
+  kind: "finished" | "waiting" | "automation" | "worktree" | "error";
+  title: string;
+  body: string;
+  sessionId?: string;
+  projectId?: string;
+  read: boolean;
+}
+
+/** A review note on a diff line, sent to an agent in a batch. */
+export interface ReviewNote {
+  id: string;
+  path: string;
+  /** 1-based line number on `side`. */
+  line: number;
+  side: "new" | "old";
+  /** The line as it read when the note was made (context for the agent). */
+  text: string;
+  note: string;
+  at: number;
+}
+
+/** Folder comment / board status shared with agents through the daemon (`meta.*`). */
+export interface WorkspaceMeta {
+  path: string;
+  comment: string | null;
+  status: WorkStatus | null;
+  updated_at: number;
+}
+
+export interface Automation {
+  id: string;
+  name: string;
+  enabled: boolean;
+  kind: string;
+  prompt: string;
+  cwd: string;
+  project_id: string | null;
+  args: string[];
+  every: "hourly" | "daily" | "weekdays" | "weekly";
+  /** HH:MM local time (hourly: the minute). */
+  time: string;
+  /** 0 = Sunday. */
+  weekday: number;
+  last_run: number;
+  last_session: string | null;
+  last_error: string | null;
+  next_run: number;
+}
+
 export interface RecentItem {
   kind: "session" | "project" | "file";
   /** Session id, project id, or project-relative path for files. */
@@ -207,6 +280,13 @@ export interface AppState {
   keymap: Record<string, string>;
   /** `.erka.yaml` contents (hash) the user agreed to run, by repository path. */
   approvedSetups: Record<string, string>;
+  /** Sessions Erka stopped to save memory (hibernation, sleeping worktrees): resumed when shown. */
+  hibernated: string[];
+  inbox: InboxItem[];
+  /** Diff review notes by project id. */
+  reviewNotes: Record<string, ReviewNote[]>;
+  /** Floating terminal: its sessions (tab order) and the one shown. */
+  floating: { sessions: string[]; active: string | null; open: boolean };
 }
 
 export interface BranchInfo {

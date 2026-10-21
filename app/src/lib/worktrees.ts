@@ -13,11 +13,16 @@ export interface ErkaConfig {
   setup: string[];
   /** Sessions opened in every new worktree: an agent/shell kind, or `{ command }`. */
   tabs: ({ kind: SessionKind } | { command: string })[];
+  /** Ignored files copied from the repository into every new worktree (like `.worktreeinclude`). */
+  copy: string[];
+  /** Ignored folders shared with the repository through a link (e.g. node_modules). */
+  link: string[];
   /** Hash of the file's text: what the user approved to run. */
   hash: string;
 }
 
-const KINDS: SessionKind[] = ["claude", "codex", "omp", "shell"];
+/** shell, a core agent or any preset agent id (checked when the tab starts). */
+const KIND_RE = /^[a-z][a-z0-9-]*$/;
 const MAX_CONFIG = 64 * 1024;
 
 function hashText(text: string): string {
@@ -39,11 +44,12 @@ export function parseErkaConfig(text: string): ErkaConfig {
   const setup = list(raw.setup).map(String).filter((c) => c.trim());
   const tabs: ErkaConfig["tabs"] = [];
   for (const t of list(raw.tabs)) {
-    if (typeof t === "string" && KINDS.includes(t as SessionKind)) tabs.push({ kind: t as SessionKind });
+    if (typeof t === "string" && KIND_RE.test(t) && t !== "custom") tabs.push({ kind: t as SessionKind });
     else if (t && typeof t === "object" && typeof t.command === "string" && t.command.trim()) tabs.push({ command: t.command.trim() });
-    else throw new Error(`.erka.yaml: unknown tab ${JSON.stringify(t)} (use claude, codex, omp, shell or { command: … })`);
+    else throw new Error(`.erka.yaml: unknown tab ${JSON.stringify(t)} (use an agent such as claude, shell, or { command: … })`);
   }
-  return { setup, tabs, hash: hashText(text) };
+  const paths = (v: unknown) => list(v).map(String).map((x) => x.trim()).filter(Boolean);
+  return { setup, tabs, copy: paths(raw.copy), link: paths(raw.link), hash: hashText(text) };
 }
 
 /**
@@ -90,8 +96,16 @@ export function worktreeFolder(repo: Project, branch: string): string {
 export async function createWorktree(repo: Project, opts: { branch: string; base?: string; path: string; config: ErkaConfig | null }) {
   if (!validBranch(opts.branch)) throw new Error(`"${opts.branch}" is not a valid branch name`);
   await ipc.gitWorktreeAdd(repo.path, opts.path.trim(), opts.branch, opts.base?.trim() || undefined);
+  // Ignored files a checkout lacks (.env, node_modules): before setup runs, which may need them.
+  const files = await ipc.worktreeMaterialize(repo.path, opts.path.trim(), opts.config?.copy ?? [], opts.config?.link ?? []).catch((e) => {
+    store.notify(`Copying ignored files failed: ${String(e)}`, undefined, 8000);
+    return null;
+  });
   const id = store.addProject(opts.path.trim(), { parentId: repo.id, branch: opts.branch, name: opts.branch });
   const project = store.state.projects.find((p) => p.id === id)!;
+  const parts = [files?.copied.length ? `copied ${files.copied.join(", ")}` : "", files?.linked.length ? `linked ${files.linked.join(", ")}` : ""].filter(Boolean);
+  store.addInbox({ kind: "worktree", title: `Worktree ${opts.branch}`, body: `Created in ${repo.name}${parts.length ? ` · ${parts.join(" · ")}` : ""}`, projectId: id });
+  if (files?.skipped.length) store.notify(`Not brought into the worktree: ${files.skipped.map((x) => `${x.path} (${x.reason})`).join("; ")}`, undefined, 12000);
   if (opts.config) {
     store.approveSetup(repo.path, opts.config.hash);
     void applyErkaConfig(project, opts.config).catch((e) => store.notify(`.erka.yaml: ${String(e)}`));

@@ -6,11 +6,12 @@ import { isPermissionGranted, requestPermission, sendNotification } from "@tauri
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import * as ipc from "./ipc";
 import { allPanes, findPane, leaf, removePane, replacePane, setRatio, splitPane } from "./layout";
-import { basename, normPath, uid } from "./platform";
+import { basename, isMac, normPath, uid } from "./platform";
 import { projectColors } from "./theme";
 import { disposeView, peekView, resetStreams } from "./terminal-host";
+import { CORE_AGENTS, isAgentKind, kindShortName, loadAgentPresets, presetFor } from "./agents";
 import type { SettingsSection } from "./settings-catalog";
-import type { WorkStatus, AgentProfile, AppState, BranchInfo, LayoutNode, Pane, Project, RecentItem, SessionInfo, SessionKind, Settings, Tab, Workspace } from "./types";
+import type { WorkStatus, AgentProfile, AppState, BranchInfo, InboxItem, LayoutNode, Pane, Project, RecentItem, ReviewNote, SessionInfo, SessionKind, Settings, Tab, Workspace, WorkspaceMeta } from "./types";
 
 export const defaultSettings: Settings = {
   fontFamily: '"JetBrains Mono", "Cascadia Code", "Cascadia Mono", Menlo, Consolas, "Symbols Nerd Font Mono", monospace',
@@ -35,6 +36,16 @@ export const defaultSettings: Settings = {
   uiScale: 1,
   tips: true,
   tipsSeen: [],
+  agentPermissions: "manual",
+  hiddenAgents: [],
+  hibernate: false,
+  hibernateMinutes: 30,
+  keepAwake: "off",
+  notificationSound: false,
+  terminalTheme: "default",
+  wordWrap: false,
+  aiAgent: "claude",
+  floatingTerminal: true,
   profiles: [
     { kind: "claude", label: "Claude Code", args: [] },
     { kind: "codex", label: "Codex", args: [] },
@@ -44,8 +55,41 @@ export const defaultSettings: Settings = {
 
 /** app-state.json format; older files are migrated (after a backup) on load. */
 const STATE_VERSION = 2;
-const emptyState = (): AppState => ({ version: STATE_VERSION, projects: [], activeProject: null, workspaces: {}, settings: { ...defaultSettings }, recent: [], collapsed: {}, keymap: {}, approvedSetups: {} });
+const emptyState = (): AppState => ({
+  version: STATE_VERSION, projects: [], activeProject: null, workspaces: {}, settings: { ...defaultSettings }, recent: [], collapsed: {}, keymap: {}, approvedSetups: {},
+  hibernated: [], inbox: [], reviewNotes: {}, floating: { sessions: [], active: null, open: false },
+});
 const MAX_RECENT = 40;
+const MAX_INBOX = 200;
+
+/** Same key the daemon uses for workspace notes (crates/erkad/src/meta.rs `key`). */
+export function metaKey(path: string): string {
+  let k = path.trim().replace(/\\/g, "/");
+  while (k.length > 1 && k.endsWith("/") && !k.endsWith(":/")) k = k.slice(0, -1);
+  return isMac || !/^\//.test(k) ? k.toLowerCase() : k;
+}
+
+/** A short two-note chime for desktop notifications (no audio file to ship). */
+function chime() {
+  try {
+    const ctx = new AudioContext();
+    const t = ctx.currentTime;
+    for (const [i, f] of [880, 1320].entries()) {
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.frequency.value = f;
+      g.gain.setValueAtTime(0.0001, t + i * 0.12);
+      g.gain.exponentialRampToValueAtTime(0.12, t + i * 0.12 + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + i * 0.12 + 0.35);
+      o.connect(g).connect(ctx.destination);
+      o.start(t + i * 0.12);
+      o.stop(t + i * 0.12 + 0.4);
+    }
+    setTimeout(() => void ctx.close(), 1000);
+  } catch {
+    /* no audio device */
+  }
+}
 
 export type Overlay = null | "palette" | "quickopen" | "jump" | "dashboard" | "settings" | "newsession" | "board" | "worktree";
 
@@ -65,6 +109,14 @@ function createAppStore() {
   const [settingsSection, setSettingsSection] = createSignal<SettingsSection>("agents");
   /** Setting row to scroll to and highlight when the page opens (from search). */
   const [settingsItem, setSettingsItem] = createSignal<string | null>(null);
+  /** Folder comments / statuses from the daemon, by `metaKey(path)`. */
+  const [meta, setMeta] = createStore<Record<string, WorkspaceMeta>>({});
+  /** Each project's folder as the daemon keys notes: canonical (long names, no symlinks). */
+  const [canonKeys, setCanonKeys] = createStore<Record<string, string>>({});
+  const canonKey = (p: Project) => canonKeys[p.id] ?? metaKey(p.path);
+  function resolveCanonKey(p: Project) {
+    void ipc.canonicalPath(p.path).then((c) => setCanonKeys(p.id, metaKey(c)), () => {});
+  }
 
   // ---------- persistence ----------
   let saveTimer = 0;
@@ -158,14 +210,29 @@ function createAppStore() {
     setSessions(reconcile(map));
   }
 
-  async function maybeNotify(prev: SessionInfo | undefined, next: SessionInfo) {
-    if (!state.settings.notifications || !prev || prev.status !== "working") return;
-    if (next.status !== "idle" && next.status !== "waiting") return;
-    const visible = document.hasFocus() && isSessionVisible(next.id);
-    if (visible) return;
-    const project = state.projects.find((p) => p.id === next.project_id);
-    const title = `${sessionLabel(next)}${project ? " · " + project.name : ""}`;
-    const body = next.status === "waiting" ? "Needs your input" : "Finished";
+  // ---------- inbox (notifications & activity) ----------
+  function addInbox(item: Omit<InboxItem, "id" | "at" | "read">) {
+    update((s) => {
+      s.inbox = [{ ...item, id: uid(), at: Date.now(), read: false }, ...(s.inbox ?? [])].slice(0, MAX_INBOX);
+    });
+  }
+
+  function markInbox(id: string | "all", read = true) {
+    update((s) => {
+      for (const i of s.inbox ?? []) if (id === "all" || i.id === id) i.read = read;
+    });
+  }
+
+  function clearInbox() {
+    update((s) => (s.inbox = []));
+  }
+
+  const unreadInbox = () => (state.inbox ?? []).filter((i) => !i.read).length;
+
+  /** Desktop notification (plus the optional chime) when the window is not looking at it. */
+  async function desktopNotify(title: string, body: string) {
+    if (!state.settings.notifications) return;
+    if (state.settings.notificationSound) chime();
     try {
       let ok = await isPermissionGranted();
       if (!ok) ok = (await requestPermission()) === "granted";
@@ -173,6 +240,18 @@ function createAppStore() {
     } catch {
       /* notifications unavailable */
     }
+  }
+
+  async function maybeNotify(prev: SessionInfo | undefined, next: SessionInfo) {
+    if (!prev || prev.status !== "working") return;
+    if (next.status !== "idle" && next.status !== "waiting") return;
+    const visible = document.hasFocus() && isSessionVisible(next.id);
+    if (visible) return;
+    const project = state.projects.find((p) => p.id === next.project_id);
+    const title = `${sessionLabel(next)}${project ? " · " + project.name : ""}`;
+    const body = next.status === "waiting" ? "Needs your input" : "Finished";
+    addInbox({ kind: next.status === "waiting" ? "waiting" : "finished", title, body, sessionId: next.id, projectId: next.project_id ?? undefined });
+    await desktopNotify(title, body);
   }
 
   function onDaemonEvent(msg: { event: string; params: any }) {
@@ -191,6 +270,12 @@ function createAppStore() {
         const s = byHandle(p.handle);
         if (s) {
           setSessions(produce((m) => delete m[s.id]));
+          if (state.floating?.sessions.includes(s.id)) {
+            update((st) => {
+              st.floating.sessions = st.floating.sessions.filter((x) => x !== s.id);
+              if (st.floating.active === s.id) st.floating.active = st.floating.sessions[0] ?? null;
+            });
+          }
           if (state.recent?.some((r) => r.kind === "session" && r.id === s.id)) update((st) => (st.recent = st.recent.filter((r) => !(r.kind === "session" && r.id === s.id))));
         }
         break;
@@ -205,6 +290,25 @@ function createAppStore() {
         if (v && v.handle === p.handle) void v.attach(p.handle);
         break;
       }
+      case "meta.updated": {
+        const m = p as WorkspaceMeta;
+        setMeta(metaKey(m.path), m.comment || m.status ? reconcile(m) : undefined!);
+        // An agent moving its card (`erkad worktree set --status`) moves it on the board.
+        const project = state.projects.find((x) => canonKey(x) === metaKey(m.path));
+        if (project && m.status && project.status !== m.status) update((s) => (s.projects.find((x) => x.id === project.id)!.status = m.status!));
+        break;
+      }
+      case "automation.ran": {
+        const title = `Automation · ${p.name}`;
+        const body = p.error ? `Failed: ${p.error}` : "Started";
+        addInbox({ kind: p.error ? "error" : "automation", title, body, sessionId: p.session_id ?? undefined, projectId: (p.session_id && sessions[p.session_id]?.project_id) || undefined });
+        void desktopNotify(title, body);
+        window.dispatchEvent(new CustomEvent("erka:automations"));
+        break;
+      }
+      case "automation.changed":
+        window.dispatchEvent(new CustomEvent("erka:automations"));
+        break;
       case "session.clipboard": {
         // OSC 52: only the terminal the user is looking at may set the clipboard, and we say so.
         const s = byHandle(p.handle);
@@ -245,6 +349,7 @@ function createAppStore() {
     };
     update((s) => s.projects.push(project));
     ensureWorkspace(project.id);
+    resolveCanonKey(project);
     refreshProjectInfo(project.id, 0);
     if (opts.open !== false) switchProject(project.id);
     return project.id;
@@ -277,6 +382,42 @@ function createAppStore() {
     update((s) => {
       const p = s.projects.find((x) => x.id === id);
       if (p) p.status = status;
+    });
+    // Agents read it back with `erkad worktree get`.
+    const p = state.projects.find((x) => x.id === id);
+    if (p) void ipc.daemon("meta.set", { path: p.path, status }).catch(() => {});
+  }
+
+  /** The folder's comment / status set by agents or the user (`meta.*`). */
+  const metaFor = (project: Project): WorkspaceMeta | undefined => meta[canonKey(project)];
+
+  async function setComment(project: Project, comment: string) {
+    await ipc.daemon("meta.set", { path: project.path, comment }).catch((e) => notify(String(e)));
+  }
+
+  async function loadMeta() {
+    const map = await ipc.daemon<Record<string, Omit<WorkspaceMeta, "path">>>("meta.list").catch(() => null);
+    if (!map) return;
+    const next: Record<string, WorkspaceMeta> = {};
+    for (const [k, v] of Object.entries(map)) next[metaKey(k)] = { ...v, path: k };
+    setMeta(reconcile(next));
+  }
+
+  // ---------- review notes (diff annotations) ----------
+  const notesFor = (projectId: string): ReviewNote[] => state.reviewNotes?.[projectId] ?? [];
+
+  function addNote(projectId: string, note: Omit<ReviewNote, "id" | "at">) {
+    update((s) => {
+      s.reviewNotes ??= {};
+      (s.reviewNotes[projectId] ??= []).push({ ...note, id: uid(), at: Date.now() });
+    });
+  }
+
+  function removeNotes(projectId: string, ids: string[] | "all") {
+    update((s) => {
+      const list = s.reviewNotes?.[projectId];
+      if (!list) return;
+      s.reviewNotes[projectId] = ids === "all" ? [] : list.filter((n) => !ids.includes(n.id));
     });
   }
 
@@ -405,12 +546,13 @@ function createAppStore() {
   }
 
   function isSessionVisible(sessionId: string) {
+    if (state.floating?.open && state.floating.active === sessionId) return true;
     const loc = paneLocation(sessionId);
     if (!loc || loc.projectId !== state.activeProject) return false;
     return activeTab(loc.projectId)?.id === loc.tabId;
   }
 
-  async function newSession(projectId: string, kind: SessionKind, opts: { where?: "tab" | "right" | "down"; args?: string[]; name?: string; agentSessionId?: string; cwd?: string } = {}) {
+  async function newSession(projectId: string, kind: SessionKind, opts: { where?: "tab" | "right" | "down"; args?: string[]; name?: string; agentSessionId?: string; cwd?: string; prompt?: string } = {}) {
     const project = state.projects.find((p) => p.id === projectId);
     if (!project) return;
     const launch = profileLaunch(kind);
@@ -424,6 +566,7 @@ function createAppStore() {
         args: opts.args ?? (kind === "shell" ? state.settings.shellArgs : launch.args),
         env: launch.env,
         agent_session_id: opts.agentSessionId,
+        prompt: opts.prompt,
         cols: 120,
         rows: 32,
       });
@@ -548,19 +691,134 @@ function createAppStore() {
   }
 
   /** Launch arguments and environment of an agent profile, permission mode included. */
-  function profileLaunch(kind: SessionKind): { args: string[]; env?: Record<string, string> } {
+  /** `yolo: false`: without the Yolo flags (chat view asks Allow / Deny itself). */
+  function profileLaunch(kind: SessionKind, opts: { yolo?: boolean } = {}): { args: string[]; env?: Record<string, string> } {
     const p = state.settings.profiles.find((x) => x.kind === kind);
     const args = [...(p?.args ?? [])];
     if (p?.permission && kind === "claude") args.push("--permission-mode", p.permission);
     if (p?.permission && kind === "codex") args.push("-c", `approval_policy=${p.permission}`);
+    // Yolo applies to agents without an explicit per-agent permission choice.
+    const yolo = presetFor(kind)?.yolo ?? [];
+    if (opts.yolo !== false && state.settings.agentPermissions === "yolo" && !p?.permission && yolo.length && !yolo.every((a) => args.includes(a))) args.push(...yolo);
     return { args, env: p?.env && Object.keys(p.env).length ? { ...p.env } : undefined };
   }
 
-  /** Edits an agent profile in place (rows bound to it stay mounted). */
+  /** Edits an agent profile in place (rows bound to it stay mounted); preset agents get one
+   *  on first edit. */
   function setProfile(kind: SessionKind, patch: Partial<AgentProfile>) {
     update((s) => {
       const p = s.settings.profiles.find((x) => x.kind === kind);
       if (p) Object.assign(p, patch);
+      else s.settings.profiles.push({ kind, label: presetFor(kind)?.label ?? kind, args: [], ...patch });
+    });
+  }
+
+  // ---------- hibernation & sleeping worktrees ----------
+  /** Agents that can be stopped and later resumed into the same conversation. */
+  function resumable(s: SessionInfo) {
+    if (s.chat || !isAgentKind(s.kind)) return false;
+    if (s.agent_session_id) return true;
+    return !CORE_AGENTS.includes(s.kind) && !!presetFor(s.kind)?.resume_latest;
+  }
+
+  /** Hibernated while on screen (sleeping the open project): they wake only once the user has
+   *  looked away and come back, not at once. */
+  const sleptInView = new Set<string>();
+
+  async function hibernateSessions(ids: string[]) {
+    for (const id of ids) if (isSessionVisible(id)) sleptInView.add(id);
+    const stopped: string[] = [];
+    for (const id of ids) {
+      const s = sessions[id];
+      if (!s?.alive) continue;
+      await ipc.daemon("session.kill", { handle: s.handle }).then(() => stopped.push(id), () => {});
+    }
+    if (stopped.length) update((st) => (st.hibernated = [...new Set([...(st.hibernated ?? []), ...stopped])]));
+    return stopped.length;
+  }
+
+  /** Stops a worktree's running agents; they resume when the worktree is opened again. */
+  async function sleepProject(projectId: string) {
+    const ids = Object.values(sessions).filter((s) => s.project_id === projectId && s.alive && resumable(s)).map((s) => s.id);
+    const n = await hibernateSessions(ids);
+    notify(n ? `${n} agent${n > 1 ? "s" : ""} stopped; ${n > 1 ? "they resume" : "it resumes"} when you open this worktree` : "No resumable agents running here");
+  }
+
+  /** Periodic pass: finished agents in background projects, idle for the configured time. */
+  function hibernateIdle() {
+    if (!state.settings.hibernate) return;
+    const limit = Math.max(1, state.settings.hibernateMinutes ?? 30) * 60_000;
+    const now = Date.now();
+    const ids = Object.values(sessions)
+      .filter((s) => s.alive && s.status === "idle" && resumable(s) && s.project_id !== state.activeProject && !isSessionVisible(s.id))
+      .filter((s) => s.last_activity > 0 && now - s.last_activity >= limit)
+      .map((s) => s.id);
+    if (ids.length) void hibernateSessions(ids);
+  }
+
+  /** Resumes hibernated sessions that are on screen. */
+  function wakeVisible() {
+    const pid = state.activeProject;
+    const tab = pid ? activeTab(pid) : undefined;
+    if (!tab || !connected() || !(state.hibernated ?? []).length) return;
+    const shown = new Set(allPanes(tab.root).map((p) => p.sessionId).filter((id): id is string => !!id && state.hibernated.includes(id)));
+    if (state.floating?.open && state.floating.active && state.hibernated.includes(state.floating.active)) shown.add(state.floating.active);
+    for (const id of [...sleptInView]) if (!shown.has(id)) sleptInView.delete(id);
+    for (const id of shown) {
+      const s = sessions[id];
+      if (!s) {
+        update((st) => (st.hibernated = st.hibernated.filter((x) => x !== id)));
+        continue;
+      }
+      // Still stopping (re-checked when `alive` flips), or slept while being looked at.
+      if (s.alive || sleptInView.has(id)) continue;
+      update((st) => (st.hibernated = st.hibernated.filter((x) => x !== id)));
+      void ipc.daemon("session.restart", { handle: s.handle }).catch((e) => notify(`Could not resume ${sessionLabel(s)}: ${e}`));
+    }
+  }
+
+  // ---------- floating terminal ----------
+  async function newFloating(kind: SessionKind = "shell") {
+    const home = (await ipc.platformInfo().catch(() => null))?.home ?? ".";
+    const launch = profileLaunch(kind);
+    try {
+      const info = await ipc.createSession({ kind, cwd: home, args: kind === "shell" ? state.settings.shellArgs : launch.args, env: launch.env, cols: 120, rows: 24 });
+      setSessions(info.id, info);
+      update((s) => {
+        s.floating ??= { sessions: [], active: null, open: true };
+        s.floating.sessions.push(info.id);
+        s.floating.active = info.id;
+        s.floating.open = true;
+      });
+    } catch (e) {
+      notify(`Could not start a terminal: ${e}`);
+    }
+  }
+
+  function toggleFloating(open?: boolean) {
+    const next = open ?? !state.floating?.open;
+    update((s) => {
+      s.floating ??= { sessions: [], active: null, open: false };
+      // Forget sessions closed elsewhere.
+      s.floating.sessions = s.floating.sessions.filter((id) => sessions[id]);
+      if (s.floating.active && !sessions[s.floating.active]) s.floating.active = s.floating.sessions[0] ?? null;
+      s.floating.open = next;
+    });
+    if (next && !state.floating.sessions.length) void newFloating();
+  }
+
+  function selectFloating(id: string) {
+    update((s) => (s.floating.active = id));
+  }
+
+  async function closeFloating(id: string) {
+    const s = sessions[id];
+    disposeView(id);
+    if (s) await ipc.daemon("session.close", { handle: s.handle }).catch(() => {});
+    update((st) => {
+      st.floating.sessions = st.floating.sessions.filter((x) => x !== id);
+      if (st.floating.active === id) st.floating.active = st.floating.sessions[st.floating.sessions.length - 1] ?? null;
+      if (!st.floating.sessions.length) st.floating.open = false;
     });
   }
 
@@ -571,6 +829,14 @@ function createAppStore() {
       if (chord === null) delete s.keymap[commandId];
       else s.keymap[commandId] = chord;
     });
+  }
+
+  /** Per-connection setup: feature check, agent table, folder notes, keep-awake mode. */
+  async function onConnected() {
+    void checkDaemonApi();
+    void loadAgentPresets();
+    void loadMeta();
+    void ipc.daemon("daemon.set_awake", { mode: state.settings.keepAwake ?? "off" }).catch(() => {});
   }
 
   // ---------- boot ----------
@@ -612,8 +878,12 @@ function createAppStore() {
     }
     setLoaded(true);
     if (migrate) persist();
+    setInterval(hibernateIdle, 60_000);
     // Sidebar subtitles; git calls are capped at 3 in flight by the backend.
-    for (const p of state.projects) refreshProjectInfo(p.id, 0);
+    for (const p of state.projects) {
+      refreshProjectInfo(p.id, 0);
+      resolveCanonKey(p);
+    }
     void ipc.onEvent<{ root: string; git: boolean }>("fs-changed", (e) => {
       if (!e.git) return;
       const p = state.projects.find((x) => x.path === e.root);
@@ -632,13 +902,13 @@ function createAppStore() {
       // Fresh handles first, then flip `connected` so panes attach to the right sessions.
       await refreshSessions().catch(() => {});
       setConnected(true);
-      void checkDaemonApi();
+      void onConnected();
     });
     // The connection may predate our listener.
     try {
       await refreshSessions();
       setConnected(true);
-      void checkDaemonApi();
+      void onConnected();
     } catch {
       /* connection event will follow */
     }
@@ -652,6 +922,9 @@ function createAppStore() {
     topProjects, childrenOf, setProjectStatus, togglePin, approveSetup,
     projectInfo, refreshProjectInfo, recordRecent, setCollapsed, markUnread, renameSession, profileLaunch, setShortcut, setProfile,
     settingsSection, setSettingsSection, settingsItem, openSettings, paneLocation, isSessionVisible, refreshSessions, setSessions,
+    addInbox, markInbox, clearInbox, unreadInbox, desktopNotify, meta, metaFor, setComment, loadMeta,
+    notesFor, addNote, removeNotes, resumable, sleepProject, hibernateIdle, hibernateSessions, wakeVisible,
+    newFloating, toggleFloating, selectFloating, closeFloating,
   };
 }
 
@@ -665,7 +938,7 @@ export const store = createRoot(createAppStore);
 export function sessionLabel(s: SessionInfo): string {
   if (s.name) return s.name;
   const title = s.title?.replace(/^[⠀-⣿✳✶✻✽·*◐◑◒◓⠂⠐]\s*/u, "").trim();
-  const kind = { shell: "Terminal", claude: "Claude", codex: "Codex", omp: "OMP", custom: "Command" }[s.kind] ?? s.kind;
+  const kind = kindShortName(s.kind);
   const redundant = title && [s.kind, kind.toLowerCase()].includes(title.toLowerCase());
   if (title && !redundant && title.length < 48 && !/^[A-Z]:\\|\.exe$/i.test(title)) return s.kind === "shell" ? title : `${kind} · ${title}`;
   return kind;

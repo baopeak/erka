@@ -1,12 +1,12 @@
 import { For, Show, createSignal, onMount } from "solid-js";
 import { store } from "../lib/store";
-import { KindGlyph, kindMeta } from "./icons";
+import { KindGlyph } from "./icons";
+import { isAgentKind, kindInfo, launchableAgents } from "../lib/agents";
 import { KeyHints } from "./key-hints";
 import { QuickCommandList, quickCommandKey } from "./quick-commands";
 import { newChat, supportsChat } from "../chat/mode-switch";
 import type { SessionKind } from "../lib/types";
 
-const kinds: SessionKind[] = ["claude", "codex", "omp", "shell", "custom"];
 
 /** New session dialog: agent/shell, placement, extra args, or an arbitrary command. */
 export function NewSessionMenu() {
@@ -15,7 +15,9 @@ export function NewSessionMenu() {
   const [where, setWhere] = createSignal<"tab" | "right" | "down">("tab");
   const [args, setArgs] = createSignal("");
   const [name, setName] = createSignal("");
+  const [prompt, setPrompt] = createSignal("");
   const [ui, setUi] = createSignal<"terminal" | "chat">("terminal");
+  const kinds = (): SessionKind[] => [...launchableAgents(store.state.settings.hiddenAgents), "shell", "custom"];
   let argsInput!: HTMLInputElement;
   onMount(() => argsInput.focus());
 
@@ -27,7 +29,7 @@ export function NewSessionMenu() {
     if (kind() === "custom" && !argv) return store.notify("Enter a command to run");
     store.setOverlay(null);
     if (ui() === "chat" && supportsChat(kind())) return void newChat(project.id, kind(), where());
-    void store.newSession(project.id, kind(), { where: where(), args: argv, name: name().trim() || undefined });
+    void store.newSession(project.id, kind(), { where: where(), args: argv, name: name().trim() || undefined, prompt: isAgentKind(kind()) ? prompt().trim() || undefined : undefined });
   };
 
   return (
@@ -35,16 +37,17 @@ export function NewSessionMenu() {
       <div class="modal" onKeyDown={(e) => {
         if (quickCommandKey(e, () => store.setOverlay(null))) return;
         if (e.key === "Escape") store.setOverlay(null);
-        if (e.key === "Enter") start();
+        // Enter starts, except inside the prompt box (Ctrl/Cmd+Enter there).
+        if (e.key === "Enter" && (e.ctrlKey || e.metaKey || !(e.target as HTMLElement).matches("textarea"))) start();
       }}>
         <h2>New session in {project?.name}</h2>
         <QuickCommandList onRun={() => store.setOverlay(null)} />
-        <div class="launcher" style={{ "grid-template-columns": "repeat(5, 1fr)" }}>
-          <For each={kinds}>
+        <div class="launcher" style={{ "grid-template-columns": "repeat(auto-fill, minmax(92px, 1fr))" }}>
+          <For each={kinds()}>
             {(k) => (
               <div class="launch-card" style={{ "flex-direction": "column", "border-color": kind() === k ? "var(--accent)" : undefined }} onClick={() => { setKind(k); setArgs(k === "custom" ? "" : profileArgs(k)); }}>
                 <KindGlyph kind={k} size={30} />
-                <div style={{ "font-size": "12px" }}>{kindMeta[k].label}</div>
+                <div style={{ "font-size": "12px" }}>{kindInfo(k).label}</div>
               </div>
             )}
           </For>
@@ -53,6 +56,12 @@ export function NewSessionMenu() {
           <label>{kind() === "custom" ? "Command" : kind() === "shell" ? "Shell (empty = default)" : "Extra arguments"}</label>
           <input ref={argsInput} class="text-input" value={args()} onInput={(e) => setArgs(e.currentTarget.value)} placeholder={kind() === "custom" ? "npm run dev" : kind() === "claude" ? "--model opus" : ""} />
         </div>
+        <Show when={isAgentKind(kind()) && ui() === "terminal"}>
+          <div class="form-row">
+            <label>First prompt (optional)</label>
+            <textarea class="text-input" rows={2} value={prompt()} placeholder="What should the agent do? (Ctrl+Enter to start)" onInput={(e) => setPrompt(e.currentTarget.value)} />
+          </div>
+        </Show>
         <div class="form-row">
           <label>Name (optional)</label>
           <input class="text-input" value={name()} onInput={(e) => setName(e.currentTarget.value)} />

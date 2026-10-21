@@ -72,6 +72,9 @@ function Card(props: { project: Project; ghost?: boolean; onPointerDown?: (e: Po
           <span class="board-branch"><Icon name="branch" size={10} /> {info()!.branch ?? props.project.branch ?? "detached"}{info()!.dirty ? "*" : ""}</span>
         </Show>
       </div>
+      <Show when={store.metaFor(props.project)?.comment}>
+        {(c) => <div class="board-card-comment" title={c()}>{c()}</div>}
+      </Show>
       <Show when={sessions().length}>
         <div class="board-card-agents">
           <For each={sessions()}>{(s) => <span class="board-agent" title={s.title ?? s.kind}><StatusDot s={s} /><KindGlyph kind={s.kind} size={12} /></span>}</For>

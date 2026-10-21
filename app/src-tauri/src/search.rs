@@ -135,8 +135,13 @@ pub struct SearchResult {
 }
 
 #[tauri::command]
-pub async fn search_text(root: String, query: String, regex: bool, case_sensitive: bool, max_hits: Option<usize>) -> CmdResult<SearchResult> {
+pub async fn search_text(root: String, query: String, regex: bool, case_sensitive: bool, max_hits: Option<usize>, folder: Option<String>) -> CmdResult<SearchResult> {
     let base = guard(&root, "")?;
+    // Find in folder: walk only that folder; hit paths stay relative to the project.
+    let start = match folder.as_deref().map(str::trim).filter(|f| !f.is_empty()) {
+        Some(f) => guard(&root, f)?,
+        None => base.clone(),
+    };
     tauri::async_runtime::spawn_blocking(move || {
         let pattern = if regex { query.clone() } else { regex::escape(&query) };
         let re = regex::RegexBuilder::new(&pattern).case_insensitive(!case_sensitive).build().map_err(err)?;
@@ -144,7 +149,7 @@ pub async fn search_text(root: String, query: String, regex: bool, case_sensitiv
         let hits = Mutex::new(Vec::new());
         let files = std::sync::atomic::AtomicUsize::new(0);
         let done = std::sync::atomic::AtomicBool::new(false);
-        walker(&base).build_parallel().run(|| {
+        walker(&start).build_parallel().run(|| {
             let (hits, files, done, re, base) = (&hits, &files, &done, &re, &base);
             Box::new(move |entry| {
                 if done.load(std::sync::atomic::Ordering::Relaxed) {

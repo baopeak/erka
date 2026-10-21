@@ -1,5 +1,7 @@
 // Terminal, Appearance and Notifications sections.
+import { For } from "solid-js";
 import { store } from "../../lib/store";
+import { TERMINAL_THEMES } from "../../lib/terminal-themes";
 import { applySettings, Choice, SettingRow, Toggle } from "./setting-row";
 
 const s = () => store.state.settings;
@@ -29,6 +31,15 @@ export function TerminalSettings() {
         <input class="text-input" placeholder="(system default)" value={s().shellArgs.join(" ")}
           onChange={(e) => applySettings({ shellArgs: e.currentTarget.value.trim() ? e.currentTarget.value.trim().split(/\s+/) : [] })} />
       </SettingRow>
+      <SettingRow id="terminal-theme">
+        <select class="text-input" value={s().terminalTheme ?? "default"} onChange={(e) => applySettings({ terminalTheme: e.currentTarget.value })}>
+          <option value="default">Default (follows the app theme)</option>
+          <For each={TERMINAL_THEMES}>{(t) => <option value={t.id}>{t.label}</option>}</For>
+        </select>
+      </SettingRow>
+      <SettingRow id="floating-terminal">
+        <Toggle on={s().floatingTerminal} onChange={(on) => { store.setSettings({ floatingTerminal: on }); if (!on) store.toggleFloating(false); }} />
+      </SettingRow>
     </>
   );
 }
@@ -45,6 +56,9 @@ export function AppearanceSettings() {
       <SettingRow id="ui-scale">
         <Choice value={s().uiScale} options={[[0.9, "90%"], [1, "100%"], [1.1, "110%"], [1.2, "120%"]]} onChange={(v) => store.setSettings({ uiScale: v })} />
       </SettingRow>
+      <SettingRow id="word-wrap">
+        <Toggle on={s().wordWrap} onChange={(on) => store.setSettings({ wordWrap: on })} />
+      </SettingRow>
     </>
   );
 }
@@ -54,6 +68,9 @@ export function NotificationSettings() {
     <>
       <SettingRow id="notifications">
         <Toggle on={s().notifications} onChange={(on) => store.setSettings({ notifications: on })} />
+      </SettingRow>
+      <SettingRow id="notification-sound">
+        <Toggle on={s().notificationSound} onChange={(on) => store.setSettings({ notificationSound: on })} />
       </SettingRow>
       <SettingRow id="shortcut-hints">
         <Toggle on={s().shortcutHints} onChange={(on) => store.setSettings({ shortcutHints: on })} />

@@ -48,7 +48,7 @@ async function waitExit(sessionId: string, ms: number): Promise<boolean> {
 }
 
 function chatArgv(kind: SessionKind, resumeId: string | null): string[] {
-  const profile = store.profileLaunch(kind).args;
+  const profile = store.profileLaunch(kind, { yolo: false }).args;
   if (kind === "claude") return claudeArgs(resumeId, profile);
   if (kind === "codex") return codexArgs(profile);
   return ompAcpArgs();

@@ -1,0 +1,189 @@
+//! Friendly command line over the daemon RPCs, for scripts and for agents that drive other
+//! sessions:
+//!
+//!   erkad terminal list [--json]
+//!   erkad terminal read <session> [--lines N]
+//!   erkad terminal send <session> <text…> [--enter]
+//!   erkad terminal wait <session> [--timeout-ms N]      until it stops working
+//!   erkad worktree get [--path P] [--json]
+//!   erkad worktree set [--path P] [--comment TEXT] [--status todo|progress|review|done]
+//!
+//! `<session>` is a handle number, a session id (or its prefix) or a session name.
+
+use std::time::{Duration, Instant};
+
+use anyhow::{anyhow, bail, Result};
+use serde_json::{json, Value};
+
+use crate::client::Client;
+
+/// `--name value` from `args`, removing both.
+fn take_opt(args: &mut Vec<String>, name: &str) -> Option<String> {
+    let i = args.iter().position(|a| a == name)?;
+    args.remove(i);
+    (i < args.len()).then(|| args.remove(i))
+}
+
+fn take_flag(args: &mut Vec<String>, name: &str) -> bool {
+    let before = args.len();
+    args.retain(|a| a != name);
+    args.len() != before
+}
+
+fn str_of<'a>(v: &'a Value, key: &str) -> &'a str {
+    v.get(key).and_then(Value::as_str).unwrap_or("")
+}
+
+/// Resolves a session reference against `session.list`.
+fn find_session<'a>(list: &'a [Value], target: &str) -> Result<&'a Value> {
+    let t = target.trim();
+    if let Ok(h) = t.parse::<u64>() {
+        if let Some(s) = list.iter().find(|s| s["handle"].as_u64() == Some(h)) {
+            return Ok(s);
+        }
+    }
+    let matches: Vec<&Value> = list
+        .iter()
+        .filter(|s| str_of(s, "id").starts_with(t) || str_of(s, "name").eq_ignore_ascii_case(t))
+        .collect();
+    match matches.as_slice() {
+        [one] => Ok(one),
+        [] => bail!("no session matches `{t}` (see `erkad terminal list`)"),
+        _ => bail!("`{t}` matches {} sessions; use the handle", matches.len()),
+    }
+}
+
+async fn sessions(c: &mut Client) -> Result<Vec<Value>> {
+    c.call("session.list", json!({})).await?.as_array().cloned().ok_or_else(|| anyhow!("bad session.list reply"))
+}
+
+pub async fn terminal(args: &[String]) -> Result<()> {
+    let mut args = args.to_vec();
+    let json_out = take_flag(&mut args, "--json");
+    let sub = if args.is_empty() { String::new() } else { args.remove(0) };
+    let mut c = Client::connect().await?;
+    match sub.as_str() {
+        "list" => {
+            let list = sessions(&mut c).await?;
+            if json_out {
+                println!("{}", serde_json::to_string_pretty(&list)?);
+                return Ok(());
+            }
+            println!("{:>6}  {:<8}  {:<8}  {:<24}  {}", "HANDLE", "KIND", "STATUS", "NAME / TITLE", "FOLDER");
+            for s in &list {
+                let label = Some(str_of(s, "name")).filter(|n| !n.is_empty()).unwrap_or(str_of(s, "title"));
+                let label: String = label.chars().take(24).collect();
+                println!("{:>6}  {:<8}  {:<8}  {:<24}  {}", s["handle"], str_of(s, "kind"), str_of(s, "status"), label, str_of(s, "cwd"));
+            }
+        }
+        "read" => {
+            let lines = take_opt(&mut args, "--lines").map(|n| n.parse::<u64>()).transpose()?.unwrap_or(80);
+            let target = args.first().ok_or_else(|| anyhow!("usage: erkad terminal read <session> [--lines N]"))?;
+            let list = sessions(&mut c).await?;
+            let s = find_session(&list, target)?;
+            let r = c.call("session.read", json!({"handle": s["handle"], "lines": lines})).await?;
+            print!("{}", str_of(&r, "text"));
+        }
+        "send" => {
+            let enter = take_flag(&mut args, "--enter");
+            let text = take_opt(&mut args, "--text");
+            if args.is_empty() {
+                bail!("usage: erkad terminal send <session> <text…> [--enter]");
+            }
+            let target = args.remove(0);
+            let mut text = text.unwrap_or_else(|| args.join(" "));
+            if enter {
+                text.push('\r');
+            }
+            let list = sessions(&mut c).await?;
+            let s = find_session(&list, &target)?;
+            c.call("session.input", json!({"handle": s["handle"], "data": text})).await?;
+        }
+        "wait" => {
+            let timeout = take_opt(&mut args, "--timeout-ms").map(|n| n.parse::<u64>()).transpose()?.unwrap_or(600_000);
+            let target = args.first().ok_or_else(|| anyhow!("usage: erkad terminal wait <session> [--timeout-ms N]"))?.clone();
+            let started = Instant::now();
+            let (mut seen_working, mut quiet_polls) = (false, 0);
+            loop {
+                let list = sessions(&mut c).await?;
+                let s = find_session(&list, &target)?;
+                let status = str_of(s, "status").to_string();
+                if status == "working" {
+                    seen_working = true;
+                    quiet_polls = 0;
+                } else {
+                    quiet_polls += 1;
+                }
+                // Just after a `send` the agent may not have started yet: give it 3 s to.
+                if status == "exited" || (quiet_polls >= 3 && (seen_working || started.elapsed() > Duration::from_secs(3))) {
+                    println!("{status}");
+                    return Ok(());
+                }
+                if started.elapsed() > Duration::from_millis(timeout) {
+                    println!("{status}");
+                    bail!("timed out after {timeout} ms");
+                }
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            }
+        }
+        _ => bail!("usage: erkad terminal list|read|send|wait …"),
+    }
+    Ok(())
+}
+
+pub async fn worktree(args: &[String]) -> Result<()> {
+    let mut args = args.to_vec();
+    let json_out = take_flag(&mut args, "--json");
+    let sub = if args.is_empty() { String::new() } else { args.remove(0) };
+    // Default: the git worktree containing the current folder (that is what a project is),
+    // else the folder itself.
+    let path = match take_opt(&mut args, "--path") {
+        Some(p) => p,
+        None => std::process::Command::new("git")
+            .args(["rev-parse", "--show-toplevel"])
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .filter(|p| !p.is_empty())
+            .unwrap_or(std::env::current_dir()?.to_string_lossy().into_owned()),
+    };
+    let mut c = Client::connect().await?;
+    match sub.as_str() {
+        "get" | "current" => {
+            let m = c.call("meta.get", json!({"path": path})).await?;
+            if json_out {
+                println!("{}", serde_json::to_string_pretty(&m)?);
+            } else if m.is_null() {
+                println!("(no comment or status for {path})");
+            } else {
+                println!("status:  {}", m["status"].as_str().unwrap_or("-"));
+                println!("comment: {}", m["comment"].as_str().unwrap_or("-"));
+            }
+        }
+        "set" => {
+            let comment = take_opt(&mut args, "--comment");
+            let status = take_opt(&mut args, "--status");
+            if comment.is_none() && status.is_none() {
+                bail!("usage: erkad worktree set [--path P] [--comment TEXT] [--status todo|progress|review|done]");
+            }
+            // Writes go to the folder's existing record (e.g. the worktree root above a
+            // subfolder) when there is one.
+            let existing = c.call("meta.get", json!({"path": path})).await?;
+            let key = existing.get("path").and_then(Value::as_str).map(str::to_string).unwrap_or(path);
+            let mut params = json!({"path": key});
+            if let Some(v) = comment {
+                params["comment"] = json!(v);
+            }
+            if let Some(v) = status {
+                params["status"] = json!(v);
+            }
+            let m = c.call("meta.set", params).await?;
+            if json_out {
+                println!("{}", serde_json::to_string_pretty(&m)?);
+            }
+        }
+        _ => bail!("usage: erkad worktree get|set …"),
+    }
+    Ok(())
+}

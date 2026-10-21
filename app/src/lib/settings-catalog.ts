@@ -1,10 +1,11 @@
 // Searchable index of settings: one entry per row of the settings page. Drives the page's
 // navigation, its search box, and "/" results in the global search.
-export type SettingsSection = "agents" | "terminal" | "appearance" | "notifications" | "usage" | "commands" | "shortcuts" | "daemon" | "about";
+export type SettingsSection = "agents" | "automations" | "terminal" | "appearance" | "notifications" | "usage" | "commands" | "shortcuts" | "daemon" | "about";
 
 export const settingsSections: { id: SettingsSection; label: string; group: string }[] = [
   { id: "agents", label: "Agents", group: "Workflow" },
   { id: "commands", label: "Quick Commands", group: "Workflow" },
+  { id: "automations", label: "Automations", group: "Workflow" },
   { id: "terminal", label: "Terminal", group: "Interface" },
   { id: "appearance", label: "Appearance", group: "Interface" },
   { id: "shortcuts", label: "Shortcuts", group: "Interface" },
@@ -23,6 +24,16 @@ export interface SettingEntry {
 }
 
 export const settingsCatalog: SettingEntry[] = [
+  { id: "agent-permissions", section: "agents", label: "Permissions", description: "Manual: agents ask before acting, as they normally do. Yolo: start them with their skip-permission flags (agents with their own permission choice below keep it).", keywords: "yolo dangerously skip bypass approval permission auto" },
+  { id: "agent-list", section: "agents", label: "Agent CLIs", description: "Agents found on this computer. Shown ones appear in launchers and the new-session menu.", keywords: "gemini cursor opencode copilot aider grok amp qwen droid kimi crush cline kiro devin goose installed enable hide" },
+  { id: "ai-agent", section: "agents", label: "Agent for AI actions", description: "Writes commit messages and pull request descriptions (runs once, without a terminal).", keywords: "generate commit message pull request ai" },
+  { id: "hibernate", section: "agents", label: "Hibernate idle agents", description: "Stop agents that finished and sat unseen in a background project; they resume their conversation when you open it again.", keywords: "sleep memory idle pause resume hibernation" },
+  { id: "keep-awake", section: "agents", label: "Keep computer awake", description: "Prevent idle sleep while an agent is working, or always (the display may still turn off).", keywords: "caffeinate sleep power awake" },
+  { id: "automations", section: "automations", label: "Scheduled automations", description: "Start an agent with a prompt on a schedule. They run from the session daemon, also while this window is closed.", keywords: "schedule cron daily hourly weekly recurring automation" },
+  { id: "terminal-theme", section: "terminal", label: "Colour theme", description: "Terminal colours; Default follows the app theme.", keywords: "dracula nord solarized gruvbox one dark tokyo catppuccin github palette colors" },
+  { id: "floating-terminal", section: "terminal", label: "Floating terminal", description: "A global terminal in your home folder, one shortcut away from any project.", keywords: "quake dropdown global scratch float" },
+  { id: "word-wrap", section: "appearance", label: "Editor word wrap", description: "Wrap long lines in the file editor (Alt+Z toggles it).", keywords: "soft wrap lines editor" },
+  { id: "notification-sound", section: "notifications", label: "Notification sound", description: "Play a short chime with desktop notifications.", keywords: "sound chime audio beep" },
   { id: "agent-claude", section: "agents", label: "Claude Code", description: "Arguments, permission mode and environment for new Claude Code sessions.", keywords: "model args flags profile permission env claude" },
   { id: "agent-codex", section: "agents", label: "Codex", description: "Arguments, approval policy and environment for new Codex sessions.", keywords: "model args flags profile approval env codex" },
   { id: "agent-omp", section: "agents", label: "OMP", description: "Arguments and environment for new OMP sessions.", keywords: "model args flags profile env omp pi" },

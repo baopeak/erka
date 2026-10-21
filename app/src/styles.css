@@ -228,7 +228,7 @@ input, textarea, select { font: inherit; color: var(--text); }
 .pane-header .title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pane-header .icon-btn { width: 22px; height: 22px; }
 .pane-body { flex: 1; position: relative; min-height: 0; }
-.term-wrap { position: absolute; inset: 0; padding: 8px 4px 4px 12px; background: var(--term-bg); }
+.term-wrap { position: absolute; inset: 0; padding: 8px 4px 4px 12px; background: var(--terminal-bg, var(--term-bg)); }
 .term-host { width: 100%; height: 100%; }
 .term-host .xterm { height: 100%; }
 .term-host .xterm-viewport { background: transparent !important; }
@@ -593,3 +593,117 @@ input, textarea, select { font: inherit; color: var(--text); }
 .tip-title { font-weight: 600; color: var(--text); }
 .tip-text { font-size: 12.5px; color: var(--text-dim); line-height: 1.5; }
 .tip-actions { display: flex; align-items: center; margin-top: 4px; }
+
+/* ---------- Orca parity round 2 ---------- */
+.link-btn { background: none; border: none; padding: 0 2px; font: 12px var(--font-ui); color: var(--accent); cursor: pointer; white-space: nowrap; }
+.link-btn:hover { text-decoration: underline; }
+.link-btn:disabled { color: var(--text-faint); cursor: default; text-decoration: none; }
+.link-btn.danger { color: var(--danger); }
+.check-label { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--text-dim); white-space: nowrap; cursor: pointer; }
+.statusbar .item.on { color: var(--accent); }
+.statusbar .item .badge { margin-left: -2px; }
+
+/* Changes panel */
+.branch-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; color: var(--text); }
+.git-note { font-size: 12px; color: var(--text-dim); line-height: 1.45; padding: 7px 9px; border-radius: 7px; border: 1px solid var(--border-strong); background: var(--bg); }
+.git-note.warn { border-color: var(--waiting); }
+.git-note code { font: 11px var(--font-mono); }
+.commit-wrap { position: relative; }
+.commit-wrap .commit-box { padding-right: 32px; }
+.commit-ai { position: absolute; right: 4px; top: 4px; width: 24px; height: 24px; color: var(--accent); }
+.pr-form { display: flex; flex-direction: column; gap: 6px; padding: 8px; border: 1px solid var(--border-strong); border-radius: 8px; }
+.pr-form .commit-box { min-height: 72px; }
+.pr-row { display: flex; align-items: center; gap: 6px; font-size: 12px; min-width: 0; color: var(--text-dim); }
+.pr-row a { color: var(--accent); text-decoration: none; }
+.pr-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chip.pr-open, .primary-tag.pr-open { color: var(--added); border-color: var(--added); }
+.chip.pr-draft, .primary-tag.pr-draft { color: var(--text-faint); }
+.chip.pr-merged, .primary-tag.pr-merged { color: #c592ff; border-color: #c592ff; }
+.chip.pr-closed, .primary-tag.pr-closed { color: var(--danger); border-color: var(--danger); }
+.chip.checks-passing { color: var(--added); border-color: var(--added); }
+.chip.checks-failing { color: var(--danger); border-color: var(--danger); }
+.chip.checks-pending { color: var(--waiting); border-color: var(--waiting); }
+
+/* Sidebar / board comments */
+.project-comment { display: block; font-size: 11px; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-style: italic; }
+.board-card-comment { font-size: 11.5px; color: var(--text-dim); margin-top: 4px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+
+/* Diff review notes */
+.notes-bar { display: flex; align-items: center; gap: 8px; padding: 6px 12px; font-size: 12px; color: var(--text-dim); border-bottom: 1px solid var(--border); background: var(--bg-elev); }
+.notes-list { max-height: 120px; overflow: auto; border-bottom: 1px solid var(--border); background: var(--bg-elev); }
+.note-item { display: flex; align-items: center; gap: 8px; padding: 3px 12px; font-size: 12px; }
+.note-line { font: 11px var(--font-mono); color: var(--accent); min-width: 34px; }
+.note-body { flex: 1; min-width: 0; color: var(--text); white-space: pre-wrap; }
+.note-draft { position: absolute; z-index: 20; width: 320px; padding: 10px; border-radius: 9px; background: var(--bg-elev-2); border: 1px solid var(--border-strong); box-shadow: 0 10px 30px rgba(0,0,0,.35); }
+.cm-note-gutter .cm-gutterElement { cursor: pointer; padding: 0 3px; }
+.cm-note-mark { color: var(--accent); font-size: 11px; opacity: 0; }
+.cm-note-mark.has { opacity: 1; }
+.cm-note-gutter .cm-gutterElement:hover .cm-note-mark { opacity: 1; }
+
+/* Floating terminal */
+.floating-term { position: fixed; right: 18px; bottom: 34px; width: min(900px, calc(100vw - 60px)); height: min(440px, calc(100vh - 120px)); z-index: 40; display: flex; flex-direction: column; border-radius: 11px; overflow: hidden; border: 1px solid var(--border-strong); background: var(--term-bg); box-shadow: 0 18px 50px rgba(0,0,0,.45); }
+.floating-bar { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 8px 0 12px; background: var(--bg-elev); border-bottom: 1px solid var(--border); color: var(--text-dim); }
+.floating-tabs { display: flex; align-items: center; gap: 4px; min-width: 0; overflow-x: auto; }
+.floating-tab { display: flex; align-items: center; gap: 6px; height: 24px; padding: 0 4px 0 8px; border-radius: 6px; font-size: 12px; cursor: pointer; white-space: nowrap; }
+.floating-tab.active { background: var(--bg-active); color: var(--text); }
+.floating-body { flex: 1; position: relative; min-height: 0; }
+
+/* Inbox / activity */
+.inbox-anchor { position: relative; }
+.inbox { position: absolute; right: -8px; bottom: 26px; width: 380px; max-height: min(520px, calc(100vh - 80px)); z-index: 50; display: flex; flex-direction: column; border-radius: 10px; background: var(--bg-elev-2); border: 1px solid var(--border-strong); box-shadow: 0 14px 40px rgba(0,0,0,.4); color: var(--text); cursor: default; }
+.inbox-head { display: flex; align-items: center; gap: 8px; padding: 10px 10px 8px; font-size: 12.5px; }
+.inbox-list { overflow-y: auto; padding-bottom: 6px; }
+.inbox-item { display: flex; align-items: flex-start; gap: 8px; padding: 7px 12px; cursor: pointer; font-size: 12px; }
+.inbox-item:hover { background: var(--bg-hover); }
+.inbox-item.unread .inbox-title { font-weight: 600; }
+.inbox-item.unread::before { content: ""; width: 6px; height: 6px; border-radius: 3px; background: var(--accent); margin: 5px -4px 0 -6px; flex: none; }
+.inbox-icon { color: var(--text-faint); margin-top: 1px; }
+.inbox-item.k-waiting .inbox-icon { color: var(--waiting); }
+.inbox-item.k-finished .inbox-icon { color: var(--added); }
+.inbox-item.k-error .inbox-icon { color: var(--danger); }
+.inbox-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.inbox-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.inbox-body { color: var(--text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.inbox .age { font-size: 11px; color: var(--text-faint); }
+.inbox .group-label { padding: 6px 12px 2px; }
+
+/* Settings: agents, automations */
+.agent-list { display: flex; flex-direction: column; gap: 6px; width: 100%; }
+.agent-item { border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; }
+.agent-item.missing { opacity: .55; }
+.agent-item-head { display: flex; align-items: center; gap: 8px; font-size: 12.5px; }
+.agent-item .agent-card { margin-top: 8px; }
+.agent-name { color: var(--text); }
+.automations { display: flex; flex-direction: column; gap: 8px; width: 100%; }
+.automation-editor { display: flex; flex-direction: column; gap: 8px; padding: 10px; border: 1px solid var(--border-strong); border-radius: 9px; }
+.automation-editor .inline-fields { align-items: flex-end; }
+.automation-item { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; }
+.automation-item.paused { opacity: .6; }
+.automation-text { flex: 1; min-width: 0; font-size: 12px; }
+.automation-name { color: var(--text); font-size: 13px; }
+.automation-error { color: var(--danger); font-size: 11.5px; margin-top: 2px; }
+
+/* Viewers */
+.table-view { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.table-tools { display: flex; align-items: center; gap: 10px; padding: 8px 12px; }
+.table-tools .text-input { max-width: 260px; }
+.table-scroll { flex: 1; overflow: auto; }
+.data-table { border-collapse: collapse; font: 12px var(--font-mono); color: var(--text); }
+.data-table th, .data-table td { border: 1px solid var(--border); padding: 3px 8px; text-align: left; max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.data-table th { position: sticky; top: 0; background: var(--bg-elev); cursor: pointer; font-weight: 600; }
+.data-table tr:hover td { background: var(--bg-hover); }
+.pdf-frame { flex: 1; width: 100%; border: 0; background: #525659; }
+.diagram-view { flex: 1; overflow: auto; position: relative; }
+.diagram-tools { position: sticky; top: 0; left: 0; display: flex; align-items: center; gap: 6px; padding: 8px 12px; z-index: 1; }
+.diagram-canvas { transform-origin: 0 0; padding: 12px 24px; }
+.mermaid-diagram { margin: 12px 0; overflow-x: auto; }
+.notebook { flex: 1; overflow: auto; padding: 12px 18px 40px; }
+.nb-cell { display: flex; gap: 10px; margin-bottom: 12px; }
+.nb-prompt { flex: none; width: 46px; text-align: right; font: 11px var(--font-mono); color: var(--text-faint); padding-top: 8px; }
+.nb-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.nb-code { margin: 0; padding: 8px 10px; border-radius: 7px; background: var(--bg-elev); border: 1px solid var(--border); font: 12px var(--font-mono); white-space: pre-wrap; color: var(--text); }
+.nb-out { margin: 0; padding: 2px 10px; font: 12px var(--font-mono); white-space: pre-wrap; color: var(--text-dim); }
+.nb-err { color: var(--danger); }
+.nb-image { max-width: 100%; background: white; border-radius: 4px; }
+.nb-html { overflow-x: auto; font-size: 12px; }
+.notebook .nb-md { flex: 1; overflow: visible; padding: 0 0 0 56px; max-width: none; }

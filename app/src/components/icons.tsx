@@ -1,5 +1,6 @@
 // Small inline SVG icon set (stroke icons, 16px grid) — no icon font, no network.
 import type { JSX } from "solid-js";
+import { kindInfo } from "../lib/agents";
 
 // Factories, not elements: a Solid JSX element is a real DOM node and can live in one place only.
 const paths: Record<string, () => JSX.Element> = {
@@ -38,6 +39,18 @@ const paths: Record<string, () => JSX.Element> = {
   board: () => <><rect x="2.5" y="3" width="3" height="10" rx="1" /><rect x="6.5" y="3" width="3" height="7" rx="1" /><rect x="10.5" y="3" width="3" height="5" rx="1" /></>,
   branch: () => <><circle cx="5" cy="4" r="1.5" /><circle cx="5" cy="12" r="1.5" /><circle cx="11" cy="5" r="1.5" /><path d="M5 5.5v5M11 6.5c0 3-6 2-6 4" /></>,
   filter: () => <path d="M2.5 3.5h11l-4.5 5v4l-2 1v-5z" />,
+  sparkle: () => <><path d="M8 2.5l1.3 3.2L12.5 7l-3.2 1.3L8 11.5 6.7 8.3 3.5 7l3.2-1.3z" /><path d="M12.5 11v3M11 12.5h3" /></>,
+  bell: () => <><path d="M4.5 11V7.5a3.5 3.5 0 0 1 7 0V11l1 1.5h-9z" /><path d="M7 14h2" /></>,
+  coffee: () => <><path d="M3 6h8v4a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3z" /><path d="M11 7h1a1.5 1.5 0 0 1 0 3h-1" /><path d="M5.5 2.5v1.5M8 2v2" /></>,
+  pr: () => <><circle cx="4.5" cy="4" r="1.5" /><circle cx="4.5" cy="12" r="1.5" /><circle cx="11.5" cy="12" r="1.5" /><path d="M4.5 5.5v5M11.5 10.5V6.5a2 2 0 0 0-2-2H7.5" /><path d="M9 3l-1.5 1.5L9 6" /></>,
+  push: () => <><path d="M8 11V3M4.5 6.5L8 3l3.5 3.5" /><path d="M3 13h10" /></>,
+  pull: () => <><path d="M8 3v8M4.5 7.5L8 11l3.5-3.5" /><path d="M3 13h10" /></>,
+  sync: () => <><path d="M12.5 6.5A4.5 4.5 0 0 0 4 5" /><path d="M3.5 9.5A4.5 4.5 0 0 0 12 11" /><path d="M4 2.5V5h2.5M12 13.5V11H9.5" /></>,
+  note: () => <><path d="M3 3h10v7l-3 3H3z" /><path d="M10 13v-3h3M5.5 6h5M5.5 8.5h3" /></>,
+  moon: () => <path d="M12.5 10A5 5 0 0 1 6 3.5 5 5 0 1 0 12.5 10z" />,
+  external: () => <><path d="M9 3h4v4M13 3L7.5 8.5" /><path d="M11 9.5V13H3V5h3.5" /></>,
+  float: () => <><rect x="2.5" y="3" width="11" height="10" rx="1.5" /><rect x="7.5" y="8" width="5" height="4" rx="1" /></>,
+  clock: () => <><circle cx="8" cy="8" r="5.5" /><path d="M8 5v3.2l2 1.3" /></>,
 };
 
 export function Icon(props: { name: keyof typeof paths | string; size?: number }) {
@@ -50,7 +63,7 @@ export function Icon(props: { name: keyof typeof paths | string; size?: number }
 }
 
 export function KindGlyph(props: { kind: string; size?: number }) {
-  const meta = () => kindMeta[props.kind] ?? kindMeta.custom;
+  const meta = () => kindInfo(props.kind);
   const size = () => props.size ?? 18;
   return (
     <span
@@ -61,10 +74,3 @@ export function KindGlyph(props: { kind: string; size?: number }) {
   );
 }
 
-export const kindMeta: Record<string, { glyph: string; color: string; label: string }> = {
-  shell: { glyph: ">_", color: "#9aa4b5", label: "Terminal" },
-  claude: { glyph: "✳", color: "#e8a27c", label: "Claude Code" },
-  codex: { glyph: "◎", color: "#8fc8ff", label: "Codex" },
-  omp: { glyph: "π", color: "#c592ff", label: "OMP" },
-  custom: { glyph: "$", color: "#8bd58b", label: "Command" },
-};

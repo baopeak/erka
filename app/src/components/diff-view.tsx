@@ -1,40 +1,142 @@
-import { Show, createSignal, onCleanup, onMount } from "solid-js";
-import { EditorView } from "@codemirror/view";
-import { EditorState } from "@codemirror/state";
-import { MergeView, unifiedMergeView } from "@codemirror/merge";
+import { For, Show, createEffect, createMemo, createSignal, on, onCleanup, onMount } from "solid-js";
+import { EditorView, GutterMarker, gutter, keymap } from "@codemirror/view";
+import { EditorState, StateEffect, StateField } from "@codemirror/state";
+import { MergeView, goToNextChunk, goToPreviousChunk, unifiedMergeView } from "@codemirror/merge";
 import { gitFileVersions, onEvent } from "../lib/ipc";
 import { baseExtensions, languageFor } from "../lib/codemirror";
 import { store } from "../lib/store";
-import type { Project } from "../lib/types";
+import { chooseAgentAndSend } from "../lib/send-to-agent";
+import { Icon } from "./icons";
+import type { Project, ReviewNote } from "../lib/types";
 
-/** HEAD ↔ working tree (or index when `staged`) diff, side by side or unified. */
+/** Lines with a review note, per editor (updated from the store). */
+const setNoteLines = StateEffect.define<number[]>();
+const noteLines = StateField.define<number[]>({
+  create: () => [],
+  update: (v, tr) => tr.effects.reduce((acc, e) => (e.is(setNoteLines) ? e.value : acc), v),
+});
+
+class NoteMarker extends GutterMarker {
+  constructor(readonly has: boolean) {
+    super();
+  }
+  eq(other: NoteMarker) {
+    return other.has === this.has;
+  }
+  toDOM() {
+    const el = document.createElement("span");
+    el.className = this.has ? "cm-note-mark has" : "cm-note-mark";
+    el.textContent = this.has ? "●" : "+";
+    return el;
+  }
+}
+const HAS = new NoteMarker(true);
+const ADD = new NoteMarker(false);
+
+/** Gutter that shows notes and adds one on click (`onAdd(line, text, event)`). */
+function noteGutter(onAdd: (line: number, text: string, e: MouseEvent) => void) {
+  return [
+    noteLines,
+    gutter({
+      class: "cm-note-gutter",
+      // "+" on every line (shown on hover by CSS), "●" where a note is.
+      lineMarker: (view, line) => (view.state.field(noteLines).includes(view.state.doc.lineAt(line.from).number) ? HAS : ADD),
+      lineMarkerChange: (update) => update.transactions.some((tr) => tr.effects.some((e) => e.is(setNoteLines))),
+      initialSpacer: () => ADD,
+      domEventHandlers: {
+        mousedown(view, block, e) {
+          const line = view.state.doc.lineAt(block.from);
+          onAdd(line.number, line.text, e as MouseEvent);
+          return true;
+        },
+      },
+    }),
+  ];
+}
+
+const changeKeys = keymap.of([
+  { key: "F7", run: goToNextChunk },
+  { key: "Shift-F7", run: goToPreviousChunk },
+]);
+
+/** The batch prompt for every note in the project (Annotate AI diff). */
+export function notesPrompt(notes: ReviewNote[]): string {
+  const byFile = new Map<string, ReviewNote[]>();
+  for (const n of notes) byFile.set(n.path, [...(byFile.get(n.path) ?? []), n]);
+  const parts = [...byFile].map(([path, list]) =>
+    `${path}\n${list.sort((a, b) => a.line - b.line).map((n) => `- ${n.side === "old" ? "removed line" : "line"} ${n.line}${n.text.trim() ? ` (\`${n.text.trim().slice(0, 120)}\`)` : ""}: ${n.note}`).join("\n")}`,
+  );
+  return `Please address these review notes on the current changes. Each names a file and a line of the diff.\n\n${parts.join("\n\n")}`;
+}
+
+/** HEAD ↔ working tree (or index when `staged`) diff, side by side or unified, with notes. */
 export function DiffView(props: { project: Project; path: string; staged: boolean }) {
   let host!: HTMLDivElement;
+  let box!: HTMLDivElement;
   const [unified, setUnified] = createSignal(host?.clientWidth < 900);
   const [info, setInfo] = createSignal("");
+  const [draft, setDraft] = createSignal<{ line: number; side: "new" | "old"; text: string; x: number; y: number } | null>(null);
+  const [noteText, setNoteText] = createSignal("");
   let destroy: (() => void) | null = null;
+  let editors: { view: EditorView; side: "new" | "old" }[] = [];
+
+  const allNotes = () => store.notesFor(props.project.id);
+  const fileNotes = createMemo(() => allNotes().filter((n) => n.path === props.path));
+
+  const pushMarks = () => {
+    for (const { view, side } of editors) view.dispatch({ effects: setNoteLines.of(fileNotes().filter((n) => n.side === side).map((n) => n.line)) });
+  };
+
+  const openDraft = (side: "new" | "old") => (line: number, text: string, e: MouseEvent) => {
+    const r = box.getBoundingClientRect();
+    setNoteText("");
+    setDraft({ line, side, text, x: Math.min(e.clientX - r.left + 12, r.width - 320), y: e.clientY - r.top + 8 });
+    queueMicrotask(() => box.querySelector<HTMLTextAreaElement>(".note-draft textarea")?.focus());
+  };
+
+  const saveDraft = () => {
+    const d = draft();
+    if (!d || !noteText().trim()) return setDraft(null);
+    store.addNote(props.project.id, { path: props.path, line: d.line, side: d.side, text: d.text, note: noteText().trim() });
+    setDraft(null);
+    queueMicrotask(pushMarks);
+  };
 
   async function render() {
     try {
       const v = await gitFileVersions(props.project.path, props.path, props.staged);
       const lang = await languageFor(props.path);
-      const exts = [...baseExtensions({ readOnly: true }), ...(lang ? [lang] : []), EditorView.editable.of(false), EditorState.readOnly.of(true)];
+      const exts = (side: "new" | "old") => [...baseExtensions({ readOnly: true }), ...(lang ? [lang] : []), EditorView.editable.of(false), EditorState.readOnly.of(true), changeKeys, noteGutter(openDraft(side))];
       destroy?.();
       host.replaceChildren();
       const a = v.original ?? "";
       const b = v.modified ?? "";
       setInfo(v.original == null ? "new file" : v.modified == null ? "deleted" : "");
       if (unified()) {
-        const view = new EditorView({ parent: host, doc: b, extensions: [...exts, unifiedMergeView({ original: a, mergeControls: false, gutter: true })] });
+        const view = new EditorView({ parent: host, doc: b, extensions: [...exts("new"), unifiedMergeView({ original: a, mergeControls: false, gutter: true })] });
+        editors = [{ view, side: "new" }];
         destroy = () => view.destroy();
       } else {
-        const mv = new MergeView({ parent: host, a: { doc: a, extensions: exts }, b: { doc: b, extensions: exts }, gutter: true, highlightChanges: true, collapseUnchanged: { margin: 3, minSize: 8 } });
+        const mv = new MergeView({ parent: host, a: { doc: a, extensions: exts("old") }, b: { doc: b, extensions: exts("new") }, gutter: true, highlightChanges: true, collapseUnchanged: { margin: 3, minSize: 8 } });
+        editors = [{ view: mv.a, side: "old" }, { view: mv.b, side: "new" }];
         destroy = () => mv.destroy();
       }
+      pushMarks();
     } catch (e) {
       store.notify(String(e));
     }
   }
+
+  /** Next / previous change in the editor showing the new side. */
+  const jump = (forward: boolean) => {
+    const target = editors[editors.length - 1]?.view;
+    if (!target) return;
+    (forward ? goToNextChunk : goToPreviousChunk)(target);
+    target.focus();
+  };
+
+  // Notes added or resolved anywhere (this view, another diff, an agent hand-off) redraw marks.
+  createEffect(on(fileNotes, () => pushMarks(), { defer: true }));
 
   onMount(() => {
     if (host.clientWidth && host.clientWidth < 900) setUnified(true);
@@ -46,19 +148,68 @@ export function DiffView(props: { project: Project; path: string; staged: boolea
     });
   });
 
+  const remove = (id: string) => {
+    store.removeNotes(props.project.id, [id]);
+    queueMicrotask(pushMarks);
+  };
+
   return (
-    <div class="viewer">
+    <div class="viewer" ref={box}>
       <div class="viewer-bar">
         <span class="path">&lrm;{props.path}</span>
         <span style={{ color: "var(--text-faint)" }}>{props.staged ? "HEAD ↔ index" : "HEAD ↔ working tree"}{info() ? ` · ${info()}` : ""}</span>
         <div class="toggles">
+          <button class="icon-btn" title="Previous change (Shift+F7)" onClick={() => jump(false)}><Icon name="up" size={14} /></button>
+          <button class="icon-btn" title="Next change (F7)" onClick={() => jump(true)}><Icon name="down" size={14} /></button>
           <button class={`toggle${!unified() ? " on" : ""}`} onClick={() => { setUnified(false); void render(); }}>Split</button>
           <button class={`toggle${unified() ? " on" : ""}`} onClick={() => { setUnified(true); void render(); }}>Unified</button>
           <button class="toggle" onClick={() => store.openFile(props.project.id, props.path)}>Open file</button>
         </div>
       </div>
+      <Show when={allNotes().length}>
+        <div class="notes-bar">
+          <Icon name="note" size={14} />
+          <span>{allNotes().length} review note{allNotes().length > 1 ? "s" : ""}{fileNotes().length !== allNotes().length ? ` (${fileNotes().length} here)` : ""}</span>
+          <span style={{ flex: 1 }} />
+          <button class="btn primary" onClick={(e) => chooseAgentAndSend(e, props.project.id, notesPrompt(allNotes()))}>Send to agent ▾</button>
+          <button class="btn" title="Remove every note (resolve all)" onClick={() => { store.removeNotes(props.project.id, "all"); queueMicrotask(pushMarks); }}>Resolve all</button>
+        </div>
+        <Show when={fileNotes().length}>
+          <div class="notes-list">
+            <For each={fileNotes().slice().sort((a, b) => a.line - b.line)}>
+              {(n) => (
+                <div class="note-item">
+                  <span class="note-line">{n.side === "old" ? "−" : ""}{n.line}</span>
+                  <span class="note-body">{n.note}</span>
+                  <button class="icon-btn" title="Resolve (remove)" onClick={() => remove(n.id)}><Icon name="check" size={13} /></button>
+                </div>
+              )}
+            </For>
+          </div>
+        </Show>
+      </Show>
       <div class="cm-host" ref={host} style={{ overflow: "auto" }} />
-      <Show when={false}><span /></Show>
+      <Show when={draft()}>
+        {(d) => (
+          <div class="note-draft" style={{ left: `${Math.max(8, d().x)}px`, top: `${d().y}px` }} onPointerDown={(e) => e.stopPropagation()}>
+            <div class="muted" style={{ padding: "0 0 6px" }}>Note on {d().side === "old" ? "removed " : ""}line {d().line}</div>
+            <textarea
+              class="commit-box"
+              value={noteText()}
+              placeholder="What should change here?"
+              onInput={(e) => setNoteText(e.currentTarget.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") setDraft(null);
+                if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) saveDraft();
+              }}
+            />
+            <div style={{ display: "flex", gap: "6px", "justify-content": "flex-end", "margin-top": "6px" }}>
+              <button class="btn" onClick={() => setDraft(null)}>Cancel</button>
+              <button class="btn primary" onClick={saveDraft}>Add note</button>
+            </div>
+          </div>
+        )}
+      </Show>
     </div>
   );
 }

@@ -19,6 +19,8 @@ export interface CreateSession {
   cols?: number;
   rows?: number;
   chat_argv?: string[];
+  /** First message for an agent (argument or typed once ready). */
+  prompt?: string;
 }
 export const createSession = (p: CreateSession) => daemon<SessionInfo>("session.create", p);
 
@@ -60,8 +62,8 @@ export interface QuickOpenHit { path: string; score: number; indices: number[] }
 export const quickOpen = (root: string, query: string, limit = 60) => invoke<QuickOpenHit[]>("quick_open", { root, query, limit });
 
 export interface TextHit { path: string; line: number; column: number; text: string }
-export const searchText = (root: string, query: string, regex: boolean, caseSensitive: boolean) =>
-  invoke<{ hits: TextHit[]; truncated: boolean; files_searched: number }>("search_text", { root, query, regex, caseSensitive });
+export const searchText = (root: string, query: string, regex: boolean, caseSensitive: boolean, folder?: string) =>
+  invoke<{ hits: TextHit[]; truncated: boolean; files_searched: number }>("search_text", { root, query, regex, caseSensitive, folder });
 
 export const gitStatus = (root: string) => invoke<GitStatus>("git_status", { root });
 export const gitWorktrees = (root: string) => invoke<Worktree[]>("git_worktrees", { root });
@@ -77,6 +79,24 @@ export const gitFileVersions = (root: string, path: string, staged: boolean) =>
 export const gitStage = (root: string, paths: string[], stage: boolean) => invoke<void>("git_stage", { root, paths, stage });
 export const gitDiscard = (root: string, paths: string[], untracked: string[]) => invoke<void>("git_discard", { root, paths, untracked });
 export const gitCommit = (root: string, message: string, amend = false) => invoke<string>("git_commit", { root, message, amend });
+
+export type RemoteAction = "push" | "pull" | "sync" | "force_push";
+export const gitRemote = (root: string, action: RemoteAction) => invoke<string>("git_remote", { root, action });
+export const gitRepoState = (root: string) => invoke<{ operation: "merge" | "rebase" | "cherry-pick" | "revert" | null; has_remote: boolean }>("git_repo_state", { root });
+export const gitAbort = (root: string) => invoke<string>("git_abort", { root });
+export const gitBranchDelete = (root: string, branch: string, force = false) => invoke<void>("git_branch_delete", { root, branch, force });
+export const gitRefs = (root: string) => invoke<{ name: string; kind: "local" | "remote" | "tag" }[]>("git_refs", { root });
+export const gitContext = (root: string, kind: "staged" | "branch", base?: string, max?: number) => invoke<string>("git_context", { root, kind, base, max });
+export interface PullRequest { number: number; title: string; url: string; state: "OPEN" | "CLOSED" | "MERGED"; draft: boolean; base: string; checks: "passing" | "failing" | "pending" | "none" }
+export const ghPrStatus = (root: string) => invoke<PullRequest | null>("gh_pr_status", { root });
+export const ghDefaultBranch = (root: string) => invoke<string | null>("gh_default_branch", { root });
+export const ghPrCreate = (root: string, title: string, body: string, base: string, draft: boolean) => invoke<string>("gh_pr_create", { root, title, body, base, draft });
+export const worktreeMaterialize = (root: string, worktree: string, copy: string[], link: string[]) =>
+  invoke<{ copied: string[]; linked: string[]; skipped: { path: string; reason: string }[] }>("worktree_materialize", { root, worktree, copy, link });
+export const editorsList = () => invoke<{ id: string; label: string }[]>("editors_list");
+export const editorOpen = (editor: string, path: string) => invoke<void>("editor_open", { editor, path });
+/** One-shot agent answer (no terminal), e.g. a commit message. */
+export const agentRun = (kind: string, prompt: string, cwd: string) => daemon<{ text: string }>("agent.run", { kind, prompt, cwd }).then((r) => r.text);
 
 /** `count`: also refresh prompt counts in the background (`agent-history-counted` when done). */
 export const agentHistoryList = (count = true) => invoke<HistoryItem[]>("agent_history_list", { count });

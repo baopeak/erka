@@ -2,7 +2,8 @@ import { For } from "solid-js";
 import { store } from "../lib/store";
 import { pickProjectFolder, chordOf, commands } from "../lib/commands";
 import { chordLabel } from "../lib/platform";
-import { KindGlyph, kindMeta } from "./icons";
+import { KindGlyph } from "./icons";
+import { kindInfo, launchableAgents, presetFor } from "../lib/agents";
 import type { Project, SessionKind } from "../lib/types";
 
 const kbd = (id: string) => {
@@ -29,12 +30,16 @@ export function Welcome() {
   );
 }
 
-const choices: { kind: SessionKind; sub: string }[] = [
-  { kind: "claude", sub: "Anthropic Claude Code CLI" },
-  { kind: "codex", sub: "OpenAI Codex CLI" },
-  { kind: "omp", sub: "oh-my-pi coding agent" },
-  { kind: "shell", sub: "Your default shell" },
-];
+const SUBTITLES: Record<string, string> = {
+  claude: "Anthropic Claude Code CLI",
+  codex: "OpenAI Codex CLI",
+  omp: "oh-my-pi coding agent",
+  shell: "Your default shell",
+};
+
+/** Core agents, installed preset agents (Settings → Agents can hide them), then the shell. */
+const choices = (): { kind: SessionKind; sub: string }[] =>
+  [...launchableAgents(store.state.settings.hiddenAgents), "shell"].map((kind) => ({ kind, sub: SUBTITLES[kind] ?? `${presetFor(kind)?.bin ?? kind} CLI` }));
 
 /** Shown in a project with no tabs: one click starts an agent. */
 export function Launcher(props: { project: Project }) {
@@ -44,12 +49,12 @@ export function Launcher(props: { project: Project }) {
         <h1>{props.project.name}</h1>
         <div style={{ color: "var(--text-faint)", "font-family": "var(--font-mono)", "font-size": "12px" }}>{props.project.path}</div>
         <div class="launcher">
-          <For each={choices}>
+          <For each={choices()}>
             {(c) => (
               <div class="launch-card" onClick={() => void store.newSession(props.project.id, c.kind)}>
                 <KindGlyph kind={c.kind} size={34} />
                 <div>
-                  <div>{kindMeta[c.kind].label}</div>
+                  <div>{kindInfo(c.kind).label}</div>
                   <div class="sub">{c.sub}</div>
                 </div>
               </div>

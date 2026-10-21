@@ -8,12 +8,14 @@ import { QuickCommandsEditor } from "../quick-commands";
 import { Icon } from "../icons";
 import { SettingRow, setSettingsQuery, settingsQuery } from "./setting-row";
 import { AgentSettings } from "./agent-settings";
+import { AutomationSettings } from "./automation-settings";
 import { AppearanceSettings, NotificationSettings, TerminalSettings, UsageSettings } from "./interface-settings";
 import { ShortcutSettings, shortcutsMatch } from "./shortcut-settings";
 import { AboutSettings, DaemonSettings } from "./system-settings";
 
 const SECTIONS: Record<SettingsSection, () => JSX.Element> = {
   agents: AgentSettings,
+  automations: AutomationSettings,
   commands: () => (
     <SettingRow id="quick-commands" wide>
       <QuickCommandsEditor />

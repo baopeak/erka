@@ -7,7 +7,8 @@ import { isMac } from "../lib/platform";
 import { getController } from "../chat/mode-switch";
 import type { ChatItem } from "../chat/chat-model";
 import type { Project } from "../lib/types";
-import { Icon, kindMeta } from "./icons";
+import { Icon } from "./icons";
+import { kindInfo } from "../lib/agents";
 
 const RENDER_WINDOW = 300;
 
@@ -107,7 +108,7 @@ function ChatBody(props: { sessionId: string; project: Project; focused: boolean
     stick = true;
   };
 
-  const meta = () => kindMeta[session()?.kind ?? "custom"];
+  const meta = () => kindInfo(session()?.kind ?? "custom");
 
   return (
     <div class="chat">

@@ -1,11 +1,12 @@
 // Project sidebar: every project with its sessions (status, task title, model, last activity),
 // branch subtitle, filter/sort, and context menus. Each row binds only to its own session's
 // fields, so status ticks from 20 agents re-render single rows, not the list.
-import { For, Show, createMemo, createSignal } from "solid-js";
+import { For, Show, createMemo, createResource, createSignal } from "solid-js";
 import { store, sessionLabel } from "../lib/store";
 import { pickProjectFolder, chordOf, commands } from "../lib/commands";
 import { chordLabel, isMac, relTimeShort } from "../lib/platform";
-import { revealEntry } from "../lib/ipc";
+import { editorOpen, editorsList, gitBranchDelete, revealEntry } from "../lib/ipc";
+import { pullRequests, prLabel } from "../lib/pull-requests";
 import { switchToChat, switchToTerminal, supportsChat } from "../chat/mode-switch";
 import { daemon } from "../lib/ipc";
 import { Icon, KindGlyph } from "./icons";
@@ -83,7 +84,7 @@ function sessionMenu(s: SessionInfo): MenuItem[] {
     { label: "Rename…", run: () => setRenaming(`s:${s.id}`) },
     s.unread ? { label: "Mark as read", run: () => void store.markUnread(s.id, false) } : { label: "Mark as unread", run: () => void store.markUnread(s.id, true) },
   ];
-  if (!s.alive && !s.chat) items.push({ label: s.agent_session_id ? "Resume" : "Restart", run: () => void daemon("session.restart", { handle: s.handle }).catch((e) => store.notify(String(e))) });
+  if (!s.alive && !s.chat) items.push({ label: store.resumable(s) ? "Resume" : "Restart", run: () => void daemon("session.restart", { handle: s.handle }).catch((e) => store.notify(String(e))) });
   if (s.alive && supportsChat(s.kind)) {
     items.push(s.chat ? { label: "Continue in terminal (TUI)", run: () => void inPane(s, switchToTerminal) } : { label: "Continue in chat view", run: () => void inPane(s, switchToChat) });
   }
@@ -124,15 +125,32 @@ async function confirmRemoveWorktree(p: Project) {
     check.branch ? `The branch ${check.branch} is kept.` : "",
   ].filter(Boolean).join("\n\n");
   if (!confirm(text)) return;
+  const repo = store.state.projects.find((x) => x.id === p.parentId);
   try {
     const { leftover } = await removeWorktree(p, { force: check.changes > 0 });
-    store.notify(leftover
-      ? `Removed worktree ${p.name}, but its folder could not be fully deleted (a program still uses it): ${p.path}`
-      : `Removed worktree ${p.name}${check.branch ? `; branch ${check.branch} kept` : ""}`, undefined, leftover ? 12000 : 4000);
+    if (leftover) store.notify(`Removed worktree ${p.name}, but its folder could not be fully deleted (a program still uses it): ${p.path}`, undefined, 12000);
+    else if (!check.branch || !repo) store.notify(`Removed worktree ${p.name}`);
   } catch (e) {
-    store.notify(`Could not remove worktree: ${String(e).replace(/^Error: /, "")}`, undefined, 8000);
+    return store.notify(`Could not remove worktree: ${String(e).replace(/^Error: /, "")}`, undefined, 8000);
+  }
+  if (check.branch && repo) {
+    store.notify(`Removed worktree ${p.name}; branch ${check.branch} kept.`, { label: "Delete branch", run: () => void deleteBranch(repo.path, check.branch!) }, 12000);
   }
 }
+
+/** `git branch -d`; when git refuses (unmerged commits) ask before `-D`. */
+async function deleteBranch(repoPath: string, branch: string) {
+  try {
+    await gitBranchDelete(repoPath, branch, false);
+    store.notify(`Deleted branch ${branch}`);
+  } catch (e) {
+    if (!confirm(`${String(e)}\n\nThe branch ${branch} has commits that are not merged. Delete it anyway? Those commits are then only reachable from the reflog.`)) return;
+    await gitBranchDelete(repoPath, branch, true).then(() => store.notify(`Deleted branch ${branch}`), (err) => store.notify(String(err)));
+  }
+}
+
+/** Code editors installed on this machine (for "Open in ..."). */
+const [editors] = createResource(() => editorsList().catch(() => []));
 
 function projectMenu(p: Project): MenuItem[] {
   const folded = !!store.state.collapsed?.[p.id];
@@ -150,8 +168,13 @@ function projectMenu(p: Project): MenuItem[] {
         ]
       : []),
     { label: "Rename…", run: () => setRenaming(`p:${p.id}`) },
+    { label: store.metaFor(p)?.comment ? "Edit comment…" : "Add comment…", run: () => setRenaming(`c:${p.id}`) },
     { label: folded ? "Show sessions" : "Hide sessions", run: () => store.setCollapsed(p.id, !folded) },
     { label: isMac ? "Reveal in Finder" : "Reveal in Explorer", run: () => void revealEntry(p.path, "") },
+    ...(editors() ?? []).slice(0, 4).map((ed) => ({ label: `Open in ${ed.label}`, run: () => void editorOpen(ed.id, p.path).catch((e) => store.notify(String(e))) })),
+    ...(projectSessions(p.id).some((s) => s.alive && store.resumable(s))
+      ? [{ label: "Sleep (stop agents, resume on open)", run: () => void store.sleepProject(p.id) }]
+      : []),
     { label: "Move up", run: () => store.moveProject(p.id, -1) },
     { label: "Move down", run: () => store.moveProject(p.id, 1) },
     null,
@@ -233,6 +256,9 @@ function ProjectRow(props: { project: Project }) {
             <Show when={renaming() === `p:${props.project.id}`} fallback={<span class="project-name">{props.project.name}</span>}>
               <RenameInput value={props.project.name} onDone={(v) => v?.trim() && store.renameProject(props.project.id, v.trim())} />
             </Show>
+            <Show when={renaming() === `c:${props.project.id}`}>
+              <RenameInput value={store.metaFor(props.project)?.comment ?? ""} onDone={(v) => v !== null && void store.setComment(props.project, v)} />
+            </Show>
             <Show when={info()?.is_repo}>
               <span class="project-sub">
                 <Show when={!worktree()}><Icon name="branch" size={10} /> {info()!.branch ?? "detached"}</Show>
@@ -240,7 +266,13 @@ function ProjectRow(props: { project: Project }) {
                 {info()!.dirty ? "*" : ""}
                 <Show when={info()!.ahead || info()!.behind}> ↑{info()!.ahead}↓{info()!.behind}</Show>
                 <Show when={children().length}><span class="primary-tag">primary</span></Show>
+                <Show when={pullRequests.prs[props.project.id]}>
+                  {(pr) => <span class={`primary-tag pr-${prLabel(pr())}`} title={`${pr().title} (${prLabel(pr())}, checks ${pr().checks})`}>#{pr().number}</span>}
+                </Show>
               </span>
+            </Show>
+            <Show when={store.metaFor(props.project)?.comment && renaming() !== `c:${props.project.id}`}>
+              <span class="project-comment" title={store.metaFor(props.project)!.comment!}>{store.metaFor(props.project)!.comment}</span>
             </Show>
           </span>
           <span class="project-badges">
@@ -297,7 +329,8 @@ export function Sidebar() {
   // Sessions whose project was removed from the sidebar keep running; list them here.
   const orphans = createMemo<SessionInfo[]>((prev) => {
     const known = new Set(store.state.projects.map((p) => p.id));
-    const list = Object.values(store.sessions).filter((s) => !s.project_id || !known.has(s.project_id)).sort((a, b) => a.created_at - b.created_at);
+    const floating = new Set(store.state.floating?.sessions ?? []);
+    const list = Object.values(store.sessions).filter((s) => (!s.project_id || !known.has(s.project_id)) && !floating.has(s.id)).sort((a, b) => a.created_at - b.created_at);
     return sameList(prev, list);
   });
   const cycleFilter = () => {

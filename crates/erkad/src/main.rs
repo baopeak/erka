@@ -8,12 +8,19 @@
 //!   erkad call <method> [json]  raw RPC (automation: session.list/create/input/read…)
 //!   erkad stop [--kill-sessions]  ask the daemon to exit
 //!   erkad bench [opts]     throughput / attach benchmark against a running daemon
+//!   erkad terminal list|read|send|wait …   drive sessions from a script or another agent
+//!   erkad worktree get|set …               this folder's comment / board status
 
 mod agents;
+mod automations;
+mod awake;
 mod bench;
 mod chat;
+mod cli;
 mod client;
 mod daemon;
+mod meta;
+mod oneshot;
 mod persist;
 mod proc_tree;
 mod server;
@@ -59,6 +66,8 @@ fn main() -> Result<()> {
             Ok(())
         }
         Some("bench") => runtime()?.block_on(bench::run(&args[1..])),
+        Some("terminal") => runtime()?.block_on(cli::terminal(&args[1..])),
+        Some("worktree") => runtime()?.block_on(cli::worktree(&args[1..])),
         Some(other) => anyhow::bail!("unknown command `{other}`"),
     }
 }

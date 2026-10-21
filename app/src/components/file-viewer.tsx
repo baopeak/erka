@@ -8,6 +8,7 @@ import { store } from "../lib/store";
 import { onEvent, readFile, writeFile } from "../lib/ipc";
 import { baseExtensions, languageFor } from "../lib/codemirror";
 import { isMac } from "../lib/platform";
+import { CsvView, MermaidView, NotebookView, PdfView, renderMermaidBlocks } from "./rich-viewers";
 import type { FileContent, Project } from "../lib/types";
 
 const EDIT_LIMIT = 5 << 20; // larger files open read-only (first 5 MiB)
@@ -15,23 +16,47 @@ const IMAGE_EXT: Record<string, string> = { png: "image/png", jpg: "image/jpeg",
 
 const ext = (path: string) => path.split(".").pop()?.toLowerCase() ?? "";
 
+type Kind = "image" | "pdf" | "markdown" | "csv" | "notebook" | "mermaid" | "text";
+
+function kindOf(path: string): Kind {
+  const e = ext(path);
+  if (IMAGE_EXT[e]) return "image";
+  if (e === "pdf") return "pdf";
+  if (e === "md" || e === "markdown") return "markdown";
+  if (e === "csv" || e === "tsv") return "csv";
+  if (e === "ipynb") return "notebook";
+  if (e === "mmd" || e === "mermaid") return "mermaid";
+  return "text";
+}
+
+/** Label of the rendered view for kinds that also have an editable source. */
+const RENDERED: Partial<Record<Kind, string>> = { markdown: "Preview", csv: "Table", notebook: "Notebook", mermaid: "Diagram" };
+
 export function FileViewer(props: { project: Project; path: string; line?: number; focused: boolean }) {
-  const kind = () => (IMAGE_EXT[ext(props.path)] ? "image" : ext(props.path) === "md" || ext(props.path) === "markdown" ? "markdown" : "text");
-  const [mode, setMode] = createSignal<"preview" | "edit">(kind() === "markdown" ? "preview" : "edit");
+  const kind = () => kindOf(props.path);
+  // Opening at a line (search hit, go to file) means the source.
+  const [mode, setMode] = createSignal<"rendered" | "source">(RENDERED[kindOf(props.path)] && !props.line ? "rendered" : "source");
   return (
     <div class="viewer">
       <div class="viewer-bar">
         <span class="path" title={props.path}>&lrm;{props.path}</span>
-        <Show when={kind() === "markdown"}>
+        <Show when={RENDERED[kind()]}>
           <div class="toggles">
-            <button class={`toggle${mode() === "preview" ? " on" : ""}`} onClick={() => setMode("preview")}>Preview</button>
-            <button class={`toggle${mode() === "edit" ? " on" : ""}`} onClick={() => setMode("edit")}>Edit</button>
+            <button class={`toggle${mode() === "rendered" ? " on" : ""}`} onClick={() => setMode("rendered")}>{RENDERED[kind()]}</button>
+            <button class={`toggle${mode() === "source" ? " on" : ""}`} onClick={() => setMode("source")}>{kind() === "markdown" ? "Edit" : "Source"}</button>
           </div>
+        </Show>
+        <Show when={kind() === "text" || mode() === "source"}>
+          <button class={`toggle${store.state.settings.wordWrap ? " on" : ""}`} title="Word wrap (Alt+Z)" onClick={() => store.setSettings({ wordWrap: !store.state.settings.wordWrap })}>Wrap</button>
         </Show>
       </div>
       <Switch>
         <Match when={kind() === "image"}><ImageView project={props.project} path={props.path} /></Match>
-        <Match when={kind() === "markdown" && mode() === "preview"}><MarkdownView project={props.project} path={props.path} /></Match>
+        <Match when={kind() === "pdf"}><PdfView project={props.project} path={props.path} /></Match>
+        <Match when={kind() === "markdown" && mode() === "rendered"}><MarkdownView project={props.project} path={props.path} /></Match>
+        <Match when={kind() === "csv" && mode() === "rendered"}><CsvView project={props.project} path={props.path} /></Match>
+        <Match when={kind() === "notebook" && mode() === "rendered"}><NotebookView project={props.project} path={props.path} /></Match>
+        <Match when={kind() === "mermaid" && mode() === "rendered"}><MermaidView project={props.project} path={props.path} /></Match>
         <Match when={true}><TextEditor project={props.project} path={props.path} line={props.line} focused={props.focused} /></Match>
       </Switch>
     </div>
@@ -59,10 +84,12 @@ function ImageView(props: { project: Project; path: string }) {
 
 function MarkdownView(props: { project: Project; path: string }) {
   const [html, setHtml] = createSignal("");
+  let el!: HTMLDivElement;
   const load = async () => {
     const f = await readFile(props.project.path, props.path, 4 << 20).catch(() => null);
     const raw = await marked.parse(f?.text ?? "", { gfm: true, async: true });
     setHtml(DOMPurify.sanitize(raw));
+    if (el.querySelector("code.language-mermaid")) void renderMermaidBlocks(el);
   };
   onMount(() => {
     void load();
@@ -80,13 +107,15 @@ function MarkdownView(props: { project: Project; path: string }) {
     const href = a.getAttribute("href") ?? "";
     if (/^https?:/i.test(href) && (isMac ? e.metaKey : e.ctrlKey)) void openUrl(href);
   };
-  return <div class="markdown" innerHTML={html()} onClick={onClick} />;
+  return <div class="markdown" ref={el} innerHTML={html()} onClick={onClick} />;
 }
 
 function TextEditor(props: { project: Project; path: string; line?: number; focused: boolean }) {
   let host!: HTMLDivElement;
   let view: EditorView | undefined;
   const language = new Compartment();
+  const wrap = new Compartment();
+  const wrapExt = () => (store.state.settings.wordWrap ? EditorView.lineWrapping : []);
   const [file, setFile] = createSignal<FileContent | null>(null);
   const [dirty, setDirty] = createSignal(false);
   const [external, setExternal] = createSignal(false);
@@ -130,6 +159,7 @@ function TextEditor(props: { project: Project; path: string; line?: number; focu
           extensions: [
             baseExtensions({ readOnly: f.truncated, onSave: () => void save() }),
             language.of([]),
+            wrap.of(wrapExt()),
             EditorView.updateListener.of((u) => u.docChanged && setDirty(u.state.doc.toString() !== loadedText)),
           ],
         });
@@ -166,6 +196,7 @@ function TextEditor(props: { project: Project; path: string; line?: number; focu
   });
 
   createEffect(on(() => props.line, (line) => line && goToLine(line), { defer: true }));
+  createEffect(on(() => store.state.settings.wordWrap, () => view?.dispatch({ effects: wrap.reconfigure(wrapExt()) }), { defer: true }));
   createEffect(() => props.focused && queueMicrotask(() => view?.focus()));
 
   return (

@@ -4,7 +4,6 @@
 //! a raw replay (cheap, exact) or an ANSI snapshot produced by [`Vt::snapshot`].
 
 use std::fmt::Write as _;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use alacritty_terminal::event::{Event, EventListener};
@@ -46,17 +45,43 @@ impl EventListener for Collector {
     }
 }
 
-/// The app's theme (Settings → Appearance), set over RPC. Agents probe the background colour
-/// at start to pick their own theme, so answers must match what the views render.
-static LIGHT_THEME: AtomicBool = AtomicBool::new(false);
+/// The palette the app's views render (Settings → Appearance / terminal theme), set over RPC.
+/// Agents probe the background colour at start to pick their own theme, so answers must match.
+static PALETTE: std::sync::RwLock<Palette> = std::sync::RwLock::new(DARK);
 
 pub fn set_light_theme(light: bool) {
-    LIGHT_THEME.store(light, Ordering::Relaxed);
+    *PALETTE.write().unwrap_or_else(|e| e.into_inner()) = if light { LIGHT } else { DARK };
+}
+
+/// A terminal colour theme: `#rrggbb` strings for the 16 ANSI colours, foreground, background
+/// and cursor. Anything missing or unparsable keeps the base (dark / light) colour.
+pub fn set_palette(light: bool, colors: &serde_json::Value) {
+    let mut p = if light { LIGHT } else { DARK };
+    let hex = |v: Option<&serde_json::Value>| -> Option<Rgb3> {
+        let s = v?.as_str()?.strip_prefix('#')?;
+        if s.len() != 6 {
+            return None;
+        }
+        let n = u32::from_str_radix(s, 16).ok()?;
+        Some(((n >> 16) as u8, (n >> 8) as u8, n as u8))
+    };
+    if let Some(list) = colors.get("ansi").and_then(serde_json::Value::as_array) {
+        for (i, c) in list.iter().take(16).enumerate() {
+            if let Some(rgb) = hex(Some(c)) {
+                p.ansi[i] = rgb;
+            }
+        }
+    }
+    p.fg = hex(colors.get("foreground")).unwrap_or(p.fg);
+    p.bg = hex(colors.get("background")).unwrap_or(p.bg);
+    p.cursor = hex(colors.get("cursor")).unwrap_or(p.cursor);
+    *PALETTE.write().unwrap_or_else(|e| e.into_inner()) = p;
 }
 
 type Rgb3 = (u8, u8, u8);
 
 /// ANSI 0–15, then foreground, background, cursor.
+#[derive(Clone, Copy)]
 struct Palette {
     ansi: [Rgb3; 16],
     fg: Rgb3,
@@ -91,7 +116,7 @@ const LIGHT: Palette = Palette {
 };
 
 fn default_color(index: usize) -> Rgb {
-    let p = if LIGHT_THEME.load(Ordering::Relaxed) { &LIGHT } else { &DARK };
+    let p = *PALETTE.read().unwrap_or_else(|e| e.into_inner());
     let (r, g, b) = match index {
         i if i < 16 => p.ansi[i],
         // NamedColor::Foreground / Background / Cursor
@@ -184,6 +209,49 @@ impl Vt {
             }
             out.push_str(text.trim_end());
             out.push('\n');
+        }
+        out
+    }
+
+    /// Plain text of the last `lines` lines (scrollback included), wrapped rows joined: what a
+    /// person would copy. Used by `session.read`, *Copy context* and hand-offs.
+    pub fn text_tail(&self, lines: usize) -> String {
+        let grid = self.term.grid();
+        let cols = grid.columns();
+        let screen = grid.screen_lines() as i32;
+        // The screen's trailing blank rows are not content.
+        let mut last = screen - 1;
+        while last > 0 && visible_len(&grid[Line(last)], cols) == 0 {
+            last -= 1;
+        }
+        // Walk back `lines` logical lines: a row continues the one above when that row wraps.
+        let top = -(grid.history_size() as i32);
+        let mut first = last;
+        let mut counted = 1;
+        while first > top {
+            let above_wraps = grid[Line(first - 1)][Column(cols - 1)].flags.contains(Flags::WRAPLINE);
+            if !above_wraps {
+                if counted == lines {
+                    break;
+                }
+                counted += 1;
+            }
+            first -= 1;
+        }
+        let mut out = String::new();
+        for line in first..=last {
+            let row = &grid[Line(line)];
+            for col in 0..visible_len(row, cols) {
+                let cell = &row[Column(col)];
+                if !cell.flags.intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER) {
+                    out.push(if cell.c == '\0' { ' ' } else { cell.c });
+                }
+            }
+            if !row[Column(cols - 1)].flags.contains(Flags::WRAPLINE) {
+                let trimmed = out.trim_end_matches(' ').len();
+                out.truncate(trimmed);
+                out.push('\n');
+            }
         }
         out
     }
@@ -474,5 +542,24 @@ mod tests {
         let mut vt = Vt::new(80, 24, 100);
         vt.feed(b"\x1b]2;hello\x07");
         assert_eq!(vt.title(), Some("hello"));
+    }
+
+    #[test]
+    fn text_tail_joins_wraps_and_reaches_scrollback() {
+        let mut vt = Vt::new(10, 3, 100);
+        for i in 0..6 {
+            vt.feed(format!("line{i}\r\n").as_bytes());
+        }
+        vt.feed(b"abcdefghijKLM");
+        assert_eq!(vt.text_tail(3), "line4\nline5\nabcdefghijKLM\n");
+        assert!(vt.text_tail(100).starts_with("line0\n"));
+    }
+
+    #[test]
+    fn custom_palette_answers_colour_queries() {
+        set_palette(false, &serde_json::json!({"background": "#102030"}));
+        assert_eq!(default_color(257), Rgb { r: 0x10, g: 0x20, b: 0x30 });
+        set_light_theme(false);
+        assert_eq!(default_color(257), Rgb { r: 0x0e, g: 0x11, b: 0x17 });
     }
 }

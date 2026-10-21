@@ -3,6 +3,7 @@
 import { For, Show, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 import { createStore, produce, reconcile } from "solid-js/store";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { setSearchFolder } from "./search-panel";
 import { store } from "../lib/store";
 import { createEntry, deleteEntry, listDir, onEvent, renameEntry, revealEntry } from "../lib/ipc";
 import { gitState } from "../lib/git-state";
@@ -151,6 +152,7 @@ export function FileTree(props: { project: Project; api?: (api: FileTreeApi) => 
       items.push(
         null,
         { label: "Insert Path into Terminal", run: () => { const v = focusedTerminal(); if (v) { v.paste(entry.path.includes(" ") ? `"${entry.path}" ` : entry.path + " "); v.focus(); } } },
+        ...(entry.is_dir ? [{ label: "Find in Folder…", run: () => { setSearchFolder(entry.path); store.showRightPanel("search"); } }] : []),
         { label: "Copy Relative Path", run: () => void writeText(entry.path) },
         { label: "Copy Path", run: () => void writeText(joinPath(root(), entry.path)) },
         { label: isMac ? "Reveal in Finder" : "Reveal in Explorer", run: () => void revealEntry(root(), entry.path) },

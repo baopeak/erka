@@ -5,11 +5,12 @@
 // never sent to the terminal, so plain Cmd chords are safe.
 import { open } from "@tauri-apps/plugin-dialog";
 import { store } from "./store";
-import { cyclePane } from "./layout";
+import { allPanes, cyclePane } from "./layout";
 import { chordLabel, isMac } from "./platform";
 import { allViews, peekView, setAppShortcutMatcher, setOverlayCheck } from "./terminal-host";
 import { navBack, navForward } from "./nav-history";
 import { addExistingWorktrees } from "./worktrees";
+import { openWorktreeDialog } from "../components/worktree-dialog";
 import type { SessionKind } from "./types";
 
 export interface Command {
@@ -102,6 +103,27 @@ export const commands: Command[] = [
     when: () => store.overlay() === null,
   },
   { id: "settings", label: "Settings", win: "mod+,", mac: "mod+,", run: () => store.openSettings() },
+  { id: "floating.toggle", label: "Toggle Floating Terminal", win: "mod+shift+`", mac: "mod+alt+a", run: () => store.toggleFloating(), when: () => store.state.settings.floatingTerminal },
+  { id: "inbox", label: "Show Activity & Notifications", run: () => window.dispatchEvent(new CustomEvent("erka:inbox")) },
+  {
+    id: "editor.wordWrap", label: "Toggle Word Wrap", win: "alt+z", mac: "alt+z",
+    run: () => store.setSettings({ wordWrap: !store.state.settings.wordWrap }),
+    // Only with an editor focused: terminals keep Alt+Z.
+    when: () => { const f = focusedPane(); return !!f && findInTab(f.tab, f.paneId)?.kind === "file"; },
+  },
+  {
+    id: "tabs.closeEditors", label: "Close All Editor Tabs", win: "mod+alt+w", mac: "mod+alt+w", when: hasProject,
+    run: () => {
+      const p = pid();
+      if (!p) return;
+      for (const tab of [...store.workspace(p).tabs]) {
+        for (const pane of allPanes(tab.root)) if (pane.kind === "file" || pane.kind === "diff") void store.closePane(p, tab.id, pane.id);
+      }
+    },
+  },
+  { id: "worktree.new", label: "New Worktree…", when: () => { const a = store.activeProject(); const repo = a?.parentId ?? a?.id; return !!repo && !!store.projectInfo[repo]?.is_repo; }, run: () => { const a = store.activeProject()!; openWorktreeDialog(a.parentId ?? a.id); } },
+  { id: "project.sleep", label: "Sleep Project (stop agents, resume on open)", when: hasProject, run: () => void store.sleepProject(pid()!) },
+  { id: "automations", label: "Scheduled Automations…", run: () => store.openSettings("automations") },
   // Alt+Shift+Arrow, not Alt+Arrow: shells use Alt+Arrow for word movement.
   { id: "nav.back", label: "Go Back", win: "shift+alt+arrowleft", mac: "mod+alt+arrowleft", run: navBack, when: () => hasProject() && store.overlay() === null },
   { id: "nav.forward", label: "Go Forward", win: "shift+alt+arrowright", mac: "mod+alt+arrowright", run: navForward, when: () => hasProject() && store.overlay() === null },
@@ -155,6 +177,7 @@ export function eventChord(e: KeyboardEvent): string {
   else if (e.code === "Equal") key = "=";
   else if (e.code === "Minus") key = "-";
   else if (e.code === "Comma") key = ",";
+  else if (e.code === "Backquote") key = "`";
   else if (/^Key[A-Z]$/.test(e.code)) key = e.code.slice(3).toLowerCase();
   // Numpad keys by name: "+" itself would be read as a separator.
   else if (/^Numpad/.test(e.code)) key = e.code.toLowerCase();

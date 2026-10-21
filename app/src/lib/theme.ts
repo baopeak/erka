@@ -1,4 +1,5 @@
 import type { ITheme } from "@xterm/xterm";
+import { findTerminalTheme, toXtermTheme } from "./terminal-themes";
 
 /**
  * Terminal palette. Keep in sync with `default_color` in crates/erkad/src/vt.rs — the daemon
@@ -61,7 +62,12 @@ export const terminalThemeLight: ITheme = {
   scrollbarSliderActiveBackground: "rgba(0,0,0,0.25)",
 };
 
-export const terminalThemeFor = (theme: "dark" | "light" | undefined) => (theme === "light" ? terminalThemeLight : terminalTheme);
+/** The terminal palette for the app theme and the chosen terminal colour theme. */
+export function terminalThemeFor(theme: "dark" | "light" | undefined, terminal?: string): ITheme {
+  const custom = findTerminalTheme(terminal);
+  if (custom) return toXtermTheme(custom);
+  return theme === "light" ? terminalThemeLight : terminalTheme;
+}
 
 export const projectColors = ["#6cb6ff", "#c592ff", "#8bd58b", "#f2c96d", "#ff8f9c", "#5fd7d7", "#ffb86c", "#a8b3ff"];
 

@@ -11,8 +11,12 @@ use parking_lot::{Mutex, RwLock};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::agents;
+use crate::agents::{self, Resume};
+use crate::automations::{Automation, Automations};
+use crate::awake::{self, Awake};
 use crate::chat::ChatSession;
+use crate::meta::MetaStore;
+use crate::status::Status;
 use crate::persist::{SavedSession, Store};
 use crate::session::{json_out, now_millis, ClientTx, Session, SessionInfo, SessionSpec};
 use crate::status::hook_event_status;
@@ -66,6 +70,10 @@ pub struct Daemon {
     pub exe: PathBuf,
     meta_dirty: AtomicBool,
     pub shutdown: tokio::sync::Notify,
+    workspace_meta: Mutex<MetaStore>,
+    automations: Mutex<Automations>,
+    awake: Awake,
+    awake_mode: Mutex<awake::Mode>,
 }
 
 #[derive(Deserialize)]
@@ -92,6 +100,9 @@ struct CreateParams {
     /// Chat mode: spawn this argv with piped stdio instead of a PTY.
     #[serde(default)]
     chat_argv: Option<Vec<String>>,
+    /// First message for an agent (as an argument, or typed once it is ready).
+    #[serde(default)]
+    prompt: Option<String>,
 }
 
 fn default_kind() -> String {
@@ -133,11 +144,79 @@ impl Daemon {
             next_handle: AtomicU32::new(1),
             clients: Mutex::new(HashMap::new()),
             store: Store::new(&data_dir),
+            workspace_meta: Mutex::new(MetaStore::load(&data_dir)),
+            automations: Mutex::new(Automations::load(&data_dir)),
+            awake: Awake::new(),
+            awake_mode: Mutex::new(awake::Mode::Off),
             data_dir,
             exe,
             meta_dirty: AtomicBool::new(false),
             shutdown: tokio::sync::Notify::new(),
         })
+    }
+
+    /// What `restart` resumes: the known conversation, else (agents that report no id) the
+    /// folder's most recent one.
+    fn resume_for(spec: &SessionSpec) -> Resume<'_> {
+        match spec.agent_session_id.as_deref() {
+            Some(id) => Resume::Id(id),
+            None if !matches!(spec.kind.as_str(), "claude" | "codex")
+                && agents::preset_for(&spec.kind).is_some_and(|p| !p.resume_latest.is_empty()) =>
+            {
+                Resume::Latest
+            }
+            None => Resume::None,
+        }
+    }
+
+    /// Starts the automation's agent with its prompt and records the run.
+    pub fn run_automation(&self, id: &str) -> Result<SessionInfo> {
+        let a = self.automations.lock().list.iter().find(|a| a.id == id).cloned().ok_or_else(|| anyhow!("no automation {id}"))?;
+        let result = self.create(json!({
+            "kind": a.kind,
+            "cwd": a.cwd,
+            "project_id": a.project_id,
+            "name": a.name,
+            "args": a.args,
+            "prompt": a.prompt,
+        }));
+        let (session, error) = match &result {
+            Ok(info) => (Some(info.spec.id.clone()), None),
+            Err(e) => (None, Some(format!("{e:#}"))),
+        };
+        self.automations.lock().record(id, now_millis(), session.clone(), error.clone());
+        self.broadcast("automation.ran", json!({"id": id, "name": a.name, "session_id": session, "error": error}));
+        result
+    }
+
+    /// Answers on `tx` once the one-shot run finishes (see `oneshot.rs`).
+    fn agent_run(&self, tx: &ClientTx, id: &Value, params: &Value) -> Result<()> {
+        let kind = params.get("kind").and_then(Value::as_str).unwrap_or("claude").to_string();
+        let prompt = param(params, "prompt")?.as_str().unwrap_or_default().to_string();
+        let cwd = params.get("cwd").and_then(Value::as_str).unwrap_or(".").to_string();
+        let timeout = Duration::from_secs(params.get("timeout_s").and_then(Value::as_u64).unwrap_or(180).clamp(5, 900));
+        let (tx, id) = (tx.clone(), id.clone());
+        std::thread::Builder::new().name("erka-oneshot".into()).spawn(move || {
+            let reply = match crate::oneshot::run(&kind, &prompt, &cwd, timeout) {
+                Ok(text) => json!({"id": id, "result": {"text": text}}),
+                Err(e) => json!({"id": id, "error": {"message": format!("{e:#}")}}),
+            };
+            let _ = tx.send(json_out(&reply));
+        })?;
+        Ok(())
+    }
+
+    /// Holds the wake request while the mode asks for it (called from the ticker).
+    fn update_awake(&self) {
+        let want = match *self.awake_mode.lock() {
+            awake::Mode::Off => false,
+            awake::Mode::Always => true,
+            awake::Mode::Agents => self.sessions.read().values().any(|e| {
+                let info = e.info();
+                info.status == Status::Working && info.spec.kind != "shell"
+            }),
+        };
+        self.awake.set(want);
     }
 
     pub fn register_client(&self, id: u64, tx: ClientTx) {
@@ -210,13 +289,8 @@ impl Daemon {
             chat.spawn(&agents::platform_argv(argv)?)?;
             Entry::Chat(chat)
         } else {
-            let launch = agents::build_launch(
-                &spec.kind,
-                &spec.args,
-                spec.agent_session_id.as_deref(),
-                &self.exe,
-                &self.data_dir,
-            )?;
+            let resume = spec.agent_session_id.as_deref().map_or(Resume::None, Resume::Id);
+            let launch = agents::build_launch(&spec.kind, &spec.args, resume, p.prompt.as_deref(), &self.exe, &self.data_dir)?;
             let session = Session::new(handle, spec, p.cols, p.rows);
             session.spawn(&launch)?;
             Entry::Term(session)
@@ -232,13 +306,7 @@ impl Daemon {
         let Entry::Term(session) = self.entry(handle)? else { bail!("chat sessions cannot be restarted") };
         anyhow::ensure!(!session.is_alive(), "session is still running");
         let spec = session.spec.lock().clone();
-        let launch = agents::build_launch(
-            &spec.kind,
-            &spec.args,
-            spec.agent_session_id.as_deref(),
-            &self.exe,
-            &self.data_dir,
-        )?;
+        let launch = agents::build_launch(&spec.kind, &spec.args, Self::resume_for(&spec), None, &self.exe, &self.data_dir)?;
         session.ingest(b"\x1b[0m\x1b[2J\x1b[3J\x1b[H");
         session.spawn(&launch)?;
         Ok(session.info())
@@ -382,9 +450,24 @@ impl Daemon {
     pub async fn ticker(self: Arc<Self>) {
         let mut interval = tokio::time::interval(Duration::from_millis(250));
         let mut last_persist = Instant::now();
+        let mut last_schedule = Instant::now();
         loop {
             interval.tick().await;
             let now = Instant::now();
+            if now.duration_since(last_schedule) >= Duration::from_secs(10) {
+                last_schedule = now;
+                self.update_awake();
+                let due = self.automations.lock().due(now_millis());
+                for id in due {
+                    let me = self.clone();
+                    let _ = tokio::task::spawn_blocking(move || {
+                        if let Err(e) = me.run_automation(&id) {
+                            tracing::warn!("automation {id}: {e:#}");
+                        }
+                    })
+                    .await;
+                }
+            }
             let entries: Vec<Entry> = self.sessions.read().values().cloned().collect();
             for entry in entries {
                 let changed = match &entry {
@@ -429,9 +512,65 @@ impl Daemon {
                 "sessions": self.sessions.read().len(),
             }),
             "daemon.set_theme" => {
-                crate::vt::set_light_theme(params.get("theme").and_then(Value::as_str) == Some("light"));
+                let light = params.get("theme").and_then(Value::as_str) == Some("light");
+                match params.get("palette").filter(|p| p.is_object()) {
+                    Some(palette) => crate::vt::set_palette(light, palette),
+                    None => crate::vt::set_light_theme(light),
+                }
                 json!({})
             }
+            "daemon.set_awake" => {
+                *self.awake_mode.lock() = awake::Mode::parse(params.get("mode").and_then(Value::as_str).unwrap_or("off"));
+                self.update_awake();
+                json!({"held": self.awake.held()})
+            }
+            "agent.presets" => {
+                let installed = agents::installed_presets();
+                json!(agents::PRESETS
+                    .iter()
+                    .map(|p| json!({
+                        "id": p.id,
+                        "label": p.label,
+                        "bin": p.bin,
+                        "yolo": p.yolo,
+                        "resume_latest": !p.resume_latest.is_empty(),
+                        "installed": installed.contains(&p.id),
+                    }))
+                    .collect::<Vec<_>>())
+            }
+            "agent.run" => {
+                self.agent_run(tx, id, &params)?;
+                return Ok(None);
+            }
+            "meta.list" => serde_json::to_value(&self.workspace_meta.lock().map)?,
+            "meta.get" => {
+                let path = param(&params, "path")?.as_str().unwrap_or_default();
+                match self.workspace_meta.lock().find(path) {
+                    Some((key, m)) => json!({"path": key, "comment": m.comment, "status": m.status, "updated_at": m.updated_at}),
+                    None => Value::Null,
+                }
+            }
+            "meta.set" => {
+                let path = param(&params, "path")?.as_str().unwrap_or_default();
+                let opt = |k: &str| params.get(k).map(|v| v.as_str().unwrap_or(""));
+                let (key, m) = self.workspace_meta.lock().set(path, opt("comment"), opt("status"))?;
+                let v = json!({"path": key, "comment": m.comment, "status": m.status, "updated_at": m.updated_at});
+                self.broadcast("meta.updated", v.clone());
+                v
+            }
+            "automation.list" => serde_json::to_value(&self.automations.lock().list)?,
+            "automation.save" => {
+                let a: Automation = serde_json::from_value(params).context("automation")?;
+                let saved = self.automations.lock().upsert(a)?;
+                self.broadcast("automation.changed", json!({}));
+                serde_json::to_value(saved)?
+            }
+            "automation.delete" => {
+                self.automations.lock().remove(param(&params, "id")?.as_str().unwrap_or_default())?;
+                self.broadcast("automation.changed", json!({}));
+                json!(true)
+            }
+            "automation.run" => serde_json::to_value(self.run_automation(param(&params, "id")?.as_str().unwrap_or_default())?)?,
             "daemon.shutdown" => {
                 if params.get("kill_sessions").and_then(Value::as_bool).unwrap_or(false) {
                     for e in self.sessions.read().values() {
@@ -501,7 +640,14 @@ impl Daemon {
             "session.restart" => serde_json::to_value(self.restart(handle_of(&params)?)?)?,
             "session.update" => serde_json::to_value(self.update_spec(handle_of(&params)?, &params)?)?,
             "session.read" => match self.entry(handle_of(&params)?)? {
-                Entry::Term(s) => json!({"text": s.screen_text(), "title": s.title()}),
+                Entry::Term(s) => {
+                    // `lines`: that many lines including scrollback; default the visible screen.
+                    let text = match params.get("lines").and_then(Value::as_u64) {
+                        Some(n) => s.text_tail(n.clamp(1, crate::session::SCROLLBACK as u64) as usize),
+                        None => s.screen_text(),
+                    };
+                    json!({"text": text, "title": s.title()})
+                }
                 Entry::Chat(_) => bail!("session.read is for terminal sessions"),
             },
             "chat.close_stdin" => {

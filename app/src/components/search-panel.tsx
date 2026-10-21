@@ -1,7 +1,11 @@
-import { For, Show, createMemo, createSignal, onMount } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, on, onMount } from "solid-js";
 import { store } from "../lib/store";
 import { searchText, type TextHit } from "../lib/ipc";
+import { Icon } from "./icons";
 import type { Project } from "../lib/types";
+
+/** Folder the next search is limited to ("Find in Folder" in the explorer); "" = whole project. */
+export const [searchFolder, setSearchFolder] = createSignal("");
 
 export function SearchPanel(props: { project: Project }) {
   let input!: HTMLInputElement;
@@ -11,6 +15,8 @@ export function SearchPanel(props: { project: Project }) {
   const [result, setResult] = createSignal<{ hits: TextHit[]; truncated: boolean; files_searched: number } | null>(null);
   const [busy, setBusy] = createSignal(false);
   onMount(() => input.focus());
+  // Find in Folder while the panel is already open: search again in the new scope.
+  createEffect(on(searchFolder, () => { input.focus(); if (query().trim()) void run(); }, { defer: true }));
 
   let seq = 0;
   const run = async () => {
@@ -19,7 +25,7 @@ export function SearchPanel(props: { project: Project }) {
     const mine = ++seq;
     setBusy(true);
     try {
-      const r = await searchText(props.project.path, q, regex(), caseSensitive());
+      const r = await searchText(props.project.path, q, regex(), caseSensitive(), searchFolder() || undefined);
       if (mine === seq) setResult(r);
     } catch (e) {
       if (mine === seq) store.notify(String(e));
@@ -51,6 +57,9 @@ export function SearchPanel(props: { project: Project }) {
         <div class="toggles">
           <button class={`toggle${caseSensitive() ? " on" : ""}`} title="Match case" onClick={() => { setCase(!caseSensitive()); void run(); }}>Aa</button>
           <button class={`toggle${regex() ? " on" : ""}`} title="Regular expression" onClick={() => { setRegex(!regex()); void run(); }}>.*</button>
+          <Show when={searchFolder()}>
+            <span class="chip" title="Searching only this folder">in {searchFolder()}/ <button class="icon-btn mini" title="Search the whole project" onClick={() => { setSearchFolder(""); void run(); }}><Icon name="close" size={9} /></button></span>
+          </Show>
           <span style={{ flex: 1 }} />
           <Show when={busy()}><span class="muted" style={{ padding: 0 }}>searching…</span></Show>
           <Show when={result() && !busy()}>

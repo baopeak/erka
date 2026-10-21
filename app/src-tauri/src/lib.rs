@@ -4,12 +4,16 @@
 
 mod agent_history;
 mod daemon_client;
+mod external_editor;
 mod fs_ops;
 mod git;
+mod git_sync;
+mod github;
 mod search;
 mod sys_stats;
 mod usage;
 mod watcher;
+mod worktree_files;
 
 use std::sync::Arc;
 
@@ -156,6 +160,18 @@ pub fn run() {
             git::git_worktree_prune,
             git::git_show_file,
             git::git_orphan_commits,
+            git_sync::git_remote,
+            git_sync::git_repo_state,
+            git_sync::git_abort,
+            git_sync::git_branch_delete,
+            git_sync::git_refs,
+            git_sync::git_context,
+            github::gh_pr_status,
+            github::gh_default_branch,
+            github::gh_pr_create,
+            worktree_files::worktree_materialize,
+            external_editor::editors_list,
+            external_editor::editor_open,
             sys_stats::processes_alive,
             agent_history::agent_latest_session,
             agent_history::agent_claude_transcript,

@@ -72,7 +72,7 @@ export class TermView {
       cursorStyle: "bar",
       cursorWidth: 2,
       allowProposedApi: true,
-      theme: terminalThemeFor(settings.theme),
+      theme: terminalThemeFor(settings.theme, settings.terminalTheme),
       macOptionIsMeta: true,
       drawBoldTextInBrightColors: false,
       rescaleOverlappingGlyphs: true,
@@ -301,7 +301,7 @@ export class TermView {
       lineHeight: s.lineHeight,
       cursorBlink: s.cursorBlink,
       scrollback: s.scrollback,
-      theme: terminalThemeFor(s.theme),
+      theme: terminalThemeFor(s.theme, s.terminalTheme),
     });
     // Renderer switch applies now (hidden views keep their context, so no remount does it).
     if (!s.webgl) this.releaseWebgl();

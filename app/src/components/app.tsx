@@ -17,14 +17,25 @@ import { WorktreeDialog } from "./worktree-dialog";
 import { NewSessionMenu } from "./new-session-menu";
 import { Welcome } from "./welcome";
 import { ContextMenuHost } from "./context-menu";
+import { FloatingTerminal } from "./floating-terminal";
+import { daemonPalette, findTerminalTheme } from "../lib/terminal-themes";
 
 /** Tells the daemon which palette to answer terminal colour queries with. */
 function syncDaemonTheme() {
-  if (store.connected()) void daemon("daemon.set_theme", { theme: store.state.settings.theme ?? "dark" }).catch(() => {});
+  if (!store.connected()) return;
+  const custom = findTerminalTheme(store.state.settings.terminalTheme);
+  const theme = custom ? (custom.dark ? "dark" : "light") : store.state.settings.theme ?? "dark";
+  void daemon("daemon.set_theme", { theme, palette: custom ? daemonPalette(custom) : undefined }).catch(() => {});
 }
 
 export function App() {
   createEffect(syncDaemonTheme);
+  createEffect(() => {
+    const mode = store.state.settings.keepAwake ?? "off";
+    if (store.connected()) void daemon("daemon.set_awake", { mode }).catch(() => {});
+  });
+  // Hibernated agents resume as soon as their pane is on screen.
+  createEffect(() => store.wakeVisible());
   // Theme, density and interface scale are plain CSS switches on the root element.
   createEffect(() => {
     const s = store.state.settings;
@@ -39,6 +50,10 @@ export function App() {
     }
     root.dataset.density = s.density ?? "comfortable";
     root.style.setProperty("--ui-scale", String(s.uiScale ?? 1));
+    // The terminal area takes the terminal colour theme's background.
+    const custom = findTerminalTheme(s.terminalTheme);
+    if (custom) root.style.setProperty("--terminal-bg", custom.colors[0]);
+    else root.style.removeProperty("--terminal-bg");
   });
   onMount(() => {
     // Files dropped from Explorer/Finder onto a terminal paste their (quoted) paths.
@@ -81,6 +96,9 @@ export function App() {
           {(o) => <Palette scope={o === "quickopen" ? "files" : o === "jump" ? "sessions" : "all"} />}
         </Match>
       </Switch>
+      <Show when={store.state.settings.floatingTerminal && store.state.floating?.open}>
+        <FloatingTerminal />
+      </Show>
       <ContextMenuHost />
       <Tips />
       <Show when={store.toast()}>

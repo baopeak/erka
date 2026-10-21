@@ -11,6 +11,7 @@ import { quickCommandsFor, runQuickCommand } from "../lib/quick-commands";
 import { Icon, KindGlyph } from "./icons";
 import { KeyHints } from "./key-hints";
 import { StatusDot } from "./sidebar";
+import { openWorktreeDialog } from "./worktree-dialog";
 import type { Project, SessionInfo } from "../lib/types";
 
 export type SearchScope = "all" | "commands" | "sessions" | "files" | "settings";
@@ -194,6 +195,13 @@ export function Palette(props: { scope: SearchScope }) {
         .sort((a, b) => b.m!.score - a.m!.score)
         .map((x) => projectItem(x.p, x.m!.marks));
       if (projects.length) out.push({ title: "Projects", items: projects.slice(0, sc === "all" ? 5 : 50) });
+      // Nothing by that name: offer to create it as a worktree of the current repository.
+      const active = store.activeProject();
+      const repo = active?.parentId ? projectOf(active.parentId) : active;
+      const exact = store.state.projects.some((p) => p.name.toLowerCase() === q.toLowerCase());
+      if (q && repo && store.projectInfo[repo.id]?.is_repo && !exact && sc === "sessions") {
+        out.push({ title: "Create", items: [{ key: "new-wt", label: `Create worktree “${q}”`, hint: `in ${repo.name}`, icon: () => <Icon name="branch" size={14} />, run: () => openWorktreeDialog(repo.id, q) }] });
+      }
     }
     if ((sc === "all" || sc === "files") && project()) {
       const items = files().map((h) => fileItem(project()!.id, h.path, h.indices));

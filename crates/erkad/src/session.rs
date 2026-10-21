@@ -12,7 +12,7 @@ use std::collections::{BTreeMap, VecDeque};
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use base64::Engine as _;
@@ -22,7 +22,7 @@ use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, PtySize};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::agents::Launch;
+use crate::agents::{Launch, TypedPrompt};
 use crate::proc_tree::ProcTree;
 use crate::status::{Activity, Status, MIN_WORK_FOR_UNREAD};
 use crate::vt::{Vt, VtEvent};
@@ -161,7 +161,23 @@ struct Inner {
     last_activity: u64,
     /// `last_activity` as of the last broadcast; output alone re-broadcasts at most every 30 s.
     broadcast_activity: u64,
+    /// A first prompt typed once the program has started and gone quiet (agents that take no
+    /// prompt argument, automations, hand-offs).
+    pending_prompt: Option<PendingPrompt>,
+    last_output: Option<Instant>,
 }
+
+struct PendingPrompt {
+    prompt: TypedPrompt,
+    since: Instant,
+    /// Text sent, Enter still to send (a separate write: TUIs treat a fast Enter as pasted text).
+    pasted: bool,
+}
+
+/// Wait at least this long after spawn, and for this much quiet, before typing a prompt.
+const PROMPT_MIN_WAIT: Duration = Duration::from_millis(2500);
+const PROMPT_QUIET: Duration = Duration::from_millis(1200);
+const PROMPT_MAX_WAIT: Duration = Duration::from_secs(30);
 
 pub struct Session {
     pub handle: u32,
@@ -199,6 +215,8 @@ impl Session {
                 working_since: None,
                 last_activity: 0,
                 broadcast_activity: 0,
+                pending_prompt: None,
+                last_output: None,
             }),
         })
     }
@@ -284,6 +302,9 @@ impl Session {
             let _ = ctl_tx.send(Ctl::Close);
             me.on_exit(generation, code);
         })?;
+        if let Some(prompt) = &launch.typed_prompt {
+            self.queue_prompt(prompt.clone());
+        }
         Ok(())
     }
 
@@ -311,6 +332,7 @@ impl Session {
         g.seq += bytes.len() as u64;
         g.ring.push(bytes);
         g.activity.on_output(now);
+        g.last_output = Some(now);
         g.last_activity = now_millis();
         let handle = self.handle;
         if !g.subs.is_empty() {
@@ -458,6 +480,40 @@ impl Session {
         self.inner.lock().vt.screen_text()
     }
 
+    /// The last `lines` lines of text, scrollback included.
+    pub fn text_tail(&self, lines: usize) -> String {
+        self.inner.lock().vt.text_tail(lines)
+    }
+
+    /// Types `text` as a prompt once the program is ready (see [`PendingPrompt`]).
+    pub fn queue_prompt(&self, prompt: TypedPrompt) {
+        self.inner.lock().pending_prompt = Some(PendingPrompt { prompt, since: Instant::now(), pasted: false });
+    }
+
+    fn deliver_prompt(g: &mut Inner, now: Instant) {
+        let Some(p) = &mut g.pending_prompt else { return };
+        let Some(pty) = &g.pty else {
+            g.pending_prompt = None;
+            return;
+        };
+        if p.pasted {
+            if now.duration_since(p.since) >= Duration::from_millis(400) {
+                let _ = pty.ctl.send(Ctl::Input(b"\r".to_vec()));
+                g.pending_prompt = None;
+            }
+            return;
+        }
+        let waited = now.duration_since(p.since);
+        let quiet = g.last_output.map_or(waited, |t| now.duration_since(t));
+        if (waited >= PROMPT_MIN_WAIT && quiet >= PROMPT_QUIET) || waited >= PROMPT_MAX_WAIT {
+            let body = p.prompt.text.replace("\r\n", "\n");
+            let bytes = if p.prompt.paste { format!("\x1b[200~{body}\x1b[201~") } else { body.replace('\n', "\r") };
+            let _ = pty.ctl.send(Ctl::Input(bytes.into_bytes()));
+            p.pasted = true;
+            p.since = now;
+        }
+    }
+
     pub fn info(&self) -> SessionInfo {
         let g = self.inner.lock();
         self.info_locked(&g, g.last_status)
@@ -485,6 +541,9 @@ impl Session {
     /// Recomputes status; returns the new info when anything user-visible changed.
     pub fn tick(&self, now: Instant) -> Option<SessionInfo> {
         let mut g = self.inner.lock();
+        if g.pending_prompt.is_some() {
+            Self::deliver_prompt(&mut g, now);
+        }
         let status = g.activity.status(now);
         if status == Status::Working && g.last_status != Status::Working {
             g.working_since = Some(now);
