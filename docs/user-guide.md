@@ -93,9 +93,112 @@ The **workspace board** (`Ctrl+Shift+J` / `⌘⇧J`, or the board icon in the si
 project and worktree as a card in *Todo / In progress / Review / Done* with the agents running
 in it; drag cards between columns, pin important ones, click to open.
 
+`.erka.yaml` can also bring ignored files into new worktrees (a fresh checkout lacks them):
+
+```yaml
+copy:             # private copies (also read from .worktreeinclude, one path per line)
+  - .env
+link:             # shared with the repository (symlink; a junction on Windows)
+  - node_modules
+```
+
+Only literal paths that exist in the repository and are ignored by git qualify; copies are
+capped at 2 GiB / 50,000 files per worktree. The *From* field suggests local and remote
+branches and tags (a commit id works too). After **Remove worktree…** a notice offers to
+delete its branch (`git branch -d`; when it has unmerged commits Erka asks before `-D`).
+In search, typing a name that matches nothing offers **Create worktree "…"**.
+
+A worktree (or any folder) can carry a **comment** — what it is doing right now — and a board
+status. Set them from the sidebar menu (*Add comment…*) or let an agent set them:
+
+```
+erkad worktree set --comment "reproduced the bug; testing a fix" --status progress
+erkad worktree get
+```
+
+The comment shows under the sidebar row and on its board card.
+
 When an agent exits, the pane offers **Restart** / **Resume** (agents resume their
 conversation). Desktop notifications fire when a session you are not looking at finishes or
 needs input.
+
+### Agents
+
+Besides Claude Code, Codex and OMP, Erka knows 20 more agent CLIs (Gemini, Cursor CLI,
+OpenCode, GitHub Copilot, Grok, Qwen Code, Droid, Aider, Amp, Goose, Kimi, Crush, Cline, Kiro,
+Continue, Devin, Auggie, CodeBuddy, Mistral Vibe, Pi). Installed ones appear in the launchers;
+Settings → Agents shows them all, hides ones you do not want and edits their arguments and
+environment. **Permissions: Yolo** starts agents with their skip-permission flags (agents
+with their own permission mode set keep it). The new-session dialog takes an optional **first
+prompt**; for a terminal it is a startup command.
+
+- **Hand off**: right-click an agent terminal → *Hand Off to …* starts another agent next to
+  it with the end of this session's transcript as its brief.
+- **Hibernation** (Settings → Agents): agents that finished and sat unseen in a background
+  project for N minutes are stopped; they resume their conversation when you open them
+  again. *Sleep* in a project's menu does the same at once.
+- **Keep computer awake**: off, while an agent works, or always (status bar coffee icon).
+
+### Terminals
+
+Right-click a terminal for copy / paste / select all / clear, **Copy Context** (the last 400
+lines as text), splits, your quick commands and hand-offs. Settings → Terminal → *Colour
+theme* offers Dracula, Nord, One Dark, Tokyo Night, Catppuccin, Gruvbox, Solarized and GitHub
+Light (agents are told the same colours when they ask).
+
+The **floating terminal** (`Ctrl+Shift+\`` / `⌘⌥A`, or the status bar) is a shell in your home
+folder, above any project; hide it and it keeps running.
+
+Scripts and agents can drive sessions:
+
+```
+erkad terminal list
+erkad terminal read <session> --lines 80
+erkad terminal send <session> "run the tests" --enter
+erkad terminal wait <session>          # until it stops working
+```
+
+`<session>` is a handle, a session id (prefix) or a session name.
+
+### Activity and notifications
+
+The bell in the status bar lists what happened while you looked elsewhere: agents that
+finished or need you, automation runs, new worktrees — with the agents working right now on
+top. Click an entry to jump there; right-click toggles read. Settings → Notifications can add
+a short chime to desktop notifications.
+
+### Source control and review
+
+The Changes panel pushes (publishing the branch the first time), pulls (fast-forward only)
+and syncs; when the branch and its upstream diverged it offers an explicit **force push with
+lease**. During a merge, rebase, cherry-pick or revert it shows the conflicts with **Abort**
+and **Resolve with AI**. The ✦ button drafts a commit message from the diff (with the agent
+chosen in Settings → Agents → *Agent for AI actions*, run once without a terminal); a failed
+commit offers **Fix with AI**; *Amend* rewrites the last commit.
+
+**Pull requests** (GitHub, through your `gh`): the branch's PR shows with its state and
+checks (also as a chip in the sidebar); *Create pull request…* pushes and opens one, with
+**Generate with AI** for the title and description. Failing checks offer *Fix with AI*.
+
+**Review notes**: in a diff, click the gutter (`+`) to note a line; notes on all files of
+the project collect in a bar above the diff. **Send to agent ▾** sends them as one prompt to
+a running agent or a new one; resolve notes once addressed. `F7` / `Shift+F7` move between
+changes.
+
+### Files
+
+Besides the editor and markdown preview, CSV / TSV files open as a sortable, filterable
+table, PDFs in a viewer, Jupyter notebooks with their outputs, and Mermaid diagrams (`.mmd`
+files and ```` ```mermaid ```` blocks in markdown). `Alt+Z` toggles word wrap. Right-click a
+folder → **Find in Folder…** searches only there. A project's menu opens it in VS Code,
+Cursor, Windsurf, Zed, Sublime Text or IntelliJ IDEA when installed.
+
+### Automations
+
+Settings → Automations runs an agent with a prompt every hour, day, weekday or week (local
+time), in a project. They are stored and started by the session daemon, so they run while
+the window is closed; *Run now* tries one immediately. Runs missed by more than 30 minutes
+(computer asleep) are skipped, not caught up.
 
 ## Keyboard shortcuts
 
@@ -122,6 +225,10 @@ App shortcuts use `Ctrl+Shift` on Windows so plain `Ctrl+letter` keys reach the 
 | Toggle sidebar | Ctrl+Shift+B | ⌘B |
 | Font size + / − / reset | Ctrl+= / Ctrl+- / Ctrl+0 | ⌘= / ⌘- / ⌘0 |
 | Settings | Ctrl+, | ⌘, |
+| Floating terminal | Ctrl+Shift+` | ⌘⌥A |
+| Word wrap (editor focused) | Alt+Z | ⌥Z |
+| Close all editor tabs | Ctrl+Alt+W | ⌘⌥W |
+| Next / previous change (diff) | F7 / Shift+F7 | F7 / ⇧F7 |
 
 Every shortcut can be changed in Settings → Shortcuts (record a key; Erka warns when another
 command or terminal programs use it). When Erka keeps a key from the focused terminal it says
@@ -138,15 +245,16 @@ they do.
 Settings (`Ctrl+,`) is a page with a search box (`Ctrl+F`); `/` in search everything jumps to
 a setting.
 
-- **Agents**: per agent extra arguments (e.g. `--model opus`), permission mode (Claude) or
-  approval policy (Codex) and environment variables (stored in plain text) — used by terminal
-  and chat sessions.
-- **Quick Commands**, **Shortcuts**: see above.
+- **Agents**: permissions (Manual / Yolo); per agent extra arguments (e.g. `--model opus`),
+  permission mode (Claude) or approval policy (Codex) and environment variables (stored in
+  plain text) — used by terminal and chat sessions; which agent CLIs launchers show; the agent
+  for AI actions; hibernation; keep computer awake.
+- **Quick Commands**, **Automations**, **Shortcuts**: see above.
 - **Terminal**: font, size, line height, scrollback, renderer (WebGL / DOM), cursor blink,
-  default shell.
-- **Appearance**: dark or light theme, compact density, interface text size.
-- **Notifications**: desktop notifications, notes about shortcuts kept from the terminal,
-  first-run tips.
+  default shell, colour theme, floating terminal.
+- **Appearance**: dark or light theme, compact density, interface text size, editor word wrap.
+- **Notifications**: desktop notifications and their sound, notes about shortcuts kept from
+  the terminal, first-run tips.
 - **Usage & Resources**: usage and memory meters.
 - **Session Daemon**: status, data folder and log, *Stop daemon & all sessions*.
 
@@ -155,7 +263,8 @@ old file is first copied to `app-state.v<N>.bak.json`.
 
 ## Automation
 
-`erkad call <method> [json]` talks to the running daemon, e.g.
+Besides `erkad terminal …` and `erkad worktree …` (above), `erkad call <method> [json]` talks
+to the running daemon directly, e.g.
 
 ```
 erkad call session.list

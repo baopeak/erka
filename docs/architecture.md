@@ -152,6 +152,34 @@ for their processes (Windows cannot delete a folder in use), then runs `git work
 commit, shown in full, and runs only when the user opts in; approval is remembered per
 repository by the file's hash.
 
+## Daemon services beyond sessions
+
+- **Agent presets** (`agents.rs` `PRESETS`): binary, launch args, skip-permission flags,
+  "continue latest" flags and how a first prompt is passed (argument, flag, or typed). The UI
+  reads them with `agent.presets` (with an installed check) and adds the Yolo flags itself.
+  Agents without hooks restart with their "continue latest" flags.
+- **Typed prompts** (`session.rs` `PendingPrompt`): a prompt for an agent that takes none at
+  launch, or a shell startup command, is written once the program has run ≥ 2.5 s and been
+  quiet for 1.2 s (30 s at most): a bracketed paste for agents, keystrokes for shells, then
+  Enter as a separate write.
+- **One-shot runs** (`oneshot.rs`, `agent.run`): `claude -p` / `codex exec -` with the prompt on
+  stdin, on its own thread; the reply is sent later on the client's channel, so a slow model
+  never blocks that client's ordered request queue.
+- **Workspace notes** (`meta.rs`, `meta.*`, `workspace-meta.json`): comment + board status
+  per canonical folder path; `meta.updated` is broadcast. `erkad worktree get|set` defaults to
+  the git top level of the current folder.
+- **Automations** (`automations.rs`, `automation.*`, `automations.json`): hourly / daily /
+  weekdays / weekly in local time (chrono). The ticker checks every 10 s; a run creates an
+  ordinary session with the prompt and is broadcast as `automation.ran`. Runs missed by more
+  than 30 min are skipped.
+- **Keep awake** (`awake.rs`, `daemon.set_awake`): Windows `SetThreadExecutionState` from one
+  dedicated thread, macOS a `caffeinate -i -w <pid>` child; mode *agents* holds it while any
+  non-shell session is working.
+- **Terminal palette**: `daemon.set_theme` takes an optional palette (16 ANSI + fg/bg/cursor)
+  so colour-query answers match the chosen terminal theme.
+- **CLI** (`cli.rs`): `erkad terminal list|read|send|wait` and `erkad worktree get|set` over
+  the same RPCs.
+
 ## Measured (Windows 10, see `plans/reports/`)
 
 - 20 sessions × 2 MiB output: 40 MiB in 3.9 s through the daemon, 0 sequence gaps.
