@@ -26,7 +26,8 @@ def wait_text(handle, needle, timeout=15):
 
 try:
     run.boot()
-    d.js("const s = window.__erka.store; for (const p of [...s.state.projects]) s.removeProject(p.id); s.addProject(arguments[0]);", project)
+    # Other scenarios may have turned the shortcut notes off in the shared dev state.
+    d.js("const s = window.__erka.store; s.setSettings({ shortcutHints: true }); for (const p of [...s.state.projects]) s.removeProject(p.id); s.addProject(arguments[0]);", project)
     pid = d.js("return window.__erka.store.state.activeProject")
     info = d.js_async("const done = arguments[arguments.length-1]; window.__erka.store.newSession(arguments[0], 'shell').then(done);", pid)
     h = info["handle"]
