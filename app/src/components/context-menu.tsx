@@ -14,13 +14,19 @@ export function openContextMenu(e: MouseEvent, items: MenuItem[]) {
 export function ContextMenuHost() {
   onMount(() => {
     const close = () => setMenu(null);
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && close();
+    // Capture phase: a focused terminal would otherwise swallow Escape and pass it to the agent.
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || !menu()) return;
+      e.preventDefault();
+      e.stopPropagation();
+      close();
+    };
     window.addEventListener("pointerdown", close);
-    window.addEventListener("keydown", onKey);
+    window.addEventListener("keydown", onKey, true);
     window.addEventListener("blur", close);
     onCleanup(() => {
       window.removeEventListener("pointerdown", close);
-      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("keydown", onKey, true);
       window.removeEventListener("blur", close);
     });
   });

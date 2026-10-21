@@ -9,10 +9,19 @@ export function StatusBar() {
   onMount(() => {
     const close = () => setInbox(false);
     const open = () => setInbox(true);
+    // Capture phase, like the context menu: Escape closes the inbox before a terminal sees it.
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || !inbox()) return;
+      e.preventDefault();
+      e.stopPropagation();
+      close();
+    };
     window.addEventListener("pointerdown", close);
+    window.addEventListener("keydown", onKey, true);
     window.addEventListener("erka:inbox", open);
     onCleanup(() => {
       window.removeEventListener("pointerdown", close);
+      window.removeEventListener("keydown", onKey, true);
       window.removeEventListener("erka:inbox", open);
     });
   });
