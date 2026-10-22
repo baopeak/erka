@@ -1,6 +1,6 @@
 # Kelpie rebrand
 
-Status: phases 1–5 done on branch `rebrand/kelpie` (rename, legacy fallbacks, UI rollout, docs, verification); phase 6 (ship) pending.
+Status: done. Shipped in af10e12 (rename + brand), 6291fe0 (macOS path-rewrite fix) and 814586d (cross-platform launch tests); repo renamed to github.com/baopeak/kelpie; CI green on Windows and macOS. Open: README screenshots still show the Erka UI; macOS keychain prompt on reading Erka's secrets unverified.
 
 Verification (2026-10-22): `cargo test` 83 + 1 opt-in keyring test pass; typecheck, i18n, NSIS release build pass; e2e on the release build: smoke 16/16, restart 3/3, phase4 22/22, phase5 23/23, plugins 68/68, parity 74/74 (one flaky Ctrl+C timing check passed on rerun), ssh_hosts 25/25; upgrade simulated on a copy of real Erka data (state, sessions, snapshots, ssh copied; program files, lock, hook settings left behind; no old paths inside).
 
