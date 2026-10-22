@@ -11,6 +11,7 @@ import {
 } from "../../lib/plugins";
 import { Icon } from "../icons";
 import { SettingRow } from "./setting-row";
+import { confirmDialog } from "../../lib/confirm-dialog";
 
 const COUNTS: [keyof NonNullable<PluginManifest["contributes"]>, string, string][] = [
   ["agents", msg("agent"), msg("agents")], ["commands", msg("command"), msg("commands")], ["quickCommands", msg("quick command"), msg("quick commands")],
@@ -93,7 +94,7 @@ export function PluginSettings() {
       try {
         return t("Installed {id}. Review it to enable it.", { id: await pluginInstallFolder(dir) });
       } catch (e) {
-        if (!String(e).includes("already installed") || !confirm(t("{error}. Replace it with this folder?", { error: String(e) }))) throw e;
+        if (!String(e).includes("already installed") || !(await confirmDialog(t("{error}. Replace it with this folder?", { error: String(e) })))) throw e;
         return t("Updated {id}.", { id: await pluginInstallFolder(dir, true) });
       }
     });
@@ -124,7 +125,7 @@ export function PluginSettings() {
                     </Show>
                     <button class="icon-btn" title={t("Show files")} onClick={() => void revealEntry(p.dir, p.file || "kelpie-plugin.json").catch(() => {})}><Icon name="folder" size={13} /></button>
                     <button class="icon-btn" title={t("Remove plugin")} disabled={busy()}
-                      onClick={() => confirm(t("Remove plugin “{name}”? Its folder goes to the trash.", { name: p.manifest?.name ?? p.id })) && void act(() => pluginRemove(p.id))}>
+                      onClick={async () => (await confirmDialog(t("Remove plugin “{name}”? Its folder goes to the trash.", { name: p.manifest?.name ?? p.id }))) && void act(() => pluginRemove(p.id))}>
                       <Icon name="close" size={13} />
                     </button>
                   </div>

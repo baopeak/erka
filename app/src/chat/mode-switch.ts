@@ -17,6 +17,7 @@ import { uid } from "../lib/platform";
 import { HOME_VAR, isAccountAgent, sessionHome } from "../lib/accounts";
 import { t } from "../lib/i18n";
 import type { Pane, Project, SessionInfo, SessionKind, Tab } from "../lib/types";
+import { confirmDialog } from "../lib/confirm-dialog";
 
 export const supportsChat = (kind: string) => kind === "claude" || kind === "codex" || kind === "omp";
 
@@ -135,7 +136,7 @@ export async function switchToChat(project: Project, tab: Tab, pane: Pane) {
 async function doSwitchToChat(project: Project, tab: Tab, pane: Pane) {
   const s = pane.sessionId ? store.sessions[pane.sessionId] : undefined;
   if (!s || !supportsChat(s.kind)) return;
-  if (s.alive && s.status === "working" && !confirm(t("The agent is working. Interrupt it and continue in chat view?"))) return;
+  if (s.alive && s.status === "working" && !(await confirmDialog(t("The agent is working. Interrupt it and continue in chat view?")))) return;
   let conv = s.agent_session_id;
   if (!conv && ambiguous(s)) {
     store.notify(t("This {agent} session has not reported its conversation id yet and other {agent} sessions run in this folder — finish one turn first, then switch.", { agent: s.kind }));
@@ -186,7 +187,7 @@ async function doSwitchToTerminal(project: Project, tab: Tab, pane: Pane) {
   const c = pane.sessionId ? store.sessions[pane.sessionId] : undefined;
   if (!c) return;
   const ctrl = controllers.get(c.id);
-  if (ctrl?.state.busy && !confirm(t("The agent is working. Interrupt it and continue in the terminal?"))) return;
+  if (ctrl?.state.busy && !(await confirmDialog(t("The agent is working. Interrupt it and continue in the terminal?")))) return;
   let conv = ctrl?.state.conversationId ?? c.agent_session_id;
   if (conv === "latest") conv = null;
   const stopped = await stopProcess(c, async () => {

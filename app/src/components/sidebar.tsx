@@ -21,6 +21,7 @@ import { openContextMenu, type MenuItem } from "./context-menu";
 import type { Project, SessionInfo } from "../lib/types";
 import { t, msg } from "../lib/i18n";
 import { openHosts } from "./hosts-page";
+import { confirmDialog } from "../lib/confirm-dialog";
 
 export const STATUS_WORDS = { idle: msg("idle"), working: msg("working"), waiting: msg("waiting"), exited: msg("exited") } as const;
 
@@ -96,9 +97,9 @@ function sessionMenu(s: SessionInfo): MenuItem[] {
   }
   items.push(null, {
     label: s.alive ? t("Stop and close") : t("Close"), danger: true,
-    run: () => {
+    run: async () => {
       const loc = store.paneLocation(s.id);
-      if (s.alive && s.kind !== "shell" && !confirm(t("Stop {name}?", { name: sessionLabel(s) }))) return;
+      if (s.alive && s.kind !== "shell" && !(await confirmDialog(t("Stop {name}?", { name: sessionLabel(s) })))) return;
       if (loc) void store.closePane(loc.projectId, loc.tabId, loc.paneId);
       else void daemon("session.close", { handle: s.handle }).catch((e) => store.notify(String(e)));
     },
@@ -132,7 +133,7 @@ async function confirmRemoveWorktree(p: Project) {
     t("Ignored files in the folder (e.g. .env, build output) are deleted too."),
     check.branch ? t("The branch {branch} is kept.", { branch: check.branch }) : "",
   ].filter(Boolean).join("\n\n");
-  if (!confirm(text)) return;
+  if (!(await confirmDialog(text))) return;
   const repo = store.state.projects.find((x) => x.id === p.parentId);
   try {
     const { leftover } = await removeWorktree(p, { force: check.changes > 0 });
@@ -152,7 +153,7 @@ async function deleteBranch(repoPath: string, branch: string) {
     await gitBranchDelete(repoPath, branch, false);
     store.notify(t("Deleted branch {branch}", { branch }));
   } catch (e) {
-    if (!confirm(t("{error}\n\nThe branch {branch} has commits that are not merged. Delete it anyway? Those commits are then only reachable from the reflog.", { error: String(e), branch }))) return;
+    if (!(await confirmDialog(t("{error}\n\nThe branch {branch} has commits that are not merged. Delete it anyway? Those commits are then only reachable from the reflog.", { error: String(e), branch })))) return;
     await gitBranchDelete(repoPath, branch, true).then(() => store.notify(t("Deleted branch {branch}", { branch })), (err) => store.notify(String(err)));
   }
 }
@@ -189,14 +190,14 @@ function projectMenu(p: Project): MenuItem[] {
     ...(worktree ? [{ label: t("Remove worktree…"), danger: true, run: () => void confirmRemoveWorktree(p) }] : []),
     {
       label: t("Remove from Kelpie"), danger: true,
-      run: () => {
+      run: async () => {
         const kids = store.childrenOf(p.id).length;
         const text = !kids
           ? t("Remove {name} from the sidebar? Files and running sessions are not touched.", { name: p.name })
           : kids === 1
             ? t("Remove {name} and its {n} worktree from the sidebar? Files and running sessions are not touched.", { name: p.name, n: kids })
             : t("Remove {name} and its {n} worktrees from the sidebar? Files and running sessions are not touched.", { name: p.name, n: kids });
-        if (confirm(text)) store.removeProject(p.id);
+        if (await confirmDialog(text)) store.removeProject(p.id);
       },
     },
   ];

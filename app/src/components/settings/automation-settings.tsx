@@ -9,6 +9,7 @@ import { KindGlyph } from "../icons";
 import { SettingRow, Toggle } from "./setting-row";
 import type { Automation } from "../../lib/types";
 import { HOME_VAR, accountsOf, activeAccount, isAccountAgent, type AccountAgent } from "../../lib/accounts";
+import { confirmDialog } from "../../lib/confirm-dialog";
 
 const DAYS = [msg("Sunday"), msg("Monday"), msg("Tuesday"), msg("Wednesday"), msg("Thursday"), msg("Friday"), msg("Saturday")];
 
@@ -108,7 +109,7 @@ export function AutomationSettings() {
   });
   const toggle = (a: Automation, enabled: boolean) => void daemon("automation.save", { ...a, enabled }).catch((e) => store.notify(String(e)));
   const run = (a: Automation) => void daemon("automation.run", { id: a.id }).then(() => store.notify(t("Started {name}", { name: a.name })), (e) => store.notify(String(e)));
-  const remove = (a: Automation) => confirm(t("Delete the automation “{name}”?", { name: a.name })) && void daemon("automation.delete", { id: a.id }).catch((e) => store.notify(String(e)));
+  const remove = async (a: Automation) => (await confirmDialog(t("Delete the automation “{name}”?", { name: a.name }))) && void daemon("automation.delete", { id: a.id }).catch((e) => store.notify(String(e)));
 
   return (
     <SettingRow id="automations" wide>

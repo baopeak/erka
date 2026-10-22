@@ -11,6 +11,7 @@ import { isMac } from "../lib/platform";
 import { CsvView, MermaidView, NotebookView, PdfView, renderMermaidBlocks } from "./rich-viewers";
 import type { FileContent, Project } from "../lib/types";
 import { msg, t } from "../lib/i18n";
+import { confirmDialog } from "../lib/confirm-dialog";
 
 const EDIT_LIMIT = 5 << 20; // larger files open read-only (first 5 MiB)
 const IMAGE_EXT: Record<string, string> = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", svg: "image/svg+xml", ico: "image/x-icon", bmp: "image/bmp", avif: "image/avif" };
@@ -132,7 +133,7 @@ function TextEditor(props: { project: Project; path: string; line?: number; focu
     try {
       const r = await writeFile(props.project.path, props.path, text, mtime, force);
       if (r.conflict) {
-        if (confirm(t("{path} changed on disk since it was opened. Overwrite it?", { path: props.path }))) return save(true);
+        if (await confirmDialog(t("{path} changed on disk since it was opened. Overwrite it?", { path: props.path }))) return save(true);
         return;
       }
       mtime = r.mtime;

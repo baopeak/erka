@@ -14,6 +14,7 @@ import { HostChip } from "./host-target";
 import { projectTarget, sessionTarget } from "../lib/remote";
 import type { Pane, Project, Tab } from "../lib/types";
 import { t } from "../lib/i18n";
+import { confirmDialog } from "../lib/confirm-dialog";
 
 export function paneTitle(pane: Pane): string {
   if (pane.sessionId) {
@@ -70,7 +71,7 @@ export function WorkspaceView(props: { project: Project }) {
 
   const closeTab = async (tab: Tab) => {
     const live = allPanes(tab.root).filter((p) => p.sessionId && store.sessions[p.sessionId]?.alive && store.sessions[p.sessionId]?.kind !== "shell");
-    if (live.length && !confirm(live.length === 1 ? t("Stop {n} running agent session in this tab?", { n: live.length }) : t("Stop {n} running agent sessions in this tab?", { n: live.length }))) return;
+    if (live.length && !(await confirmDialog(live.length === 1 ? t("Stop {n} running agent session in this tab?", { n: live.length }) : t("Stop {n} running agent sessions in this tab?", { n: live.length })))) return;
     for (const pane of allPanes(tab.root)) await store.closePane(props.project.id, tab.id, pane.id);
   };
 

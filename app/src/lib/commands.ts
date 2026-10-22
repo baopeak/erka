@@ -17,6 +17,7 @@ import { openBrowser } from "./browser";
 import { toggleDictation } from "./voice";
 import type { SessionKind } from "./types";
 import { msg, t } from "./i18n";
+import { confirmDialog } from "./confirm-dialog";
 
 export interface Command {
   id: string;
@@ -88,12 +89,12 @@ export const commands: Command[] = [
   { id: "split.down", label: msg("Split Down…"), win: "mod+shift+s", mac: "mod+shift+d", run: () => store.splitPicker(pid()!, "down"), when: hasProject },
   {
     id: "pane.close", label: msg("Close Pane"), win: "mod+shift+w", mac: "mod+w", when: hasProject,
-    run: () => {
+    run: async () => {
       const f = focusedPane();
       if (!f) return;
       const pane = f.tab && findInTab(f.tab, f.paneId);
       const s = pane?.sessionId ? store.sessions[pane.sessionId] : undefined;
-      if (s?.alive && s.kind !== "shell" && !confirm(t("Stop {kind} and close this pane?", { kind: s.kind }))) return;
+      if (s?.alive && s.kind !== "shell" && !(await confirmDialog(t("Stop {kind} and close this pane?", { kind: s.kind })))) return;
       void store.closePane(f.projectId, f.tab.id, f.paneId);
     },
   },

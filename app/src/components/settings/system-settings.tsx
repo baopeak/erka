@@ -6,6 +6,7 @@ import { t } from "../../lib/i18n";
 import { daemon, platformInfo, revealEntry } from "../../lib/ipc";
 import { SettingRow } from "./setting-row";
 import { BrandMark, BrandWordmark, Kip } from "../brand";
+import { confirmDialog } from "../../lib/confirm-dialog";
 
 interface DaemonInfo {
   version: string;
@@ -22,7 +23,7 @@ const [platform] = createResource(() => platformInfo().catch(() => null));
 export function DaemonSettings() {
   const [info, { refetch }] = createResource(() => store.connected(), () => daemon<DaemonInfo>("daemon.info").catch(() => null));
   const stopAll = async () => {
-    if (!confirm(t("Stop the session daemon and every running session?"))) return;
+    if (!(await confirmDialog(t("Stop the session daemon and every running session?")))) return;
     await daemon("daemon.shutdown", { kill_sessions: true }).catch(() => {});
     setTimeout(() => void refetch(), 1500);
   };

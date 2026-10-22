@@ -19,15 +19,16 @@ import { BrowserPane } from "./browser-pane";
 import { kindInfo } from "../lib/agents";
 import type { Pane, Project, Tab } from "../lib/types";
 import { t } from "../lib/i18n";
+import { confirmDialog } from "../lib/confirm-dialog";
 
 export function PaneView(props: { pane: Pane; project: Project; tab: Tab }) {
   const focused = () => props.tab.focus === props.pane.id;
   const multi = createMemo(() => allPanes(props.tab.root).length > 1);
   const session = () => (props.pane.sessionId ? store.sessions[props.pane.sessionId] : undefined);
   const focus = () => store.focusPane(props.project.id, props.tab.id, props.pane.id);
-  const close = () => {
+  const close = async () => {
     const s = session();
-    if (s?.alive && s.kind !== "shell" && !confirm(t("Stop {kind} and close this pane?", { kind: s.kind }))) return;
+    if (s?.alive && s.kind !== "shell" && !(await confirmDialog(t("Stop {kind} and close this pane?", { kind: s.kind })))) return;
     void store.closePane(props.project.id, props.tab.id, props.pane.id);
   };
   const split = (where: "right" | "down") => {

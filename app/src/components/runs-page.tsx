@@ -8,6 +8,7 @@ import { relTimeShort } from "../lib/platform";
 import { formatRelative, msg, t } from "../lib/i18n";
 import { cancelRun, createRun, deleteRun, finishedTask, lanes, planTasks, runList, runsById, taskAction, type Run, type RunTask, type TaskDraft } from "../lib/runs";
 import { Icon, KindGlyph } from "./icons";
+import { confirmDialog } from "../lib/confirm-dialog";
 
 const STATUS_LABEL: Record<string, string> = {
   pending: msg("Waiting"), waiting_approval: msg("Needs approval"), starting: msg("Starting"), running: msg("Running"), done: msg("Done"), failed: msg("Failed"), skipped: msg("Skipped"), cancelled: msg("Cancelled"),
@@ -91,8 +92,8 @@ function RunDetail(props: { run: Run }) {
           <Show when={props.run.objective}><div class="run-objective">{props.run.objective}</div></Show>
           <div class="run-task-meta"><span>{project()?.name ?? props.run.cwd}</span><span>{t("started {when}", { when: formatRelative(props.run.created_at) })}</span><Progress run={props.run} /></div>
         </div>
-        <Show when={props.run.status === "running"} fallback={<button class="btn" onClick={() => confirm(t("Delete the run “{name}”? Its sessions stay open.", { name: props.run.name })) && void deleteRun(props.run.id).then(() => setSelected(null))}>{t("Delete")}</button>}>
-          <button class="btn danger" onClick={() => confirm(t("Cancel “{name}”? Running agents are stopped.", { name: props.run.name })) && void cancelRun(props.run.id)}>{t("Cancel run")}</button>
+        <Show when={props.run.status === "running"} fallback={<button class="btn" onClick={async () => (await confirmDialog(t("Delete the run “{name}”? Its sessions stay open.", { name: props.run.name }))) && void deleteRun(props.run.id).then(() => setSelected(null))}>{t("Delete")}</button>}>
+          <button class="btn danger" onClick={async () => (await confirmDialog(t("Cancel “{name}”? Running agents are stopped.", { name: props.run.name }))) && void cancelRun(props.run.id)}>{t("Cancel run")}</button>
         </Show>
       </div>
       <div class="run-lanes">

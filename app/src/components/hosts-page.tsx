@@ -19,6 +19,7 @@ import { Icon } from "./icons";
 import { t, errorText } from "../lib/i18n";
 import { relTimeShort } from "../lib/platform";
 import type { DirEntry } from "../lib/types";
+import { confirmDialog } from "../lib/confirm-dialog";
 
 type Tab = "hosts" | "keys" | "known" | "forwards";
 const [tab, setTab] = createSignal<Tab>("hosts");
@@ -273,7 +274,7 @@ function HostDetail(props: { host: SshHost; onEdit: () => void }) {
     store.switchProject(id);
   });
   const remove = async () => {
-    if (!confirm(t("Remove the host {name}? Its saved password and port forwards are removed too.", { name: h().label }))) return;
+    if (!(await confirmDialog(t("Remove the host {name}? Its saved password and port forwards are removed too.", { name: h().label })))) return;
     await removeHost(h().id).catch((e) => setError(errText(e)));
     setSelected(null);
   };
@@ -624,8 +625,8 @@ function FileBrowser(props: { host: SshHost; onHostKey: () => void }) {
     const from = picked()[0];
     if (from) setAsk({ label: t("Rename {name} to", { name: from }), value: from, ok: (v) => v.trim() && v.trim() !== from && void run("rename", () => ipc.renameEntry(root(), rel(join(from)), rel(join(v.trim())))) });
   };
-  const remove = () => {
-    if (!picked().length || !confirm(t("Delete {n} item(s) on {host}? There is no trash on the host.", { n: picked().length, host: props.host.label }))) return;
+  const remove = async () => {
+    if (!picked().length || !(await confirmDialog(t("Delete {n} item(s) on {host}? There is no trash on the host.", { n: picked().length, host: props.host.label })))) return;
     void run("delete", async () => { for (const n of picked()) await ipc.deleteEntry(root(), rel(join(n))); });
   };
   // Files dropped from Explorer / Finder onto the list upload into the current folder.
@@ -887,7 +888,7 @@ function KeysTab() {
             <button class="btn" disabled={!vault().hosts.length} onClick={() => setInstallFor(installFor() === k.path ? null : k.path)}>{t("Install on host…")}</button>
             <Show when={k.encrypted}><button class="btn" onClick={() => savePassphrase(k.path)}>{t("Passphrase…")}</button></Show>
             <button class="btn" onClick={() => void act(() => agentAdd(k.path), t("Added to the SSH agent"))}>{t("Add to agent")}</button>
-            <button class="btn" onClick={() => confirm(t("Move {name} and {name}.pub to the trash?", { name: k.name })) && void act(() => deleteKey(k.path))}>{t("Delete")}</button>
+            <button class="btn" onClick={async () => (await confirmDialog(t("Move {name} and {name}.pub to the trash?", { name: k.name }))) && void act(() => deleteKey(k.path))}>{t("Delete")}</button>
             <Show when={installFor() === k.path}>
               <div class="key-install">
                 <For each={vault().hosts}>{(h) => <button class="btn" onClick={() => void act(() => installKey(h.alias, k.path), t("Key installed on {host}", { host: h.label }))}>{h.label}</button>}</For>
@@ -909,7 +910,7 @@ function KnownHostsTab() {
   const [error, setError] = createSignal<string | null>(null);
   const shown = () => (list() ?? []).filter((k) => !query().trim() || k.hosts.toLowerCase().includes(query().trim().toLowerCase()) || k.fingerprint.includes(query().trim()));
   const remove = async (line: number, name: string) => {
-    if (!confirm(t("Forget the key of {name}? ssh asks to trust it again on the next connection.", { name }))) return;
+    if (!(await confirmDialog(t("Forget the key of {name}? ssh asks to trust it again on the next connection.", { name })))) return;
     try {
       await removeKnownHosts([line]);
       void refetch();

@@ -7,6 +7,7 @@ import { CORE_AGENTS, agentPresets, kindInfo, loadAgentPresets } from "../../lib
 import { KindGlyph } from "../icons";
 import { Choice, SettingRow, Toggle } from "./setting-row";
 import type { AgentProfile } from "../../lib/types";
+import { confirmDialog } from "../../lib/confirm-dialog";
 
 /** Permission flags each agent understands; "" keeps the agent's own default. */
 const PERMISSIONS: Record<string, [string, string][]> = {
@@ -96,8 +97,8 @@ export function AgentSettings() {
   return (
     <>
       <SettingRow id="agent-permissions">
-        <Choice value={s().agentPermissions ?? "manual"} options={[["manual", t("Manual")], ["yolo", t("Yolo")]]} onChange={(v) => {
-          if (v === "yolo" && !confirm(t("Start agents with their skip-permission flags? They can then run commands and edit files without asking. A worktree is not a sandbox: the agent can still reach anything your account can."))) return;
+        <Choice value={s().agentPermissions ?? "manual"} options={[["manual", t("Manual")], ["yolo", t("Yolo")]]} onChange={async (v) => {
+          if (v === "yolo" && !(await confirmDialog(t("Start agents with their skip-permission flags? They can then run commands and edit files without asking. A worktree is not a sandbox: the agent can still reach anything your account can.")))) return;
           store.setSettings({ agentPermissions: v });
         }} />
       </SettingRow>

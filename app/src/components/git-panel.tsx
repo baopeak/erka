@@ -9,6 +9,7 @@ import { isMac } from "../lib/platform";
 import { Icon } from "./icons";
 import type { GitFile, Project } from "../lib/types";
 import { t } from "../lib/i18n";
+import { confirmDialog } from "../lib/confirm-dialog";
 
 function split(path: string) {
   const i = path.lastIndexOf("/");
@@ -92,14 +93,14 @@ export function GitPanel(props: { project: Project }) {
 
   const remote = (action: RemoteAction) =>
     run(action, async () => {
-      if (action === "force_push" && !confirm(t("Force-push {branch} with lease? Commits on the remote that you do not have locally make it fail instead of being overwritten.", { branch: st()?.branch ?? "" }))) return;
+      if (action === "force_push" && !(await confirmDialog(t("Force-push {branch} with lease? Commits on the remote that you do not have locally make it fail instead of being overwritten.", { branch: st()?.branch ?? "" })))) return;
       const out = await gitRemote(root(), action);
       store.notify(out.split("\n").filter(Boolean).slice(-1)[0] || t("Done"));
       if (action !== "pull") void pullRequests.refresh(props.project.id, root());
     });
 
-  const discard = (files: GitFile[]) => {
-    if (!confirm(t("Discard changes in {n} file(s)? Untracked files go to the trash.", { n: files.length }))) return;
+  const discard = async (files: GitFile[]) => {
+    if (!(await confirmDialog(t("Discard changes in {n} file(s)? Untracked files go to the trash.", { n: files.length })))) return;
     void run("discard", () => gitDiscard(root(), files.filter((f) => f.index !== "?").map((f) => f.path), files.filter((f) => f.index === "?").map((f) => f.path)));
   };
 
@@ -153,7 +154,7 @@ export function GitPanel(props: { project: Project }) {
             <div class="git-note warn">
               <b>{t("{op} in progress", { op: op() })}</b>{conflicts().length ? ` · ${t("{n} conflicted file(s)", { n: conflicts().length })}` : ""}. {t("Resolve, stage, then continue in a terminal")} (<code>git {op()} --continue</code>).
               <div style={{ display: "flex", gap: "6px", "margin-top": "6px" }}>
-                <button class="btn" disabled={!!busy()} onClick={() => confirm(t("Abort the {op}? Its changes are dropped.", { op: op() })) && run("abort", () => gitAbort(root()).then((m) => store.notify(m)))}>{t("Abort {op}", { op: op() })}</button>
+                <button class="btn" disabled={!!busy()} onClick={async () => (await confirmDialog(t("Abort the {op}? Its changes are dropped.", { op: op() }))) && run("abort", () => gitAbort(root()).then((m) => store.notify(m)))}>{t("Abort {op}", { op: op() })}</button>
                 <Show when={conflicts().length}>
                   <button class="btn" onClick={() => fixWithAi(`git ${op()}`, `Conflicts in:\n${conflicts().map((f) => f.path).join("\n")}\nResolve every conflict (keep both sides' intent), then stage the files.`)}><Icon name="sparkle" size={13} /> {t("Resolve with AI")}</button>
                 </Show>

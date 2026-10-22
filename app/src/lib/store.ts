@@ -17,6 +17,7 @@ import { closeBrowser } from "./browser";
 import { projectTarget, sessionTarget, targetEnv, targetRemote } from "./remote";
 import { agentsAt, hostOf, isHostKeyError, layoutTarget, layoutTargetFor } from "./ssh-hosts";
 import type { WorkStatus, AgentProfile, AppState, BranchInfo, InboxItem, LayoutNode, LayoutTemplate, Pane, Project, ProjectHost, RecentItem, ReviewNote, SessionInfo, SessionKind, SessionTarget, Settings, Tab, Workspace, WorkspaceMeta } from "./types";
+import { confirmDialog } from "./confirm-dialog";
 
 export const defaultSettings: Settings = {
   fontFamily: '"JetBrains Mono", "Cascadia Code", "Cascadia Mono", Menlo, Consolas, "Symbols Nerd Font Mono", monospace',
@@ -209,8 +210,8 @@ function createAppStore() {
     if (!info || !app || (info.api ?? 1) >= app.api) return;
     notify(t("The session daemon is older than this app; some features are unavailable until it restarts."), {
       label: t("Restart daemon"),
-      run: () => {
-        if (confirm(t("Restart the session daemon? Running sessions stop; their screens are kept and they can be restarted."))) {
+      run: async () => {
+        if (await confirmDialog(t("Restart the session daemon? Running sessions stop; their screens are kept and they can be restarted."))) {
           void ipc.daemon("daemon.shutdown", { kill_sessions: true }).catch(() => {});
         }
       },
