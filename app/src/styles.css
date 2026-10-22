@@ -50,9 +50,8 @@
   --scroll-thumb-hover: rgba(255,255,255,0.14);
   --checker-a: #1a1f2c;
   --checker-b: #151925;
-  /* Multi-pane layouts: the ground between pane cards, and the veil over unfocused panes. */
+  /* Multi-pane layouts: the ground between pane cards. */
   --pane-ground: #0b0d13;
-  --pane-veil: rgba(9, 11, 17, .28);
   color-scheme: dark;
 }
 
@@ -103,7 +102,6 @@
   --checker-a: #efeee9;
   --checker-b: #ffffff;
   --pane-ground: #e4e2db;
-  --pane-veil: rgba(246, 246, 243, .38);
   color-scheme: light;
 }
 :root[data-theme="light"] .overlay { background: rgba(30,35,45,.25); }
@@ -185,11 +183,36 @@ input, textarea, select { font: inherit; color: var(--text); }
   color: var(--text-dim);
 }
 .project:hover { background: var(--bg-hover); color: var(--text); }
-.project.active { background: var(--bg-active); color: var(--text); }
-.project-swatch { width: 22px; height: 22px; border-radius: 6px; display: grid; place-items: center; font-weight: 700; font-size: 11px; color: #fff; text-shadow: 0 1px 1px rgb(0 0 0 / .35); flex: none; }
+/* The open project is washed with its own hue from the left, tying the row to its swatch. */
+.project.active { background: linear-gradient(90deg, color-mix(in srgb, var(--kc, var(--accent)) 14%, var(--bg-active)), var(--bg-active) 70%); color: var(--text); }
+/* Agent glyphs and project swatches share one "glossy tile": a top-lit gradient of their own hue,
+   an inner highlight and a soft tinted drop shadow. --kc is set inline per tile. */
+.kind-glyph, .project-swatch {
+  --kc: #9aa4b5;
+  position: relative; display: inline-grid; place-items: center; flex: none;
+  color: #fff; font-weight: 700; text-shadow: 0 1px 1px rgb(0 0 0 / .35);
+  background: linear-gradient(150deg, color-mix(in srgb, var(--kc), #fff 30%) 0%, var(--kc) 55%, color-mix(in srgb, var(--kc), #000 18%) 100%);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / .35), inset 0 -1px 0 rgb(0 0 0 / .14), 0 1px 3px color-mix(in srgb, var(--kc) 45%, transparent);
+  transition: transform .16s ease, filter .2s ease, opacity .2s ease, box-shadow .2s ease;
+}
+.kind-glyph { border-radius: max(5px, 26%); }
+.project-swatch { width: 22px; height: 22px; border-radius: 7px; font-size: 11px; }
+.project:hover .project-swatch, .session-row:hover .kind-glyph { transform: translateY(-1px) scale(1.06); }
+.project.active .project-swatch {
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / .35), inset 0 -1px 0 rgb(0 0 0 / .14), 0 0 0 2px var(--bg-active), 0 0 0 3.5px color-mix(in srgb, var(--kc) 55%, transparent), 0 2px 8px color-mix(in srgb, var(--kc) 45%, transparent);
+}
+/* A running agent breathes: a halo of its own hue fades in and out (opacity only, so it stays on the compositor). */
+.session-row.working .kind-glyph::after {
+  content: ""; position: absolute; inset: -2px; border-radius: inherit; pointer-events: none;
+  box-shadow: 0 0 7px 1px color-mix(in srgb, var(--kc) 75%, transparent); opacity: 0;
+  animation: breathe 2.4s ease-in-out infinite;
+}
+.session-row.exited .kind-glyph { filter: grayscale(.7); opacity: .6; }
+@keyframes breathe { 50% { opacity: 1; } }
 .project-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .project-badges { display: flex; gap: 4px; align-items: center; }
-.badge { min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; font-size: 10px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; color: #141823; }
+.badge { min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; font-size: 10px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; color: #141823; background-image: linear-gradient(rgb(255 255 255 / .22), transparent); box-shadow: inset 0 1px 0 rgb(255 255 255 / .3); animation: badge-pop .28s cubic-bezier(.3, 1.5, .6, 1); }
+@keyframes badge-pop { from { transform: scale(.4); opacity: 0; } }
 .badge.waiting { background: var(--waiting); }
 .badge.working { background: var(--working); color: var(--on-working); }
 .badge.unread { background: var(--idle); }
@@ -223,6 +246,9 @@ input, textarea, select { font: inherit; color: var(--text); }
 @media (prefers-reduced-motion: reduce) {
   .dot.working { animation: none; border-color: var(--working); border-right-color: transparent; }
   .dot.waiting { animation: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--waiting) 25%, transparent); }
+  .session-row.working .kind-glyph::after { animation: none; opacity: .6; }
+  .badge { animation: none; }
+  .kind-glyph, .project-swatch, .wt-glyph { transition: none; transform: none !important; }
 }
 
 /* ---------- tab bar ---------- */
@@ -269,15 +295,13 @@ input, textarea, select { font: inherit; color: var(--text); }
 /* --pane-color is the pane's agent colour (set from its session kind). */
 .pane { position: absolute; inset: 0; display: flex; flex-direction: column; --pane-color: var(--accent); }
 /* The header is tinted by its agent; the focused pane is lit (full-strength edge, top rule and
-   title) while the others step back under a soft veil, so the active one reads at a glance. */
+   title) so the active one reads at a glance. Pane content is never dimmed: the others stay readable. */
 .multi .pane { border-radius: 6px; overflow: hidden; }
 .multi .pane::after { content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; box-shadow: inset 0 0 0 1px var(--border-strong); z-index: 5; }
 .multi .pane.focused::after { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--pane-color) 75%, transparent); }
 .multi .pane-header { background: color-mix(in srgb, var(--pane-color) 5%, var(--bg-elev)); box-shadow: inset 0 2px 0 color-mix(in srgb, var(--pane-color) 30%, transparent); transition: background .15s, color .15s; }
 .multi .pane.focused .pane-header { background: color-mix(in srgb, var(--pane-color) 13%, var(--bg-elev)); box-shadow: inset 0 2px 0 var(--pane-color); color: var(--text); }
 .multi .pane.focused .pane-header .title { font-weight: 600; }
-.multi .pane-body::after { content: ""; position: absolute; inset: 0; pointer-events: none; background: var(--pane-veil); opacity: 0; transition: opacity .15s; z-index: 4; }
-.multi .pane:not(.focused) .pane-body::after { opacity: 1; }
 .pane-header { height: 28px; flex: none; display: flex; align-items: center; gap: 8px; padding: 0 6px 0 10px; font-size: 12px; color: var(--text-dim); border-bottom: 1px solid var(--border); background: var(--bg-elev); }
 .pane-header .title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pane-header .icon-btn { width: 22px; height: 22px; }
@@ -620,7 +644,8 @@ input, textarea, select { font: inherit; color: var(--text); }
 .shortcut-warn { display: flex; gap: 12px; align-items: center; justify-content: space-between; padding: 10px 12px; border: 1px solid var(--waiting); border-radius: 8px; background: rgba(242,201,109,.07); font-size: 12.5px; color: var(--text-dim); }
 /* ---------- worktrees ---------- */
 .worktree-list { margin-left: 14px; border-left: 1px solid var(--border); padding-left: 4px; }
-.wt-glyph { width: 22px; height: 22px; display: grid; place-items: center; flex: none; }
+.wt-glyph { width: 22px; height: 22px; display: grid; place-items: center; flex: none; border-radius: 7px; background: color-mix(in srgb, currentColor 14%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 22%, transparent); transition: transform .16s ease; }
+.project:hover .wt-glyph { transform: translateY(-1px) scale(1.06); }
 .primary-tag { margin-left: 6px; font-size: 9.5px; padding: 0 5px; border-radius: 4px; border: 1px solid var(--border-strong); color: var(--text-faint); text-transform: uppercase; letter-spacing: .4px; }
 .form-check { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-dim); }
 .form-note { font-size: 12px; color: var(--text-dim); }
@@ -801,6 +826,8 @@ input, textarea, select { font: inherit; color: var(--text); }
 .layout-preset:hover { border-color: var(--accent); }
 .layout-menu-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; border: 0; background: none; color: var(--text); cursor: pointer; text-align: left; font-size: 12.5px; }
 .layout-menu-item:hover { background: var(--bg-active); }
+.layout-menu-item:disabled { opacity: .45; cursor: default; background: none; }
+.layout-flows { display: flex; flex-direction: column; gap: 2px; }
 .layout-kinds { display: inline-flex; gap: 2px; }
 .layout-custom { display: flex; gap: 6px; align-items: center; }
 .layout-custom .text-input { flex: 1; min-width: 0; height: 26px; }

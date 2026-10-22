@@ -287,6 +287,7 @@ function ProjectRow(props: { project: Project }) {
     <div class={`project-block${active() ? " active" : ""}`}>
       <div
         class={`project${active() ? " active" : ""}`}
+        style={{ "--kc": props.project.color }}
         onClick={() => store.switchProject(props.project.id)}
         onContextMenu={(e) => openContextMenu(e, projectMenu(props.project))}
         title={`${props.project.path}${index() >= 0 && index() < 9 ? `  (${switchChord()})` : ""}`}
@@ -297,7 +298,7 @@ function ProjectRow(props: { project: Project }) {
             <Icon name={folded() ? "chevronRight" : "chevronDown"} size={11} />
           </button>
         </Show>
-        <Show when={worktree()} fallback={<span class="project-swatch" style={{ background: props.project.color }}>{props.project.name.slice(0, 1).toUpperCase()}</span>}>
+        <Show when={worktree()} fallback={<span class="project-swatch" style={{ "--kc": props.project.color }}>{props.project.name.slice(0, 1).toUpperCase()}</span>}>
           <span class="wt-glyph" style={{ color: props.project.color }}><Icon name="branch" size={13} /></span>
         </Show>
         <Show when={!collapsedSidebar()}>
