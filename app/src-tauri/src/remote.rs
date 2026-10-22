@@ -332,6 +332,8 @@ pub async fn remote_hosts() -> CmdResult<Vec<String>> {
 #[derive(Serialize)]
 pub struct HostCheck {
     os: String,
+    /// `ID` of `/etc/os-release` (ubuntu, debian, alpine…); empty where there is none (macOS).
+    distro: String,
     home: String,
     git: bool,
     tmux: bool,
@@ -347,15 +349,17 @@ pub async fn remote_check(dest: String, agents: Vec<String>) -> CmdResult<HostCh
     // A login shell, so PATH matches what terminals get. The loop's status is the last tool's;
     // `true` keeps a missing one from failing the whole check.
     let probe = format!(
-        "printf 'os=%s\\nhome=%s\\n' \"$(uname -sr)\" \"$HOME\"; for b in git tmux {}; do command -v \"$b\" >/dev/null 2>&1 && echo \"has=$b\"; done; true",
+        "printf 'os=%s\\nhome=%s\\ndistro=%s\\n' \"$(uname -sr)\" \"$HOME\" \"$( (. /etc/os-release 2>/dev/null && printf %s \"$ID\") )\"; for b in git tmux {}; do command -v \"$b\" >/dev/null 2>&1 && echo \"has=$b\"; done; true",
         bins.join(" ")
     );
     let script = format!("exec \"${{SHELL:-/bin/sh}}\" -lc {}", q(&probe));
     let text = exec_ok(&r, &script).await?;
-    let mut c = HostCheck { os: String::new(), home: String::new(), git: false, tmux: false, agents: Vec::new() };
+    let mut c = HostCheck { os: String::new(), distro: String::new(), home: String::new(), git: false, tmux: false, agents: Vec::new() };
     for line in text.lines() {
         if let Some(v) = line.strip_prefix("os=") {
             c.os = v.trim().into();
+        } else if let Some(v) = line.strip_prefix("distro=") {
+            c.distro = v.trim().to_ascii_lowercase();
         } else if let Some(v) = line.strip_prefix("home=") {
             c.home = v.trim().into();
         } else if let Some(v) = line.strip_prefix("has=") {

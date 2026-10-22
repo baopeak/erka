@@ -48,6 +48,24 @@ export interface Project {
   pinned?: boolean;
   /** A folder on another machine, reached over SSH (`path` is then its `ssh://` root). */
   remote?: { dest: string; port?: number; path: string; tmux: boolean; agents?: string[] };
+  /** Saved SSH hosts linked to this project, each with the folder its panes start in there
+   *  (the hosts themselves live in the SSH vault, shared by every project). */
+  hosts?: ProjectHost[];
+}
+
+export interface ProjectHost {
+  hostId: string;
+  /** Folder on the host (empty: the host's start folder, else its login folder). */
+  path: string;
+}
+
+/** Where a session runs when not on this computer: an ssh destination (a saved host's alias or
+ *  `user@host`), the folder there, and whether it lives in the host's tmux. */
+export interface SessionTarget {
+  dest: string;
+  port?: number;
+  path: string;
+  tmux: boolean;
 }
 
 export interface Worktree {
@@ -72,6 +90,8 @@ export interface Pane {
   line?: number;
   /** Browser panes: the page shown. */
   url?: string;
+  /** Empty panes: the host their launcher starts on (copied from the pane that was split). */
+  target?: SessionTarget;
 }
 
 export interface LeafNode {
@@ -93,9 +113,10 @@ export interface SplitNode {
 
 export type LayoutNode = LeafNode | SplitNode;
 
-/** A saved layout: its shape and what each pane runs (null = an empty pane). */
+/** A saved layout: its shape and what each pane runs (null = an empty pane) and where (no
+ *  target = the project's own machine). */
 export type LayoutTemplate =
-  | { type: "leaf"; kind: SessionKind | null }
+  | { type: "leaf"; kind: SessionKind | null; target?: SessionTarget }
   | { type: "split"; dir: "row" | "col"; sizes: number[]; children: LayoutTemplate[] };
 
 export interface SavedLayout {

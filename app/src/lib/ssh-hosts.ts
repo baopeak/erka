@@ -5,9 +5,10 @@
 import { invoke } from "@tauri-apps/api/core";
 import { createSignal } from "solid-js";
 import { store } from "./store";
-import { CORE_AGENTS, agentPresets } from "./agents";
+import { CORE_AGENTS, agentPresets, isAgentKind } from "./agents";
 import { remoteCheck, remoteRoot, type HostCheck } from "./remote";
-import type { SessionKind } from "./types";
+import { setSessionThemeResolver } from "./terminal-host";
+import type { Project, SessionInfo, SessionKind, SessionTarget } from "./types";
 
 export interface SshHost {
   id: string;
@@ -29,6 +30,10 @@ export interface SshHost {
   tmux: boolean;
   notes: string;
   color: string;
+  /** Terminal colour theme of its panes (empty: the app's terminal theme). */
+  terminalTheme: string;
+  /** OS seen on the last check (`ubuntu`, `darwin`…), for its badge. */
+  os: string;
   lastConnected: number;
 }
 
@@ -69,7 +74,7 @@ export interface ForwardState { running: boolean; error: string }
 
 export const newHost = (over: Partial<SshHost> = {}): SshHost => ({
   id: "", label: "", alias: "", group: "", tags: [], hostname: "", port: null, user: "", auth: "key", identityFile: "", jump: "",
-  forwardAgent: false, keepalive: 30, env: {}, startup: "", folder: "", tmux: true, notes: "", color: "", lastConnected: 0, ...over,
+  forwardAgent: false, keepalive: 30, env: {}, startup: "", folder: "", tmux: true, notes: "", color: "", terminalTheme: "", os: "", lastConnected: 0, ...over,
 });
 
 export const newForward = (hostId: string): SshForward => ({ id: "", hostId, label: "", kind: "local", bindAddress: "", bindPort: 0, destHost: "localhost", destPort: 0, autoStart: false });
@@ -115,7 +120,10 @@ export async function saveVault(next: Vault) {
   return saved;
 }
 
-export async function saveHost(host: SshHost) {
+export async function saveHost(edited: SshHost) {
+  // What the app records itself (a check while the form was open) is kept, not reverted.
+  const cur = edited.id ? hostById(edited.id) : undefined;
+  const host = cur ? { ...edited, os: cur.os || edited.os, lastConnected: cur.lastConnected } : edited;
   const hosts = host.id ? vault().hosts.map((h) => (h.id === host.id ? host : h)) : [...vault().hosts, host];
   const saved = await saveVault({ ...vault(), hosts });
   // A new host is the one whose id was empty: the last one.
@@ -147,13 +155,28 @@ export const isHostKeyError = (e: unknown) => /host key verification failed|remo
 
 // ---------- connecting ----------
 
-/** What the host has (git, tmux, agent CLIs); records the connection time. */
+/** The last check of each host since the app started, by host id (launchers read its agents). */
+const [checks, setChecks] = createSignal<Record<string, HostCheck>>({});
+export const cachedCheck = (hostId: string): HostCheck | undefined => checks()[hostId];
+
+/** What the host has (git, tmux, agent CLIs); records the connection time and its OS. */
 export async function checkHost(host: SshHost): Promise<HostCheck> {
   const bins = agentPresets().length ? agentPresets().map((p) => p.bin) : CORE_AGENTS;
   const check = await remoteCheck(host.alias, [...new Set(bins)]);
-  void invoke<Vault>("ssh_host_touch", { id: host.id }).then(setVault, () => {});
+  setChecks({ ...checks(), [host.id]: check });
+  // The distro when it says (Linux), else the kernel name ("Darwin 23.1" → darwin).
+  const os = check.distro || check.os.split(/\s+/)[0]?.toLowerCase() || "";
+  void invoke<Vault>("ssh_host_touch", { id: host.id, os }).then(setVault, () => {});
   return check;
 }
+
+const agentIds = (c: HostCheck) => c.agents.map((bin) => agentPresets().find((p) => p.bin === bin)?.id ?? bin);
+
+/** Agent kinds found on a host, or the core ones until it has been checked. */
+export const hostAgents = (hostId: string): string[] => {
+  const c = cachedCheck(hostId);
+  return c ? agentIds(c) : CORE_AGENTS;
+};
 
 /** The remote project for a host's folder (created on first use). */
 export async function hostProject(host: SshHost, check?: HostCheck): Promise<string> {
@@ -161,18 +184,88 @@ export async function hostProject(host: SshHost, check?: HostCheck): Promise<str
   const folder = host.folder.trim() || c.home || "/";
   const root = remoteRoot(host.alias, undefined, folder);
   const path = root.slice(root.indexOf("/", "ssh://".length));
-  const agents = c.agents.map((bin) => agentPresets().find((p) => p.bin === bin)?.id ?? bin);
   const leaf = path.split("/").filter(Boolean).pop() ?? "/";
-  return store.addProject(root, { name: `${host.label} · ${leaf}`, remote: { dest: host.alias, path, tmux: host.tmux && c.tmux, agents } });
+  return store.addProject(root, { name: `${host.label} · ${leaf}`, remote: { dest: host.alias, path, tmux: host.tmux && c.tmux, agents: agentIds(c) } });
 }
 
-/** Opens a terminal (or an agent) on the host, in its remote project. A new shell types the
- *  host's startup command. */
-export async function connectHost(host: SshHost, kind: SessionKind = "shell", opts: { prompt?: string; check?: HostCheck } = {}) {
+/** Saved hosts linked to a project with their folder there (links to removed hosts are skipped). */
+export function projectHosts(p: Project | null | undefined): { host: SshHost; path: string }[] {
+  return (p?.hosts ?? []).flatMap((l) => {
+    const host = hostById(l.hostId);
+    return host ? [{ host, path: l.path }] : [];
+  });
+}
+
+/** Where panes on `host` start for `project`: `path`, else the folder linked there, else the
+ *  host's start folder, else its login folder. Checks the host first (a new host key fails
+ *  here, before any terminal asks about it). */
+export async function hostTarget(host: SshHost, project?: Project | null, path?: string): Promise<SessionTarget> {
+  const c = cachedCheck(host.id) ?? (await checkHost(host));
+  const linked = project?.hosts?.find((l) => l.hostId === host.id)?.path;
+  return { dest: host.alias, path: (path ?? "").trim() || (linked ?? "").trim() || host.folder.trim() || c.home || "/", tmux: host.tmux && c.tmux };
+}
+
+/** The saved host a session or target runs on (undefined: this computer or an unsaved host). */
+export const hostOf = (t: { dest: string } | null | undefined) => (t ? hostByAlias(t.dest) : undefined);
+
+/** A pane's host as a saved layout keeps it. Layouts apply to any project, so the folder is kept
+ *  only when it is not the one this project uses there anyway (empty: each project's own). */
+export function layoutTarget(project: Project | undefined, t: SessionTarget): SessionTarget {
+  const host = hostOf(t);
+  if (!host) return t;
+  const usual = project?.hosts?.find((l) => l.hostId === host.id)?.path || host.folder || cachedCheck(host.id)?.home || "";
+  return t.path === usual ? { ...t, path: "" } : t;
+}
+
+/** Where a saved layout's pane on a host starts in `project` (an unsaved destination: as saved). */
+export const layoutTargetFor = (project: Project | undefined, t: SessionTarget): Promise<SessionTarget> => {
+  const host = hostOf(t);
+  return host ? hostTarget(host, project, t.path) : Promise.resolve(t);
+};
+
+/** Agents of other projects already running in this folder of the host (they would share files). */
+export function agentsAt(target: SessionTarget, projectId: string): SessionInfo[] {
+  return Object.values(store.sessions).filter((s) => s.alive && isAgentKind(s.kind) && s.project_id !== projectId && s.remote?.dest === target.dest && s.cwd === target.path);
+}
+
+/** Opens a terminal (or an agent) on the host: in `projectId` when given (the host's folder
+ *  linked there), else in the host's own remote project. A new shell types the host's startup
+ *  command. */
+export async function connectHost(host: SshHost, kind: SessionKind = "shell", opts: { prompt?: string; check?: HostCheck; projectId?: string } = {}) {
+  const prompt = opts.prompt ?? (kind === "shell" && host.startup.trim() ? host.startup : undefined);
+  const project = opts.projectId ? store.state.projects.find((p) => p.id === opts.projectId) : undefined;
+  if (project && !project.remote) {
+    const target = await hostTarget(host, project);
+    store.switchProject(project.id);
+    return store.newSession(project.id, kind, { prompt, target });
+  }
   const projectId = await hostProject(host, opts.check);
   store.switchProject(projectId);
-  const prompt = opts.prompt ?? (kind === "shell" && host.startup.trim() ? host.startup : undefined);
   return store.newSession(projectId, kind, { prompt });
+}
+
+/** `ssh user@host -p 2222`, `user@host:2222` or a bare address typed in the search box. */
+export function parseDestination(text: string): { user: string; hostname: string; port: number | null } | null {
+  const m = text.trim().match(/^(ssh\s+)?(?:([A-Za-z0-9._-]+)@)?([A-Za-z0-9][A-Za-z0-9.-]*)(?::(\d{1,5}))?(?:\s+-p\s*(\d{1,5}))?$/);
+  // A bare word is a search, unless it says `ssh` or has a user, a dot or a port.
+  if (!m || !(m[1] || m[2] || /[.:]/.test(text) || m[5])) return null;
+  const port = Number(m[4] ?? m[5]) || null;
+  if (port && port > 65535) return null;
+  return { user: m[2] ?? "", hostname: m[3], port: port && port !== 22 ? port : null };
+}
+
+/** Badge for the OS seen on a host: a short name and its brand colour. */
+export function osBadge(os: string): { label: string; short: string; color: string } | null {
+  const known: Record<string, [string, string]> = {
+    ubuntu: ["Ubuntu", "#E95420"], debian: ["Debian", "#A80030"], fedora: ["Fedora", "#51A2DA"], centos: ["CentOS", "#932279"],
+    rhel: ["Red Hat", "#EE0000"], rocky: ["Rocky", "#10B981"], almalinux: ["AlmaLinux", "#0F4266"], alpine: ["Alpine", "#0D597F"],
+    arch: ["Arch", "#1793D1"], amzn: ["Amazon Linux", "#FF9900"], opensuse: ["openSUSE", "#73BA25"], "opensuse-leap": ["openSUSE", "#73BA25"],
+    raspbian: ["Raspberry Pi OS", "#C51A4A"], linuxmint: ["Mint", "#87CF3E"], nixos: ["NixOS", "#5277C3"], darwin: ["macOS", "#555555"],
+    freebsd: ["FreeBSD", "#AB2B28"], linux: ["Linux", "#333333"],
+  };
+  if (!os) return null;
+  const [label, color] = known[os] ?? [os, "#5b6170"];
+  return { label, short: label.replace(/[^A-Za-z]/g, "").slice(0, 2), color };
 }
 
 /** Termius' "run snippet on hosts": one terminal per host, each typing `command`. */
@@ -195,6 +288,8 @@ export async function startAutoForwards() {
 
 /** Loads the vault and starts the auto-start forwards (app start). */
 export async function initSshHosts() {
+  // Panes on a saved host take its terminal theme.
+  setSessionThemeResolver((id) => hostOf(store.sessions[id]?.remote)?.terminalTheme || undefined);
   await loadVault().catch(() => {});
   await startAutoForwards();
 }

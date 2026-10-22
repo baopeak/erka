@@ -48,6 +48,10 @@ pub struct Host {
     pub tmux: bool,
     pub notes: String,
     pub color: String,
+    /// Terminal colour theme for its panes (a theme id; empty: the app's terminal theme).
+    pub terminal_theme: String,
+    /// Operating system seen on the last check (`ubuntu`, `debian`, `darwin`…), for its badge.
+    pub os: String,
     pub last_connected: u64,
 }
 
@@ -256,6 +260,9 @@ pub fn normalize(mut v: Vault) -> CmdResult<Vault> {
         if !matches!(h.auth.as_str(), "key" | "password") {
             h.auth = "key".into();
         }
+        h.os = token(&h.os);
+        // Theme ids come from plugins too (`plugin.theme`, any characters): only kept on one line.
+        h.terminal_theme = h.terminal_theme.trim().chars().filter(|c| !c.is_control()).take(200).collect();
         let wanted = if h.alias.trim().is_empty() { slug(&h.label) } else { h.alias.trim().to_string() };
         if !valid_alias(&wanted) {
             return Err(format!("{}: the SSH alias may only have letters, digits, - _ .", h.label));
@@ -371,14 +378,23 @@ pub async fn ssh_vault_save(vault: Vault) -> CmdResult<Vault> {
     .await
 }
 
-/// Records a connection to a host (only that field, so it never undoes another change).
+/// A short identifier (an OS name): letters, digits, `.`, `_`, `-`.
+fn token(s: &str) -> String {
+    s.trim().chars().filter(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-')).take(48).collect()
+}
+
+/// Records a connection to a host and the OS it reported (only those fields, so it never undoes
+/// another change).
 #[tauri::command]
-pub async fn ssh_host_touch(id: String) -> CmdResult<Vault> {
+pub async fn ssh_host_touch(id: String, os: Option<String>) -> CmdResult<Vault> {
     blocking(move || {
         let _guard = WRITE.lock().unwrap();
         let mut v = load();
         if let Some(h) = v.hosts.iter_mut().find(|h| h.id == id) {
             h.last_connected = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);
+            if let Some(os) = os.as_deref().map(token).filter(|o| !o.is_empty()) {
+                h.os = os;
+            }
             write_atomic(&vault_path(), &serde_json::to_vec_pretty(&v).map_err(err)?).map_err(err)?;
         }
         Ok(v)
@@ -1012,6 +1028,13 @@ mod tests {
         let mut h = host("x", "box");
         h.env.insert("A".into(), "1\" B=2".into());
         assert!(normalize(Vault { hosts: vec![h], ..Default::default() }).is_err());
+        // Display-only fields are reduced to an identifier, never rejected.
+        let mut h = host("x", "box");
+        h.os = " Ubuntu 22.04\nHost *".into();
+        h.terminal_theme = "my plugin.Night Owl\n".into();
+        let v = normalize(Vault { hosts: vec![h], ..Default::default() }).unwrap();
+        assert_eq!(v.hosts[0].os, "Ubuntu22.04Host");
+        assert_eq!(v.hosts[0].terminal_theme, "my plugin.Night Owl");
     }
 
     #[test]

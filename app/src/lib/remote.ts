@@ -3,10 +3,12 @@
 // `ssh://[user@]host[:port]/abs/path`; its `remote` field says how to reach it.
 import { invoke } from "@tauri-apps/api/core";
 import { store } from "./store";
-import type { Project } from "./types";
+import type { Project, SessionInfo, SessionTarget } from "./types";
 
 export interface HostCheck {
   os: string;
+  /** `/etc/os-release` ID (ubuntu, debian…); empty on macOS and the BSDs. */
+  distro: string;
   home: string;
   git: boolean;
   tmux: boolean;
@@ -38,13 +40,20 @@ export async function loadSshConfigPath() {
   sshConfigPath = (await invoke<{ config: string }>("ssh_paths")).config;
 }
 
-/** The `remote` part of a session for a project on another machine. */
-export function sessionRemote(p: Project) {
-  if (!p.remote) return undefined;
-  return { dest: p.remote.dest, port: p.remote.port, config: sshConfigPath ?? (store.state.settings.sshConfig?.trim() || undefined), tmux: p.remote.tmux };
+/** Where a project's sessions run by default (undefined: this computer). */
+export const projectTarget = (p: Project): SessionTarget | undefined =>
+  p.remote ? { dest: p.remote.dest, port: p.remote.port, path: p.remote.path, tmux: p.remote.tmux } : undefined;
+
+/** Where a session runs (undefined: this computer). */
+export const sessionTarget = (s: SessionInfo): SessionTarget | undefined =>
+  s.remote ? { dest: s.remote.dest, port: s.remote.port, path: s.cwd, tmux: s.remote.tmux } : undefined;
+
+/** The `remote` part of a session that runs on `t`. */
+export function targetRemote(t: SessionTarget) {
+  return { dest: t.dest, port: t.port, config: sshConfigPath ?? (store.state.settings.sshConfig?.trim() || undefined), tmux: t.tmux };
 }
 
-/** Environment that lets a session's ssh log in with a saved password / key passphrase. */
-export const sessionEnv = (p: Project) => (p.remote ? invoke<Record<string, string>>("ssh_session_env", { alias: p.remote.dest }).catch(() => ({})) : Promise.resolve({}));
+/** Environment that lets a session's ssh log in to `dest` with a saved password / key passphrase. */
+export const targetEnv = (dest: string) => invoke<Record<string, string>>("ssh_session_env", { alias: dest }).catch(() => ({}) as Record<string, string>);
 
 export const hostLabel = (p: Project) => (p.remote ? `${p.remote.dest}${p.remote.port ? `:${p.remote.port}` : ""}` : "");

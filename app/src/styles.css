@@ -978,3 +978,50 @@ input, textarea, select { font: inherit; color: var(--text); }
 .speech-progress span { display: block; height: 100%; background: var(--working); }
 .voice-try { display: flex; align-items: flex-start; gap: 8px; }
 .voice-try textarea { flex: 1; }
+
+/* ---------- panes on SSH hosts, "Run on", Termius-style host drawer ---------- */
+.pane-host-stripe { position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--host-color); z-index: 6; pointer-events: none; }
+.host-chip { display: inline-flex; align-items: center; gap: 5px; max-width: 45%; flex: none; padding: 1px 7px; border-radius: 10px; font-size: 11px; color: var(--text); background: color-mix(in srgb, var(--host-color) 18%, transparent); border: 1px solid color-mix(in srgb, var(--host-color) 45%, transparent); white-space: nowrap; overflow: hidden; }
+.host-chip .host-dot { background: var(--host-color); width: 7px; height: 7px; }
+.host-chip-name { font-weight: 600; }
+.host-chip-path { color: var(--text-dim); font-family: var(--mono, monospace); overflow: hidden; text-overflow: ellipsis; }
+.tab .host-chip { max-width: 120px; }
+.run-on { display: flex; flex-direction: column; gap: 6px; align-items: center; max-width: 560px; }
+.modal .run-on { align-items: stretch; margin: 2px 0 10px; }
+.run-on-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 4px; }
+.modal .run-on-row { justify-content: flex-start; }
+.run-on-label { color: var(--text-faint); font-size: 11px; margin-right: 4px; }
+.run-on-chip { display: inline-flex; align-items: center; gap: 5px; }
+.run-on-path { width: 260px; height: 26px; font-size: 12px; }
+.form-note.warn { color: var(--waiting); }
+.os-badge { display: inline-flex; align-items: center; justify-content: center; flex: none; border-radius: 7px; color: #fff; font-weight: 700; letter-spacing: -0.02em; line-height: 1; }
+.host-item-top .host-dot { margin-left: auto; }
+.host-new { border-style: dashed; }
+.quick-connect { display: flex; gap: 6px; }
+.quick-connect .text-input { flex: 1; width: auto; }
+.host-open-in { display: flex; align-items: center; gap: 10px; margin: 4px 0 8px; font-size: 12px; }
+.host-open-in .seg button { padding: 3px 12px; white-space: nowrap; }
+.hosts-page .runs-body { position: relative; }
+.drawer-scrim { position: absolute; inset: 0; z-index: 20; display: flex; justify-content: flex-end; background: rgba(0, 0, 0, 0.18); }
+.host-drawer { width: min(400px, 100%); height: 100%; display: flex; flex-direction: column; background: var(--bg); border-left: 1px solid var(--border-strong); box-shadow: -12px 0 32px rgba(0, 0, 0, 0.25); animation: drawer-in 140ms ease-out; }
+@keyframes drawer-in { from { transform: translateX(24px); opacity: 0; } }
+.drawer-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px 8px; }
+.drawer-head h3 { margin: 0; font-size: 14px; }
+.drawer-body { flex: 1; min-height: 0; overflow: auto; padding: 0 14px 12px; display: flex; flex-direction: column; gap: 10px; }
+.drawer-card { display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-elev); }
+.drawer-card .text-input { width: 100%; }
+.drawer-card .inline-fields .text-input { flex: 1; width: auto; }
+.drawer-address { display: flex; align-items: center; gap: 10px; }
+.drawer-address .text-input { flex: 1; height: 34px; font-size: 13px; }
+.drawer-port { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+.drawer-port .text-input { width: 72px !important; }
+.drawer-title { font-size: 12px; font-weight: 600; }
+.drawer-opts { gap: 6px; }
+.drawer-opt { border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
+.drawer-opt summary { display: flex; align-items: center; gap: 8px; padding: 7px 10px; cursor: pointer; font-size: 12px; color: var(--text-dim); list-style: none; }
+.drawer-opt summary::-webkit-details-marker { display: none; }
+.drawer-opt[open] summary { color: var(--text); }
+.drawer-opt-value { margin-left: auto; color: var(--text-faint); max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.drawer-opt-body { display: flex; flex-direction: column; gap: 6px; padding: 0 10px 10px; }
+.drawer-foot { padding: 10px 14px 14px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 6px; }
+.drawer-foot .btn { flex: 1; justify-content: center; }

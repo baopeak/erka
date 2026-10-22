@@ -1,7 +1,11 @@
-import { For, Show, createSignal, onCleanup, onMount } from "solid-js";
+import { For, Show, createEffect, createSignal, onCleanup, onMount } from "solid-js";
 import { store, type PaneTarget } from "../lib/store";
 import { KindGlyph } from "./icons";
-import { isAgentKind, kindInfo, projectAgents } from "../lib/agents";
+import { isAgentKind, kindInfo } from "../lib/agents";
+import { RunOnPicker, initialRunOn, resolveRunOn, runOnAgents, type RunOn } from "./host-target";
+import { vault } from "../lib/ssh-hosts";
+import { sessionTarget } from "../lib/remote";
+import { findPane } from "../lib/layout";
 import { KeyHints } from "./key-hints";
 import { QuickCommandList, quickCommandKey } from "./quick-commands";
 import { newChat, supportsChat } from "../chat/mode-switch";
@@ -11,12 +15,15 @@ import { accountsOf, activeAccount, isAccountAgent } from "../lib/accounts";
 import type { SessionKind } from "../lib/types";
 import { t } from "../lib/i18n";
 
-/** The empty pane the dialog was opened for ("More…" in a pane's launcher). */
+/** The empty pane the dialog was opened for ("More…" in a pane's launcher), and the machine
+ *  chosen there. */
 const [target, setTarget] = createSignal<PaneTarget | null>(null);
+const [startOn, setStartOn] = createSignal<RunOn | null>(null);
 
 /** Opens the new session dialog; with `into`, it starts in that empty pane by default. */
-export function openNewSession(into?: PaneTarget) {
+export function openNewSession(into?: PaneTarget, runOn?: RunOn) {
   setTarget(into ?? null);
+  setStartOn(runOn ?? null);
   store.setOverlay("newsession");
 }
 
@@ -24,7 +31,18 @@ export function openNewSession(into?: PaneTarget) {
 export function NewSessionMenu() {
   const project = store.activeProject();
   const into = target();
-  onCleanup(() => setTarget(null));
+  // From the toolbar: the focused pane's host, like a split of it.
+  const focusedTarget = () => {
+    const tab = project && store.activeTab(project.id);
+    const pane = tab && findPane(tab.root, tab.focus);
+    const s = pane?.sessionId ? store.sessions[pane.sessionId] : undefined;
+    return (s && sessionTarget(s)) ?? pane?.target;
+  };
+  const [runOn, setRunOn] = createSignal<RunOn>(startOn() ?? (project ? initialRunOn(project, focusedTarget()) : { hostId: null, path: "" }));
+  onCleanup(() => {
+    setTarget(null);
+    setStartOn(null);
+  });
   const [kind, setKind] = createSignal<SessionKind>("claude");
   const [where, setWhere] = createSignal<"pane" | "tab" | "right" | "down" | "grid">(into ? "pane" : "tab");
   const [grid, setGrid] = createSignal<GridSpec>({ mode: "rows", counts: [2, 2] });
@@ -35,26 +53,36 @@ export function NewSessionMenu() {
   const [name, setName] = createSignal("");
   const [prompt, setPrompt] = createSignal("");
   const [ui, setUi] = createSignal<"terminal" | "chat">("terminal");
-  const kinds = (): SessionKind[] => [...projectAgents(project, store.state.settings.hiddenAgents), "shell", "custom"];
+  const kinds = (): SessionKind[] => (project ? [...runOnAgents(project, runOn(), store.state.settings.hiddenAgents), "shell", "custom"] : []);
+  /** Chat view runs the agent on this computer only. */
+  const local = () => !project?.remote && !runOn().hostId;
+  // Another machine may lack the chosen agent: fall back to the first one it has.
+  createEffect(() => {
+    const list = kinds();
+    if (list.length && !list.includes(kind())) setKind(list[0]);
+  });
   let argsInput!: HTMLInputElement;
   onMount(() => argsInput.focus());
 
   const profileArgs = (k: SessionKind) => store.state.settings.profiles.find((p) => p.kind === k)?.args.join(" ") ?? "";
-  const start = () => {
+  const start = async () => {
     if (!project) return;
     const extra = args().trim();
     const argv = extra ? extra.match(/"[^"]*"|\S+/g)!.map((a) => a.replace(/^"|"$/g, "")) : undefined;
     if (kind() === "custom" && !argv) return store.notify(t("Enter a command to run"));
     store.setOverlay(null);
     const w = where();
+    const chat = ui() === "chat" && supportsChat(kind()) && local();
+    const target = chat ? undefined : await resolveRunOn(project, runOn());
+    if (target === null) return;
     if (w === "grid") {
       // The same agent in every cell; the first prompt (if any) goes to each of them.
-      return void store.launchGrid(project.id, grid(), Array(cellCount(grid())).fill(kind()), { args: argv, account: chosenAccount(), prompt: isAgentKind(kind()) ? prompt().trim() || undefined : undefined });
+      return void store.launchGrid(project.id, grid(), Array(cellCount(grid())).fill(kind()), { args: argv, account: chosenAccount(), target, prompt: isAgentKind(kind()) ? prompt().trim() || undefined : undefined });
     }
     // "This pane" falls back to a new tab if the empty pane was closed meanwhile.
     const place = w === "pane" ? { where: "tab" as const, into: into ?? undefined } : { where: w, into: undefined };
-    if (ui() === "chat" && supportsChat(kind())) return void newChat(project.id, kind(), place.where, { account: chosenAccount(), into: place.into });
-    void store.newSession(project.id, kind(), { ...place, args: argv, account: chosenAccount(), name: name().trim() || undefined, prompt: isAgentKind(kind()) ? prompt().trim() || undefined : undefined });
+    if (chat) return void newChat(project.id, kind(), place.where, { account: chosenAccount(), into: place.into });
+    void store.newSession(project.id, kind(), { ...place, args: argv, account: chosenAccount(), target, name: name().trim() || undefined, prompt: isAgentKind(kind()) ? prompt().trim() || undefined : undefined });
   };
 
   return (
@@ -63,10 +91,13 @@ export function NewSessionMenu() {
         if (quickCommandKey(e, () => store.setOverlay(null))) return;
         if (e.key === "Escape") store.setOverlay(null);
         // Enter starts, except inside the prompt box (Ctrl/Cmd+Enter there).
-        if (e.key === "Enter" && (e.ctrlKey || e.metaKey || !(e.target as HTMLElement).matches("textarea"))) start();
+        if (e.key === "Enter" && (e.ctrlKey || e.metaKey || !(e.target as HTMLElement).matches("textarea"))) void start();
       }}>
         <h2>{t("New session in {project}", { project: project?.name ?? "" })}</h2>
         <QuickCommandList onRun={() => store.setOverlay(null)} />
+        <Show when={project && (vault().hosts.length || project.remote)}>
+          <RunOnPicker project={project!} value={runOn()} onChange={setRunOn} />
+        </Show>
         <div class="launcher" style={{ "grid-template-columns": "repeat(auto-fill, minmax(92px, 1fr))" }}>
           <For each={kinds()}>
             {(k) => (
@@ -102,7 +133,7 @@ export function NewSessionMenu() {
             </div>
           </div>
         </Show>
-        <Show when={supportsChat(kind()) && !project?.remote}>
+        <Show when={supportsChat(kind()) && local()}>
           <div class="form-row">
             <label>{t("Interface")}</label>
             <div class="toggles">
@@ -142,7 +173,7 @@ export function NewSessionMenu() {
           <KeyHints items={[["Enter", t("Start")], ["Esc", t("Cancel")]]} />
           <span style={{ flex: 1 }} />
           <button class="btn" onClick={() => store.setOverlay(null)}>{t("Cancel")}</button>
-          <button class="btn primary" onClick={start}>{t("Start")}</button>
+          <button class="btn primary" onClick={() => void start()}>{t("Start")}</button>
         </div>
       </div>
     </div>

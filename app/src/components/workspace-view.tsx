@@ -10,6 +10,8 @@ import { StatusDot } from "./sidebar";
 import { Launcher } from "./welcome";
 import { openLayoutMenu } from "./layout-menu";
 import { browserState, openBrowser } from "../lib/browser";
+import { HostChip } from "./host-target";
+import { projectTarget, sessionTarget } from "../lib/remote";
 import type { Pane, Project, Tab } from "../lib/types";
 import { t } from "../lib/i18n";
 
@@ -31,16 +33,22 @@ export function paneTitle(pane: Pane): string {
   return t("Empty pane");
 }
 
-function TabTitle(props: { tab: Tab }) {
+function TabTitle(props: { tab: Tab; project: Project }) {
   const panes = createMemo(() => allPanes(props.tab.root));
   const focus = () => panes().find((p) => p.id === props.tab.focus) ?? panes()[0];
   const session = () => (focus()?.sessionId ? store.sessions[focus()!.sessionId!] : undefined);
+  /** The focused pane's host when it is not the project's own machine. */
+  const host = () => {
+    const tg = session() && sessionTarget(session()!);
+    return tg && tg.dest !== projectTarget(props.project)?.dest ? tg : undefined;
+  };
   return (
     <>
       <Show when={session()} fallback={<Icon name={focus()?.kind === "diff" ? "git" : "files"} size={14} />}>
         {(s) => <StatusDot s={s()} />}
       </Show>
       <Show when={session()}>{(s) => <KindGlyph kind={s().kind} size={14} />}</Show>
+      <Show when={host()}>{(tg) => <HostChip target={tg()} />}</Show>
       <Show when={props.tab.broadcast}><span class="badge broadcast-badge" title={t("Broadcast input is on")}>⇶</span></Show>
       <span class="title">
         {props.tab.name ?? paneTitle(focus())}
@@ -94,7 +102,7 @@ export function WorkspaceView(props: { project: Project }) {
                 onDblClick={() => setRenaming(tab.id)}
                 onAuxClick={(e) => e.button === 1 && void closeTab(tab)}
               >
-                <Show when={renaming() === tab.id} fallback={<TabTitle tab={tab} />}>
+                <Show when={renaming() === tab.id} fallback={<TabTitle tab={tab} project={props.project} />}>
                   <input
                     class="tab-rename"
                     value={tab.name ?? ""}

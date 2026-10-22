@@ -23,6 +23,11 @@ import { isMac } from "./platform";
 import { terminalThemeFor } from "./theme";
 import type { Settings } from "./types";
 
+/** A session's own terminal theme id (its host's), over the app's; set by lib/ssh-hosts.ts. */
+let themeOf: (sessionId: string) => string | undefined = () => undefined;
+export const setSessionThemeResolver = (fn: (sessionId: string) => string | undefined) => (themeOf = fn);
+const themeFor = (sessionId: string, s: Settings) => terminalThemeFor(s.theme, themeOf(sessionId) || s.terminalTheme);
+
 const MAX_PARKED = 16;
 /** Hidden views that keep their WebGL context (visible ones always have one). */
 const MAX_HIDDEN_WEBGL = 6;
@@ -85,7 +90,7 @@ export class TermView {
       cursorStyle: "bar",
       cursorWidth: 2,
       allowProposedApi: true,
-      theme: terminalThemeFor(settings.theme, settings.terminalTheme),
+      theme: themeFor(sessionId, settings),
       macOptionIsMeta: true,
       drawBoldTextInBrightColors: false,
       rescaleOverlappingGlyphs: true,
@@ -377,7 +382,7 @@ export class TermView {
       lineHeight: s.lineHeight,
       cursorBlink: s.cursorBlink,
       scrollback: s.scrollback,
-      theme: terminalThemeFor(s.theme, s.terminalTheme),
+      theme: themeFor(this.sessionId, s),
     });
     // Renderer switch applies now (hidden views keep their context, so no remount does it).
     if (!s.webgl) this.releaseWebgl();

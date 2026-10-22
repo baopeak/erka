@@ -6,7 +6,7 @@ import { isPermissionGranted, requestPermission, sendNotification } from "@tauri
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import * as ipc from "./ipc";
 import { t } from "./i18n";
-import { allPanes, buildGrid, cellCount, equalize, findPane, fromTemplate, insertBeside, leaf, migrateLayout, moveGutter, movePane, removePane, replacePane, splitPane, swapPanes, templateKinds, toTemplate, type GridSpec, type Side } from "./layout";
+import { allPanes, buildGrid, cellCount, equalize, findPane, fromTemplate, insertBeside, leaf, migrateLayout, moveGutter, movePane, removePane, replacePane, splitPane, swapPanes, templateLeaves, toTemplate, type GridSpec, type Side } from "./layout";
 import { basename, isMac, normPath, uid } from "./platform";
 import { projectColors } from "./theme";
 import { disposeView, peekView, resetStreams, setInputFanout } from "./terminal-host";
@@ -14,8 +14,9 @@ import { CORE_AGENTS, isAgentKind, kindShortName, loadAgentPresets, presetFor } 
 import type { SettingsSection } from "./settings-catalog";
 import { accountEnv, accountHomes, sessionHome } from "./accounts";
 import { closeBrowser } from "./browser";
-import { sessionEnv, sessionRemote } from "./remote";
-import type { WorkStatus, AgentProfile, AppState, BranchInfo, InboxItem, LayoutNode, LayoutTemplate, Pane, Project, RecentItem, ReviewNote, SessionInfo, SessionKind, Settings, Tab, Workspace, WorkspaceMeta } from "./types";
+import { projectTarget, sessionTarget, targetEnv, targetRemote } from "./remote";
+import { agentsAt, hostOf, isHostKeyError, layoutTarget, layoutTargetFor } from "./ssh-hosts";
+import type { WorkStatus, AgentProfile, AppState, BranchInfo, InboxItem, LayoutNode, LayoutTemplate, Pane, Project, ProjectHost, RecentItem, ReviewNote, SessionInfo, SessionKind, SessionTarget, Settings, Tab, Workspace, WorkspaceMeta } from "./types";
 
 export const defaultSettings: Settings = {
   fontFamily: '"JetBrains Mono", "Cascadia Code", "Cascadia Mono", Menlo, Consolas, "Symbols Nerd Font Mono", monospace',
@@ -264,7 +265,7 @@ function createAppStore() {
     const visible = document.hasFocus() && isSessionVisible(next.id);
     if (visible) return;
     const project = state.projects.find((p) => p.id === next.project_id);
-    const title = `${sessionLabel(next)}${project ? " · " + project.name : ""}`;
+    const title = `${sessionLabel(next)}${next.remote ? " @" + next.remote.dest : ""}${project ? " · " + project.name : ""}`;
     const body = next.status === "waiting" ? t("Needs your input") : t("Finished");
     addInbox({ kind: next.status === "waiting" ? "waiting" : "finished", title, body, sessionId: next.id, projectId: next.project_id ?? undefined });
     await desktopNotify(title, body);
@@ -453,6 +454,22 @@ function createAppStore() {
     });
   }
 
+  /** Links a saved host to a project (or changes its folder there); the host stays in the vault. */
+  function linkHost(projectId: string, link: ProjectHost) {
+    update((s) => {
+      const p = s.projects.find((x) => x.id === projectId);
+      if (!p) return;
+      p.hosts = [...(p.hosts ?? []).filter((h) => h.hostId !== link.hostId), link];
+    });
+  }
+
+  function unlinkHost(projectId: string, hostId: string) {
+    update((s) => {
+      const p = s.projects.find((x) => x.id === projectId);
+      if (p?.hosts) p.hosts = p.hosts.filter((h) => h.hostId !== hostId);
+    });
+  }
+
   function renameProject(id: string, name: string) {
     update((s) => {
       const p = s.projects.find((x) => x.id === id);
@@ -576,22 +593,26 @@ function createAppStore() {
 
   /** `account`: an account id for Claude / Codex ("default" = the agent's own; absent = the
    *  active one); `env` adds to the profile's environment (e.g. a history item's account). */
-  type StartOpts = { args?: string[]; name?: string; agentSessionId?: string; cwd?: string; prompt?: string; account?: string; env?: Record<string, string> };
+  /** `target`: run on another machine over SSH instead of where the project is (a local project
+   *  can hold panes on any host). */
+  type StartOpts = { args?: string[]; name?: string; agentSessionId?: string; cwd?: string; prompt?: string; account?: string; env?: Record<string, string>; target?: SessionTarget };
 
   /** Starts a session for a project without placing it in a layout. */
   async function startSession(projectId: string, kind: SessionKind, opts: StartOpts = {}): Promise<SessionInfo | undefined> {
     const project = state.projects.find((p) => p.id === projectId);
     if (!project) return;
     const launch = profileLaunch(kind, { account: opts.account });
-    const remoteEnv = await sessionEnv(project);
+    const target = opts.target ?? projectTarget(project);
+    // Saved passwords / passphrases are looked up by the session's own host, not the project's.
+    const remoteEnv = target ? await targetEnv(target.dest) : {};
     const env = opts.env || Object.keys(remoteEnv).length ? { ...(launch.env ?? {}), ...remoteEnv, ...(opts.env ?? {}) } : launch.env;
-    const remote = sessionRemote(project);
+    const remote = target ? targetRemote(target) : undefined;
     try {
       const info = await ipc.createSession({
         kind,
         // Resuming must use the conversation's own folder: agents look transcripts up by cwd.
-        // A remote project's sessions start in its folder on the host.
-        cwd: opts.cwd ?? (project.remote ? project.remote.path : project.path),
+        // A remote session starts in its folder on the host.
+        cwd: opts.cwd ?? (target ? target.path : project.path),
         remote,
         project_id: projectId,
         name: opts.name,
@@ -622,9 +643,14 @@ function createAppStore() {
   const emptyPane = (): Pane => ({ id: uid(), kind: "empty" });
 
   /** Splits the focused pane (or opens a tab) with an empty pane whose launcher asks what to
-   *  run in it: every "split" entry point goes through here. */
+   *  run in it: every "split" entry point goes through here. A split of a pane on a host offers
+   *  that host first. */
   function splitPicker(projectId: string, where: "tab" | "right" | "down") {
-    placePane(projectId, emptyPane(), where);
+    const tab = activeTab(projectId);
+    const focused = where !== "tab" && tab ? findPane(tab.root, tab.focus) : undefined;
+    const s = focused?.sessionId ? sessions[focused.sessionId] : undefined;
+    const target = (s && sessionTarget(s)) ?? focused?.target;
+    placePane(projectId, { ...emptyPane(), ...(target ? { target } : {}) }, where);
   }
 
   /** Rearranges a tab's panes into a grid (reading order). Cells left over become empty panes;
@@ -653,11 +679,11 @@ function createAppStore() {
 
   /** Opens a new tab with a grid; cell i runs `kinds[i]` (null = an empty pane with a
    *  launcher). `prompt` goes to every agent started. */
-  async function launchGrid(projectId: string, spec: GridSpec, kinds: (SessionKind | null)[], opts: { prompt?: string; args?: string[]; account?: string } = {}) {
+  async function launchGrid(projectId: string, spec: GridSpec, kinds: (SessionKind | null)[], opts: { prompt?: string; args?: string[]; account?: string; target?: SessionTarget } = {}) {
     const n = cellCount(spec);
     const wanted = Array.from({ length: n }, (_, i) => kinds[i] ?? null);
-    const started = await Promise.all(wanted.map((k) => (k ? startSession(projectId, k, { args: opts.args, account: opts.account, prompt: isAgentKind(k) || k === "shell" ? opts.prompt : undefined }) : Promise.resolve(undefined))));
-    const panes = started.map((info): Pane => (info ? { id: uid(), kind: "terminal", sessionId: info.id } : emptyPane()));
+    const started = await Promise.all(wanted.map((k) => (k ? startSession(projectId, k, { args: opts.args, account: opts.account, target: opts.target, prompt: isAgentKind(k) || k === "shell" ? opts.prompt : undefined }) : Promise.resolve(undefined))));
+    const panes = started.map((info): Pane => (info ? { id: uid(), kind: "terminal", sessionId: info.id } : { ...emptyPane(), ...(opts.target ? { target: opts.target } : {}) }));
     const tab = addTab(projectId, panes[0]);
     setTabRoot(projectId, tab.id, buildGrid(spec, panes, emptyPane), panes[0].id);
     return tab;
@@ -667,8 +693,15 @@ function createAppStore() {
   function saveLayout(projectId: string, tabId: string, name: string) {
     const tab = workspace(projectId).tabs.find((t) => t.id === tabId);
     if (!tab || !name.trim()) return;
-    const kindOf = (p: Pane): SessionKind | null => (p.sessionId ? sessions[p.sessionId]?.kind ?? null : null);
-    const template = toTemplate(tab.root, kindOf);
+    // Panes on a host other than the project's own remember it, so the layout reopens them there.
+    const project = state.projects.find((p) => p.id === projectId);
+    const own = project && projectTarget(project);
+    const leafOf = (p: Pane) => {
+      const s = p.sessionId ? sessions[p.sessionId] : undefined;
+      const target = s ? sessionTarget(s) : p.target;
+      return { kind: s?.kind ?? null, target: target && target.dest !== own?.dest ? layoutTarget(project, target) : undefined };
+    };
+    const template = toTemplate(tab.root, leafOf);
     update((s) => {
       s.settings.layouts ??= [];
       const same = s.settings.layouts.find((l) => l.name.toLowerCase() === name.trim().toLowerCase());
@@ -691,12 +724,29 @@ function createAppStore() {
 
   /** Opens a saved layout in a new tab, starting what each pane ran. */
   async function applyLayout(projectId: string, template: LayoutTemplate) {
-    const kinds = templateKinds(template);
-    const started = await Promise.all(kinds.map((k) => (k ? startSession(projectId, k) : Promise.resolve(undefined))));
+    const leaves = templateLeaves(template);
+    const project = state.projects.find((p) => p.id === projectId);
+    // Panes on a host start in this project's folder there; a host that cannot be reached (a new
+    // host key, offline) leaves an empty pane offering it.
+    const targets = await Promise.all(leaves.map(async (l) => {
+      if (!l.kind || !l.target) return l.target;
+      try {
+        const tg = await layoutTargetFor(project, l.target);
+        const busy = agentsAt(tg, projectId);
+        if (busy.length) notify(t("{n} agent(s) of another project already run in this folder: {list}", { n: busy.length, list: `${tg.dest}:${tg.path}` }));
+        return tg;
+      } catch (e) {
+        const name = hostOf(l.target)?.label ?? l.target.dest;
+        notify(isHostKeyError(e) ? t("Check the fingerprint of {name} first", { name }) : t("Could not connect to {list}", { list: name }));
+        return null;
+      }
+    }));
+    const started = await Promise.all(leaves.map((l, i) => (l.kind && targets[i] !== null ? startSession(projectId, l.kind, { target: targets[i] }) : Promise.resolve(undefined))));
     let i = 0;
     const root = fromTemplate(template, () => {
+      const target = leaves[i].target;
       const info = started[i++];
-      return info ? { id: uid(), kind: "terminal", sessionId: info.id } : emptyPane();
+      return info ? { id: uid(), kind: "terminal", sessionId: info.id } : { ...emptyPane(), ...(target ? { target } : {}) };
     });
     const first = allPanes(root)[0];
     const tab = addTab(projectId, first);
@@ -1032,7 +1082,9 @@ function createAppStore() {
    *  id (Codex does so only after a turn): the newest transcript of that folder written since
    *  the session started that no other session owns. */
   async function findConversation(s: SessionInfo): Promise<string | null> {
-    if (!["claude", "codex", "omp"].includes(s.kind)) return null;
+    // Transcripts read here are this computer's: a session on a host resumes by re-attaching to
+    // its tmux instead.
+    if (!["claude", "codex", "omp"].includes(s.kind) || s.remote) return null;
     const [items, folder] = await Promise.all([ipc.agentHistoryList(false, accountHomes()).catch(() => []), ipc.canonicalPath(s.cwd).catch(() => s.cwd)]);
     const owned = new Set(Object.values(sessions).map((x) => x.agent_session_id).filter(Boolean));
     const home = sessionHome(s) ?? null;
@@ -1233,7 +1285,7 @@ function createAppStore() {
     splitPicker, moveTab, movePaneToTab, mergeTab,
     resumeSession, resumeInterrupted, setChatResumer,
     replacePaneIn, updatePane, resizeSplit, setRightPanel, showRightPanel, setSettings, zoomed, toggleZoom,
-    topProjects, childrenOf, setProjectStatus, togglePin, approveSetup,
+    topProjects, childrenOf, setProjectStatus, togglePin, approveSetup, linkHost, unlinkHost,
     projectInfo, refreshProjectInfo, recordRecent, setCollapsed, markUnread, renameSession, profileLaunch, setShortcut, setProfile,
     settingsSection, setSettingsSection, settingsItem, openSettings, paneLocation, isSessionVisible, refreshSessions, setSessions,
     addInbox, markInbox, clearInbox, unreadInbox, desktopNotify, meta, metaFor, setComment, loadMeta,

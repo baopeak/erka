@@ -1,6 +1,8 @@
 // Hosts page (Termius-style): saved SSH hosts with groups and tags, one-click terminals and
 // agents on a host, its files (upload / download), keys, known hosts and port forwards.
-import { For, Show, createMemo, createResource, createSignal, onCleanup, onMount } from "solid-js";
+import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, onMount, type JSX } from "solid-js";
+import { OsBadge } from "./host-target";
+import { findTerminalTheme, terminalThemes } from "../lib/terminal-themes";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
@@ -10,7 +12,7 @@ import { kindInfo } from "../lib/agents";
 import type { HostCheck } from "../lib/remote";
 import {
   CLAUDE_INSTALL, agentAdd, agentList, checkHost, connectHost, deleteKey, forwardStart, forwardStatus, forwardStop, generateKey, hasSecret, hostAddress, hostById, hostKeys,
-  hostProject, importKey, importSshConfig, installKey, isHostKeyError, knownHosts, listKeys, loadVault, newForward, newHost, removeForward, removeHost, removeKnownHosts, runOnHosts,
+  hostProject, importKey, importSshConfig, installKey, isHostKeyError, knownHosts, listKeys, loadVault, newForward, newHost, parseDestination, removeForward, removeHost, removeKnownHosts, runOnHosts,
   saveForward, saveHost, saveVault, setSecret, transfer, trustHost, vault, type HostKeys, type SshForward, type SshHost,
 } from "../lib/ssh-hosts";
 import { Icon } from "./icons";
@@ -21,10 +23,20 @@ import type { DirEntry } from "../lib/types";
 type Tab = "hosts" | "keys" | "known" | "forwards";
 const [tab, setTab] = createSignal<Tab>("hosts");
 const [selected, setSelected] = createSignal<string | null>(null);
+/** Host whose fingerprint check opens with the page (a launcher hit an unknown host key). */
+const [trustFor, setTrustFor] = createSignal<string | null>(null);
+/** Terminals and agents of a host open in the local project behind the page ("Open in"),
+ *  instead of the host's own remote project. */
+const [openInHere, setOpenInHere] = createSignal(false);
+const localProject = () => {
+  const p = store.activeProject();
+  return p && !p.remote ? p : null;
+};
 
-export function openHosts(which: Tab = "hosts", hostId?: string) {
+export function openHosts(which: Tab = "hosts", hostId?: string, opts: { trust?: boolean } = {}) {
   setTab(which);
   if (hostId) setSelected(hostId);
+  setTrustFor(opts.trust && hostId ? hostId : null);
   store.setOverlay("hosts");
 }
 
@@ -95,6 +107,14 @@ function HostsTab() {
     const q = query().trim().toLowerCase();
     return !q || [h.label, h.alias, h.hostname, h.user, h.group, ...h.tags].some((x) => x.toLowerCase().includes(q));
   };
+  /** `user@host[:port]` typed in the search box that no saved host matches: a new host to add. */
+  const typed = () => (vault().hosts.some(matches) ? null : parseDestination(query()));
+  const quickConnect = () => {
+    const d = parseDestination(query());
+    const only = vault().hosts.filter(matches);
+    if (only.length === 1 && !typed()) return setSelected(only[0].id);
+    if (d) setEditing(newHost({ user: d.user, hostname: d.hostname, port: d.port }));
+  };
   /** Hosts by group ("" last), recently used first inside a group. */
   const groups = createMemo(() => {
     const map = new Map<string, SshHost[]>();
@@ -120,29 +140,41 @@ function HostsTab() {
     const failed = await runOnHosts(hosts, runText().trim());
     if (failed.length) store.notify(t("Could not connect to {list}", { list: failed.join(", ") }));
   };
+  const snippets = () => (store.state.settings.quickCommands ?? []).filter((c) => c.action === "terminal");
   return (
     <div class="runs-body">
       <div class="runs-list hosts-list">
-        <div class="inline-fields">
-          <input class="text-input" placeholder={t("Search hosts")} value={query()} onInput={(e) => setQuery(e.currentTarget.value)} />
+        <div class="quick-connect">
+          <input class="text-input" data-field="quick-connect" placeholder={t("Find a host or ssh user@hostname…")} value={query()} onInput={(e) => setQuery(e.currentTarget.value)}
+            onKeyDown={(e) => e.key === "Enter" && quickConnect()} />
+          <button class="btn" data-action="quick-connect" disabled={!parseDestination(query()) && vault().hosts.filter(matches).length !== 1} onClick={quickConnect}>{t("Connect")}</button>
         </div>
         <div class="inline-fields">
           <button class="btn primary" data-action="new-host" onClick={() => setEditing(newHost())}><Icon name="plus" size={13} /> {t("New host")}</button>
           <button class="btn" title={t("Add the hosts of your SSH config")} onClick={() => void importConfig()}>{t("Import")}</button>
         </div>
         <Show when={error()}><div class="form-note error">{error()}</div></Show>
-        <For each={groups()} fallback={<div class="muted">{t("No saved hosts yet.")}</div>}>
+        <Show when={typed()}>
+          {(d) => (
+            <div class="runs-item host-item host-new" data-action="add-typed-host" onClick={quickConnect}>
+              <div class="host-item-top"><OsBadge os="" size={22} /><span class="runs-item-name">{t("Add {dest}", { dest: `${d().user ? d().user + "@" : ""}${d().hostname}${d().port ? ":" + d().port : ""}` })}</span></div>
+              <div class="run-task-meta">{t("Opens the new host form with this address")}</div>
+            </div>
+          )}
+        </Show>
+        <For each={groups()} fallback={<Show when={!typed()}><div class="muted">{t("No saved hosts yet.")}</div></Show>}>
           {([group, hosts]) => (
             <>
               <div class="section-label">{group || t("Ungrouped")}</div>
               <For each={hosts}>
                 {(h) => (
-                  <div class={`runs-item host-item${current()?.id === h.id && !editing() ? " on" : ""}`} data-host={h.alias} onClick={() => { setSelected(h.id); setEditing(null); }}>
+                  <div class={`runs-item host-item${current()?.id === h.id ? " on" : ""}`} data-host={h.alias} onClick={() => { setSelected(h.id); setEditing(null); }}>
                     <div class="host-item-top">
                       <input type="checkbox" title={t("Select for running a command")} checked={picked().includes(h.id)} onClick={(e) => e.stopPropagation()}
                         onChange={(e) => setPicked(e.currentTarget.checked ? [...picked(), h.id] : picked().filter((x) => x !== h.id))} />
-                      <span class="host-dot" style={{ background: h.color || "var(--text-faint)" }} />
+                      <OsBadge os={h.os} size={22} />
                       <span class="runs-item-name">{h.label}</span>
+                      <span class="host-dot" style={{ background: h.color || "transparent" }} />
                     </div>
                     <div class="run-task-meta"><span class="mono">{hostAddress(h)}</span><For each={h.tags}>{(tag) => <span class="chip">{tag}</span>}</For></div>
                   </div>
@@ -154,6 +186,12 @@ function HostsTab() {
         <Show when={picked().length}>
           <div class="hosts-run">
             <div class="form-note">{t("Run a command on {n} selected host(s), one terminal each", { n: picked().length })}</div>
+            <Show when={snippets().length}>
+              <select class="text-input" data-field="run-snippet" value="" onChange={(e) => { const c = snippets().find((x) => x.id === e.currentTarget.value); if (c) setRunText(c.text); e.currentTarget.value = ""; }}>
+                <option value="">{t("Quick command…")}</option>
+                <For each={snippets()}>{(c) => <option value={c.id}>{c.label}</option>}</For>
+              </select>
+            </Show>
             <input class="text-input mono" placeholder="uptime" value={runText()} onInput={(e) => setRunText(e.currentTarget.value)} onKeyDown={(e) => e.key === "Enter" && void runPicked()} /> {/* i18n-ignore */}
             <div class="inline-fields">
               <button class="btn primary" disabled={!runText().trim()} onClick={() => void runPicked()}>{t("Run")}</button>
@@ -163,19 +201,31 @@ function HostsTab() {
         </Show>
       </div>
       <div class="runs-main">
-        <Show when={!editing()} fallback={<HostEditor host={editing()!} onDone={(id) => { setEditing(null); if (id) setSelected(id); }} />}>
-          {/* Keyed by id: saving the host (e.g. its last connection time) must not reset the view. */}
-          <Show when={current()?.id} keyed fallback={
-            <div class="empty"><div class="welcome">
-              <h1>{t("SSH hosts")}</h1>
-              <div style={{ color: "var(--text-dim)" }}>{t("Save your servers once, then open a terminal or start Claude Code on any of them in one click. Sessions run in tmux on the server, so they survive dropped connections.")}</div>
-              <div class="actions"><button class="btn primary" onClick={() => setEditing(newHost())}>{t("New host")}</button><button class="btn" onClick={() => void importConfig()}>{t("Import from SSH config")}</button></div>
-            </div></div>
-          }>
-            {(id) => <HostDetail host={hostById(id) ?? current()!} onEdit={() => { const h = hostById(id)!; setEditing({ ...h, env: { ...h.env }, tags: [...h.tags] }); }} />}
-          </Show>
+        {/* Keyed by id: saving the host (e.g. its last connection time) must not reset the view. */}
+        <Show when={current()?.id} keyed fallback={
+          <div class="empty"><div class="welcome">
+            <h1>{t("SSH hosts")}</h1>
+            <div style={{ color: "var(--text-dim)" }}>{t("Save your servers once, then open a terminal or start Claude Code on any of them in one click. Sessions run in tmux on the server, so they survive dropped connections.")}</div>
+            <div class="actions"><button class="btn primary" onClick={() => setEditing(newHost())}>{t("New host")}</button><button class="btn" onClick={() => void importConfig()}>{t("Import from SSH config")}</button></div>
+          </div></div>
+        }>
+          {(id) => <HostDetail host={hostById(id) ?? current()!} onEdit={() => { const h = hostById(id)!; setEditing({ ...h, env: { ...h.env }, tags: [...h.tags] }); }} />}
         </Show>
       </div>
+      {/* Termius-style drawer over the page: the form scrolls, Save / Connect stay at the bottom. */}
+      <Show when={editing()} keyed>
+        {(h) => (
+          <div class="drawer-scrim" onPointerDown={(e) => e.target === e.currentTarget && setEditing(null)}>
+            <HostEditor host={h} onDone={(id) => {
+              setEditing(null);
+              if (!id) return;
+              setSelected(id);
+              // Saved from an address typed in the box: the box would now hide the new host.
+              if (parseDestination(query())) setQuery("");
+            }} />
+          </div>
+        )}
+      </Show>
     </div>
   );
 }
@@ -186,7 +236,16 @@ function HostDetail(props: { host: SshHost; onEdit: () => void }) {
   const [busy, setBusy] = createSignal<string | null>(null);
   const [error, setError] = createSignal<string | null>(null);
   const [trust, setTrust] = createSignal(false);
+  // Asked for by a launcher or the drawer's Connect (also when this host is already shown).
+  createEffect(() => {
+    if (trustFor() !== props.host.id) return;
+    setTrust(true);
+    setTrustFor(null);
+  });
   const [files, setFiles] = createSignal(false);
+  const here = localProject;
+  const inHere = openInHere;
+  const setInHere = setOpenInHere;
   /** Runs `fn`; a host-key failure opens the fingerprint check instead of an error. */
   const guarded = async (label: string, fn: () => Promise<unknown>) => {
     setBusy(label);
@@ -206,7 +265,7 @@ function HostDetail(props: { host: SshHost; onEdit: () => void }) {
       const c = check() ?? (await checkHost(h()));
       setCheck(c);
       store.setOverlay(null);
-      await connectHost(h(), kind, { check: c, prompt });
+      await connectHost(h(), kind, { check: c, prompt, projectId: inHere() ? here()?.id : undefined });
     });
   const asProject = () => guarded("project", async () => {
     const id = await hostProject(h(), check() ?? undefined);
@@ -224,7 +283,7 @@ function HostDetail(props: { host: SshHost; onEdit: () => void }) {
     <div class="run-detail host-detail" data-host-detail={h().alias}>
       <div class="run-detail-head">
         <div style={{ flex: 1, "min-width": 0 }}>
-          <h3><span class="host-dot" style={{ background: h().color || "var(--text-faint)" }} />{h().label}</h3>
+          <h3><OsBadge os={h().os} size={24} /><span class="host-dot" style={{ background: h().color || "transparent" }} />{h().label}</h3>
           <div class="run-objective mono">{hostAddress(h())}{h().jump ? ` ${t("via")} ${h().jump}` : ""} · {t("alias")} <b>{h().alias}</b></div>
           <div class="run-task-meta">
             <span>{h().auth === "password" ? t("Password login") : h().identityFile ? t("Key {file}", { file: h().identityFile.split(/[\\/]/).pop() ?? "" }) : t("Key or agent")}</span>
@@ -235,6 +294,17 @@ function HostDetail(props: { host: SshHost; onEdit: () => void }) {
         <button class="btn" onClick={props.onEdit}>{t("Edit")}</button>
         <button class="btn" onClick={() => void remove()}>{t("Remove")}</button>
       </div>
+      <Show when={here()}>
+        {(p) => (
+          <div class="host-open-in">
+            <span class="muted-inline">{t("Open in")}</span>
+            <div class="seg">
+              <button class={inHere() ? "" : "on"} data-open-in="host" onClick={() => setInHere(false)}>{t("The host's own project")}</button>
+              <button class={inHere() ? "on" : ""} data-open-in="current" onClick={() => setInHere(true)}>{t("Current project: {name}", { name: p().name })}</button>
+            </div>
+          </div>
+        )}
+      </Show>
       <div class="host-actions">
         <button class="btn primary" data-action="terminal" disabled={!!busy()} onClick={() => void open("shell")}><Icon name="terminal" size={13} /> {t("Terminal")}</button>
         <button class="btn primary" data-action="claude" disabled={!!busy() || (!!check() && !hasClaude())} title={check() && !hasClaude() ? t("Claude Code is not installed on this host") : ""} onClick={() => void open("claude")}>
@@ -265,8 +335,45 @@ function HostDetail(props: { host: SshHost; onEdit: () => void }) {
       </Show>
       <Show when={!check() && !error() && !trust()}><div class="form-note">{t("Terminals and agents start in {folder}, inside tmux when the host has it.", { folder: h().folder || t("the login folder") })}</div></Show>
       <Show when={files()}><FileBrowser host={h()} onHostKey={() => setTrust(true)} /></Show>
+      <HostProjects host={h()} />
       <HostForwards host={h()} />
       <Show when={h().notes.trim()}><div class="host-notes">{h().notes}</div></Show>
+    </div>
+  );
+}
+
+/** Projects this host is linked to (offered first in their launchers), with the folder used in
+ *  each; links never own the host. */
+function HostProjects(props: { host: SshHost }) {
+  const [folder, setFolder] = createSignal("");
+  const links = () => store.state.projects.flatMap((p) => (p.hosts ?? []).filter((l) => l.hostId === props.host.id).map((l) => ({ project: p, path: l.path })));
+  const here = () => {
+    const p = store.activeProject();
+    return p && !links().some((l) => l.project.id === p.id) ? p : null;
+  };
+  return (
+    <div class="host-forwards" data-host-projects>
+      <div class="section-label">{t("Used in projects")}</div>
+      <For each={links()} fallback={<div class="muted-inline" style={{ "font-size": "12px" }}>{t("Not linked to any project. Any project can still run panes here; linking offers it first.")}</div>}>
+        {(l) => (
+          <div class="forward-row" data-host-link={l.project.id}>
+            <span class="host-dot" style={{ background: l.project.color }} />
+            <div style={{ flex: 1, "min-width": 0 }}>
+              <div>{l.project.name}</div>
+              <div class="mono muted-inline" style={{ "font-size": "11.5px" }}>{l.path || props.host.folder || t("the login folder")}</div>
+            </div>
+            <button class="btn" onClick={() => store.unlinkHost(l.project.id, props.host.id)}>{t("Unlink")}</button>
+          </div>
+        )}
+      </For>
+      <Show when={here()}>
+        {(p) => (
+          <div class="inline-fields">
+            <input class="text-input mono" style={{ flex: 1, width: "auto" }} data-field="link-folder" placeholder={props.host.folder || t("the login folder")} value={folder()} onInput={(e) => setFolder(e.currentTarget.value)} />
+            <button class="btn" data-action="link-current" onClick={() => { store.linkHost(p().id, { hostId: props.host.id, path: folder().trim() }); setFolder(""); }}>{t("Link to {name}", { name: p().name })}</button>
+          </div>
+        )}
+      </Show>
     </div>
   );
 }
@@ -321,13 +428,14 @@ function HostEditor(props: { host: SshHost; onDone: (id?: string) => void }) {
   const [error, setError] = createSignal<string | null>(null);
   const set = <K extends keyof SshHost>(k: K, v: SshHost[K]) => setH({ ...h(), [k]: v });
   const envText = () => Object.entries(h().env).map(([k, v]) => `${k}=${v}`).join("\n");
-  const save = async () => {
+  /** Saves the host (and its password); the saved id, or undefined after showing the error. */
+  const save = async (): Promise<string | undefined> => {
     setError(null);
     try {
       const saved = await saveHost(h());
       if (h().auth === "password" && password()) await setSecret("password", saved.id, password());
       if (h().auth !== "password" && props.host.auth === "password") await setSecret("password", saved.id, "");
-      props.onDone(saved.id);
+      return saved.id;
     } catch (e) {
       setError(errText(e));
     }
@@ -337,75 +445,124 @@ function HostEditor(props: { host: SshHost; onDone: (id?: string) => void }) {
     if (typeof f === "string") set("identityFile", f);
   };
   const others = () => vault().hosts.filter((x) => x.id !== h().id);
+  const [connecting, setConnecting] = createSignal(false);
+  /** Saves, then opens a terminal where "Open in" says; a new host key opens its fingerprint
+   *  check on the page instead. */
+  const connect = async () => {
+    const id = await save();
+    const saved = id && hostById(id);
+    if (!saved) return;
+    setConnecting(true);
+    try {
+      await connectHost(saved, "shell", { projectId: openInHere() ? localProject()?.id : undefined });
+      store.setOverlay(null);
+    } catch (e) {
+      if (!isHostKeyError(e)) return setError(errText(e));
+      props.onDone(saved.id);
+      openHosts("hosts", saved.id, { trust: true });
+    } finally {
+      setConnecting(false);
+    }
+  };
+  /** One collapsed option row: its name, the current value, the field when opened. */
+  const Opt = (o: { label: string; value: string; open?: boolean; children: JSX.Element }) => (
+    <details class="drawer-opt" open={o.open}>
+      <summary><span>{o.label}</span><span class="drawer-opt-value">{o.value}</span></summary>
+      <div class="drawer-opt-body">{o.children}</div>
+    </details>
+  );
+  let first!: HTMLInputElement;
+  onMount(() => first.focus());
   return (
-    <div class="run-detail host-editor">
-      <h3>{props.host.id ? t("Edit host") : t("New host")}</h3>
-      <div class="form-row"><label>{t("Name")}</label><input class="text-input" data-field="label" value={h().label} placeholder={t("Production API")} onInput={(e) => set("label", e.currentTarget.value)} /></div>
-      <div class="form-row"><label>{t("Address")}</label>
-        <div class="inline-fields">
-          <input class="text-input mono" data-field="user" style={{ width: "130px" }} placeholder={t("user")} value={h().user} onInput={(e) => set("user", e.currentTarget.value)} />
-          <span>@</span>
-          <input class="text-input mono" data-field="hostname" style={{ flex: 1, width: "auto" }} placeholder="203.0.113.10" value={h().hostname} onInput={(e) => set("hostname", e.currentTarget.value)} />
-          <span>:</span>
-          <input class="text-input mono" data-field="port" style={{ width: "70px" }} placeholder="22" value={h().port ?? ""} onInput={(e) => set("port", Number(e.currentTarget.value) || null)} />
-        </div>
+    <div class="host-drawer" data-host-editor onKeyDown={(e) => { if (e.key === "Escape") { e.preventDefault(); props.onDone(); } }}>
+      <div class="drawer-head">
+        <h3>{props.host.id ? t("Edit host") : t("New host")}</h3>
+        <button class="icon-btn" title={t("Close (Esc)")} onClick={() => props.onDone()}><Icon name="close" size={13} /></button>
       </div>
-      <div class="form-row"><label>{t("Login")}</label>
-        <div class="seg" style={{ width: "260px" }}>
-          <button class={h().auth === "key" ? "on" : ""} onClick={() => set("auth", "key")}>{t("Key or agent")}</button>
-          <button class={h().auth === "password" ? "on" : ""} data-auth="password" onClick={() => set("auth", "password")}>{t("Password")}</button>
+      <div class="drawer-body">
+        <div class="drawer-card">
+          <div class="drawer-address">
+            <OsBadge os={h().os} size={36} />
+            <input ref={first} class="text-input mono" data-field="hostname" placeholder={t("IP or host name")} value={h().hostname} onInput={(e) => set("hostname", e.currentTarget.value)} />
+          </div>
+          <input class="text-input" data-field="label" value={h().label} placeholder={t("Name, e.g. Production API")} onInput={(e) => set("label", e.currentTarget.value)} />
+          <div class="inline-fields">
+            <input class="text-input" list="kelpie-host-groups" value={h().group} placeholder={t("Group")} onInput={(e) => set("group", e.currentTarget.value)} />
+            <input class="text-input" value={h().tags.join(", ")} placeholder={t("Tags")} onInput={(e) => set("tags", e.currentTarget.value.split(",").map((s) => s.trim()).filter(Boolean))} />
+          </div>
+          <datalist id="kelpie-host-groups"><For each={[...new Set(vault().hosts.map((x) => x.group).filter(Boolean))]}>{(g) => <option value={g} />}</For></datalist>
         </div>
-      </div>
-      <Show when={h().auth === "password"}>
-        <div class="form-row"><label>{t("Password")}</label>
-          <div>
-            <input class="text-input" type="password" data-field="password" autocomplete="off" placeholder={hasPassword() ? t("Saved — type to replace") : ""} value={password()} onInput={(e) => setPassword(e.currentTarget.value)} />
+        <div class="drawer-card">
+          <div class="drawer-port">{t("SSH on")} <input class="text-input mono" data-field="port" placeholder="22" value={h().port ?? ""} onInput={(e) => set("port", Number(e.currentTarget.value) || null)} /> {t("port")}</div>
+          <div class="drawer-title">{t("Credentials")}</div>
+          <input class="text-input mono" data-field="user" placeholder={t("Username")} value={h().user} onInput={(e) => set("user", e.currentTarget.value)} />
+          <div class="seg">
+            <button class={h().auth === "key" ? "on" : ""} onClick={() => set("auth", "key")}>{t("Key or agent")}</button>
+            <button class={h().auth === "password" ? "on" : ""} data-auth="password" onClick={() => set("auth", "password")}>{t("Password")}</button>
+          </div>
+          <Show when={h().auth === "password"}>
+            <input class="text-input" type="password" data-field="password" autocomplete="off" placeholder={hasPassword() ? t("Saved — type to replace") : t("Password")} value={password()} onInput={(e) => setPassword(e.currentTarget.value)} />
             <div class="form-note">{t("Kept in the system credential store, never in Kelpie's files.")}</div>
+          </Show>
+          <div class="inline-fields">
+            <select class="text-input" style={{ flex: 1, width: "auto" }} value={h().identityFile} onChange={(e) => set("identityFile", e.currentTarget.value)}>
+              <option value="">{t("Default keys and the agent")}</option>
+              <For each={keys() ?? []}>{(k) => <option value={k.path}>{k.name} ({k.kind.replace("ssh-", "")})</option>}</For>
+              <Show when={h().identityFile && !(keys() ?? []).some((k) => k.path === h().identityFile)}><option value={h().identityFile}>{h().identityFile}</option></Show>
+            </select>
+            <button class="btn" onClick={() => void browseKey()}>{t("Browse…")}</button>
           </div>
         </div>
-      </Show>
-      <div class="form-row"><label>{t("Key file")}</label>
+        <div class="drawer-card drawer-opts">
+          <Opt label={t("Start folder")} value={h().folder || t("the login folder")}>
+            <input class="text-input mono" data-field="folder" value={h().folder} placeholder={t("the login folder")} onInput={(e) => set("folder", e.currentTarget.value)} />
+          </Opt>
+          <Opt label={t("Startup command")} value={h().startup || t("None")}>
+            <input class="text-input mono" value={h().startup} placeholder="cd ~/app && git status" onInput={(e) => set("startup", e.currentTarget.value)} /> {/* i18n-ignore */}
+          </Opt>
+          <Opt label={t("Keep sessions in tmux")} value={h().tmux ? t("On") : t("Off")}>
+            <label class="check-label"><input type="checkbox" checked={h().tmux} onChange={(e) => set("tmux", e.currentTarget.checked)} /> {t("Keep sessions in tmux")}</label>
+          </Opt>
+          <Opt label={t("Agent forwarding")} value={h().forwardAgent ? t("On") : t("Off")}>
+            <label class="check-label"><input type="checkbox" checked={h().forwardAgent} onChange={(e) => set("forwardAgent", e.currentTarget.checked)} /> {t("Forward the SSH agent")}</label>
+          </Opt>
+          <Opt label={t("Jump host")} value={h().jump || t("None")}>
+            <input class="text-input mono" list="kelpie-jump-hosts" placeholder={t("none (another saved host's alias, or user@host)")} value={h().jump} onInput={(e) => set("jump", e.currentTarget.value)} />
+            <datalist id="kelpie-jump-hosts"><For each={others()}>{(x) => <option value={x.alias}>{x.label}</option>}</For></datalist>
+          </Opt>
+          <Opt label={t("Environment")} value={Object.keys(h().env).join(", ") || t("None")}>
+            <textarea class="text-input mono" rows={2} style={{ height: "auto" }} placeholder={"LANG=C.UTF-8" /* i18n-ignore */} value={envText()}
+              onInput={(e) => set("env", Object.fromEntries(e.currentTarget.value.split("\n").map((l) => l.split("=")).filter((p) => p[0]?.trim() && p.length > 1).map(([k, ...v]) => [k.trim(), v.join("=")])))} />
+          </Opt>
+          <Opt label={t("Keepalive (s)")} value={String(h().keepalive || t("Default"))}>
+            <input class="text-input" style={{ width: "80px" }} value={h().keepalive} onInput={(e) => set("keepalive", Number(e.currentTarget.value) || 0)} />
+          </Opt>
+          <Opt label={t("Appearance")} value={findTerminalTheme(h().terminalTheme)?.label ?? t("App's terminal theme")}>
+            <div class="inline-fields">
+              <For each={["", "#5b8def", "#3fb950", "#d29922", "#f85149", "#a371f7", "#39c5cf"]}>
+                {(c) => <button class={`host-swatch${h().color === c ? " on" : ""}`} style={{ background: c || "var(--bg-elev-2)" }} title={c || t("None")} onClick={() => set("color", c)} />}
+              </For>
+            </div>
+            <select class="text-input" data-field="terminal-theme" value={h().terminalTheme} onChange={(e) => set("terminalTheme", e.currentTarget.value)}>
+              <option value="">{t("App's terminal theme")}</option>
+              <For each={terminalThemes()}>{(th) => <option value={th.id}>{th.label}</option>}</For>
+            </select>
+            <div class="form-note">{t("Panes on this host use this terminal theme, so they never look like another machine.")}</div>
+          </Opt>
+          <Opt label={t("SSH alias")} value={h().alias || t("from the name")}>
+            <input class="text-input mono" value={h().alias} placeholder={t("from the name")} onInput={(e) => set("alias", e.currentTarget.value)} />
+          </Opt>
+          <Opt label={t("Notes")} value={h().notes.trim() ? "…" : t("None")}>
+            <textarea class="text-input" rows={3} style={{ height: "auto" }} value={h().notes} onInput={(e) => set("notes", e.currentTarget.value)} />
+          </Opt>
+        </div>
+      </div>
+      <div class="drawer-foot">
+        <Show when={error()}><div class="form-note error">{error()}</div></Show>
         <div class="inline-fields">
-          <select class="text-input" style={{ flex: 1, width: "auto" }} value={h().identityFile} onChange={(e) => set("identityFile", e.currentTarget.value)}>
-            <option value="">{t("Default keys and the agent")}</option>
-            <For each={keys() ?? []}>{(k) => <option value={k.path}>{k.name} ({k.kind.replace("ssh-", "")})</option>}</For>
-            <Show when={h().identityFile && !(keys() ?? []).some((k) => k.path === h().identityFile)}><option value={h().identityFile}>{h().identityFile}</option></Show>
-          </select>
-          <button class="btn" onClick={() => void browseKey()}>{t("Browse…")}</button>
+          <button class="btn" data-action="save-host" disabled={!h().hostname.trim()} onClick={() => void save().then((id) => id && props.onDone(id))}>{t("Save")}</button>
+          <button class="btn primary drawer-connect" data-action="connect-host" disabled={!h().hostname.trim() || connecting()} onClick={() => void connect()}>{connecting() ? t("Connecting…") : t("Connect")}</button>
         </div>
-      </div>
-      <div class="form-row"><label>{t("Jump host")}</label>
-        <input class="text-input mono" list="kelpie-jump-hosts" placeholder={t("none (another saved host's alias, or user@host)")} value={h().jump} onInput={(e) => set("jump", e.currentTarget.value)} />
-        <datalist id="kelpie-jump-hosts"><For each={others()}>{(x) => <option value={x.alias}>{x.label}</option>}</For></datalist>
-      </div>
-      <div class="form-row"><label>{t("Group")}</label><input class="text-input" list="kelpie-host-groups" value={h().group} placeholder={t("e.g. Production")} onInput={(e) => set("group", e.currentTarget.value)} />
-        <datalist id="kelpie-host-groups"><For each={[...new Set(vault().hosts.map((x) => x.group).filter(Boolean))]}>{(g) => <option value={g} />}</For></datalist>
-      </div>
-      <div class="form-row"><label>{t("Tags")}</label><input class="text-input" value={h().tags.join(", ")} placeholder="gpu, staging" onInput={(e) => set("tags", e.currentTarget.value.split(",").map((s) => s.trim()).filter(Boolean))} /></div> {/* i18n-ignore */}
-      <div class="form-row"><label>{t("Start folder")}</label><input class="text-input mono" value={h().folder} placeholder={t("the login folder")} onInput={(e) => set("folder", e.currentTarget.value)} /></div>
-      <div class="form-row"><label>{t("Startup command")}</label><input class="text-input mono" value={h().startup} placeholder="cd ~/app && git status" onInput={(e) => set("startup", e.currentTarget.value)} /></div> {/* i18n-ignore */}
-      <div class="form-row"><label>{t("Environment")}</label><textarea class="text-input mono" rows={2} style={{ height: "auto" }} placeholder={"LANG=C.UTF-8" /* i18n-ignore */} value={envText()}
-        onInput={(e) => set("env", Object.fromEntries(e.currentTarget.value.split("\n").map((l) => l.split("=")).filter((p) => p[0]?.trim() && p.length > 1).map(([k, ...v]) => [k.trim(), v.join("=")])))} /></div>
-      <div class="form-row"><label>{t("Options")}</label>
-        <div class="inline-fields" style={{ "flex-wrap": "wrap" }}>
-          <label class="check-label"><input type="checkbox" checked={h().tmux} onChange={(e) => set("tmux", e.currentTarget.checked)} /> {t("Keep sessions in tmux")}</label>
-          <label class="check-label"><input type="checkbox" checked={h().forwardAgent} onChange={(e) => set("forwardAgent", e.currentTarget.checked)} /> {t("Forward the SSH agent")}</label>
-          <label class="check-label">{t("Keepalive (s)")} <input class="text-input" style={{ width: "60px" }} value={h().keepalive} onInput={(e) => set("keepalive", Number(e.currentTarget.value) || 0)} /></label>
-        </div>
-      </div>
-      <div class="form-row"><label>{t("Colour")}</label>
-        <div class="inline-fields">
-          <For each={["", "#5b8def", "#3fb950", "#d29922", "#f85149", "#a371f7", "#39c5cf"]}>
-            {(c) => <button class={`host-swatch${h().color === c ? " on" : ""}`} style={{ background: c || "var(--bg-elev-2)" }} title={c || t("None")} onClick={() => set("color", c)} />}
-          </For>
-        </div>
-      </div>
-      <div class="form-row"><label>{t("SSH alias")}</label><input class="text-input mono" value={h().alias} placeholder={t("from the name")} onInput={(e) => set("alias", e.currentTarget.value)} /></div>
-      <div class="form-row"><label>{t("Notes")}</label><textarea class="text-input" rows={3} style={{ height: "auto" }} value={h().notes} onInput={(e) => set("notes", e.currentTarget.value)} /></div>
-      <Show when={error()}><div class="form-note error">{error()}</div></Show>
-      <div class="inline-fields">
-        <button class="btn primary" data-action="save-host" disabled={!h().hostname.trim()} onClick={() => void save()}>{t("Save")}</button>
-        <button class="btn" onClick={() => props.onDone()}>{t("Cancel")}</button>
       </div>
     </div>
   );

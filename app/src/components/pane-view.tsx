@@ -1,8 +1,11 @@
-import { For, Match, Show, Switch, createEffect, createMemo } from "solid-js";
+import { For, Match, Show, Switch, createEffect, createMemo, createSignal } from "solid-js";
+import { HostChip, RunOnPicker, initialRunOn, resolveRunOn, runOnAgents, runOnChoices, type RunOn } from "./host-target";
+import { hostOf, projectHosts, vault } from "../lib/ssh-hosts";
+import { projectTarget, sessionTarget } from "../lib/remote";
 import { openNewSession } from "./new-session-menu";
 import { MicButton } from "./voice";
 import { store } from "../lib/store";
-import { allPanes, cyclePane } from "../lib/layout";
+import { allPanes, cyclePane, findPane } from "../lib/layout";
 import { Icon, KindGlyph } from "./icons";
 import { StatusDot } from "./sidebar";
 import { TerminalPane } from "./terminal-pane";
@@ -13,7 +16,7 @@ import { paneTitle } from "./workspace-view";
 import { switchToChat, switchToTerminal, supportsChat } from "../chat/mode-switch";
 import { startPaneDrag } from "./split-view";
 import { BrowserPane } from "./browser-pane";
-import { kindInfo, projectAgents } from "../lib/agents";
+import { kindInfo } from "../lib/agents";
 import type { Pane, Project, Tab } from "../lib/types";
 import { t } from "../lib/i18n";
 
@@ -47,16 +50,24 @@ export function PaneView(props: { pane: Pane; project: Project; tab: Tab }) {
       <button class="icon-btn" title={t("Close pane")} onClick={close}><Icon name="close" size={12} /></button>
     </>
   );
+  /** The host this pane's session runs on, when it is not where the project is (a remote pane in
+   *  a local project, or a pane on another host): always named in the header. */
+  const target = () => (session() ? sessionTarget(session()!) : undefined);
+  const elsewhere = () => !!target() && target()!.dest !== projectTarget(props.project)?.dest;
+  const hostColor = () => (target() ? hostOf(target())?.color || "var(--accent)" : undefined);
   // File/diff viewers have their own top bar: give them the header instead of a floating
   // toolbar so the two never overlap.
   const hasHeader = () =>
-    multi() || zoomedHere() || props.pane.kind === "file" || props.pane.kind === "diff" || (session() && chatable());
+    multi() || zoomedHere() || props.pane.kind === "file" || props.pane.kind === "diff" || (session() && chatable()) || elsewhere();
   // Chat view runs the agent as a local process: not for sessions on another machine.
   const chatable = () => !!session() && supportsChat(session()!.kind) && !session()!.remote;
   const broadcasting = () => !!props.tab.broadcast && props.pane.kind === "terminal";
 
   return (
-    <div class={`pane${focused() && multi() ? " focused" : ""}${broadcasting() ? " broadcast" : ""}`} data-pane={props.pane.id} data-tab={props.tab.id} onPointerDown={focus}>
+    <div class={`pane${focused() && multi() ? " focused" : ""}${broadcasting() ? " broadcast" : ""}${target() ? " on-host" : ""}`} data-pane={props.pane.id} data-tab={props.tab.id} data-pane-host={target()?.dest}
+      style={hostColor() ? { "--host-color": hostColor() } : undefined} onPointerDown={focus}>
+      {/* Above the pane's opaque children (::before / ::after mark broadcast and focus). */}
+      <Show when={hostColor()}><div class="pane-host-stripe" /></Show>
       <Show when={!hasHeader()}>
         <div class="pane-tools">{tools()}</div>
       </Show>
@@ -65,6 +76,7 @@ export function PaneView(props: { pane: Pane; project: Project; tab: Tab }) {
           <Show when={session()} fallback={<Icon name={props.pane.kind === "empty" ? "plus" : props.pane.kind === "browser" ? "globe" : "files"} size={13} />}>
             {(s) => <><StatusDot s={s()} /><KindGlyph kind={s().kind} size={14} /></>}
           </Show>
+          <Show when={elsewhere() && target()}>{(tg) => <HostChip target={tg()} path />}</Show>
           <span class="title">{paneTitle(props.pane)}</span>
           <Show when={broadcasting()}>
             <span class="badge broadcast-badge" title={t("Typing here goes to every terminal in this tab")}>{t("Broadcast")}</span>
@@ -103,18 +115,34 @@ export function PaneView(props: { pane: Pane; project: Project; tab: Tab }) {
   );
 }
 
+const workspaceHasPane = (projectId: string, paneId: string) => store.workspace(projectId).tabs.some((t) => findPane(t.root, paneId)?.kind === "empty");
+
 /** An empty pane (a new split or grid cell): asks what to run in it. One click or key 1–9
  *  starts an agent or a shell; "More…" opens the full dialog for this pane; Esc closes it. */
 function EmptyPane(props: { project: Project; tab: Tab; pane: Pane; focused: boolean }) {
   let el!: HTMLDivElement;
-  const kinds = () => [...projectAgents(props.project, store.state.settings.hiddenAgents), "shell"];
+  const [runOn, setRunOn] = createSignal<RunOn>(initialRunOn(props.project, props.pane.target));
+  const kinds = () => [...runOnAgents(props.project, runOn(), store.state.settings.hiddenAgents), "shell"];
   const into = () => ({ tabId: props.tab.id, paneId: props.pane.id });
   // One start per pane: a double click or a held key must not start a second session.
   let starting = false;
-  const start = (kind: string) => {
+  const start = async (kind: string) => {
     if (starting) return;
     starting = true;
-    void store.newSession(props.project.id, kind, { into: into() }).then((s) => !s && (starting = false));
+    // Read before the host check (it can take seconds): a pane closed meanwhile must not start
+    // anything, and its props stop resolving once it leaves the tree.
+    const projectId = props.project.id;
+    const place = into();
+    const target = await resolveRunOn(props.project, runOn());
+    const open = workspaceHasPane(projectId, place.paneId);
+    const s = target === null || !open ? undefined : await store.newSession(projectId, kind, { into: place, target });
+    if (!s) starting = false;
+  };
+  /** Tab moves to the next machine of the "Run on" row. */
+  const nextMachine = (delta: number) => {
+    const list = runOnChoices(props.project, runOn());
+    const id = list[(list.indexOf(runOn().hostId) + delta + list.length) % list.length];
+    if (id !== runOn().hostId) setRunOn({ hostId: id, path: projectHosts(props.project).find((l) => l.host.id === id)?.path ?? "" });
   };
   // Take the keyboard when focused (and again when a dialog closes), so a split can be
   // answered without the mouse; never from behind an open dialog.
@@ -126,7 +154,10 @@ function EmptyPane(props: { project: Project; tab: Tab; pane: Pane; focused: boo
     const n = Number(e.key);
     if (Number.isInteger(n) && n >= 1 && n <= Math.min(9, kinds().length)) {
       e.preventDefault();
-      start(kinds()[n - 1]);
+      void start(kinds()[n - 1]);
+    } else if (e.key === "Tab" && runOnChoices(props.project, runOn()).length > 1) {
+      e.preventDefault();
+      nextMachine(e.shiftKey ? -1 : 1);
     } else if (e.key === "Escape") {
       e.preventDefault();
       // Cancelling a split goes back to the pane before it (the one that was split).
@@ -143,22 +174,25 @@ function EmptyPane(props: { project: Project; tab: Tab; pane: Pane; focused: boo
   return (
     <div class="empty-pane" ref={el} tabindex={-1} onKeyDown={onKey}>
       <div class="empty-pane-title">{t("What should run in this pane?")}</div>
+      <Show when={vault().hosts.length || props.project.remote}>
+        <RunOnPicker project={props.project} value={runOn()} onChange={setRunOn} />
+      </Show>
       <div class="empty-pane-kinds">
         <For each={kinds()}>
           {(k, i) => (
-            <button class="empty-pane-kind" title={kindInfo(k).label} onClick={() => start(k)}>
+            <button class="empty-pane-kind" title={kindInfo(k).label} onClick={() => void start(k)}>
               <KindGlyph kind={k} size={22} />
               <span>{kindInfo(k).label}</span>
               <Show when={i() < 9}><kbd class="empty-pane-key">{i() + 1}</kbd></Show>
             </button>
           )}
         </For>
-        <button class="empty-pane-kind" title={t("Command, arguments, account, chat view…")} onClick={() => openNewSession(into())}>
+        <button class="empty-pane-kind" title={t("Command, arguments, account, chat view…")} onClick={() => openNewSession(into(), runOn())}>
           <Icon name="plus" size={16} />
           <span>{t("More…")}</span>
         </button>
       </div>
-      <div class="empty-pane-hint">{t("1–9 to start · Esc to close")}</div>
+      <div class="empty-pane-hint">{runOnChoices(props.project, runOn()).length > 1 ? t("1–9 to start · Tab: next machine · Esc to close") : t("1–9 to start · Esc to close")}</div>
     </div>
   );
 }

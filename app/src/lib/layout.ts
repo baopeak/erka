@@ -4,7 +4,7 @@
 // A split has any number of children laid out in one direction with `sizes` (fractions that
 // sum to 1). Splits never nest a child split of the same direction (it is flattened), so a
 // grid of R rows × C columns is a `col` split of R `row` splits.
-import type { LayoutNode, LayoutTemplate, LeafNode, Pane, SessionKind, SplitNode } from "./types";
+import type { LayoutNode, LayoutTemplate, LeafNode, Pane, SessionKind, SessionTarget, SplitNode } from "./types";
 import { uid } from "./platform";
 
 export const leaf = (pane: Pane): LeafNode => ({ type: "leaf", id: uid(), pane });
@@ -241,13 +241,21 @@ export function buildGrid(spec: GridSpec, panes: Pane[], filler: () => Pane): La
 // ---------- templates (saved layouts) ----------
 
 /** The shape of a layout with what each pane runs, without any session ids. */
-export function toTemplate(node: LayoutNode, kindOf: (pane: Pane) => SessionKind | null): LayoutTemplate {
-  if (node.type === "leaf") return { type: "leaf", kind: kindOf(node.pane) };
-  return { type: "split", dir: node.dir, sizes: [...node.sizes], children: node.children.map((c) => toTemplate(c, kindOf)) };
+export function toTemplate(node: LayoutNode, leafOf: (pane: Pane) => { kind: SessionKind | null; target?: SessionTarget }): LayoutTemplate {
+  if (node.type === "leaf") {
+    const { kind, target } = leafOf(node.pane);
+    return { type: "leaf", kind, ...(target ? { target } : {}) };
+  }
+  return { type: "split", dir: node.dir, sizes: [...node.sizes], children: node.children.map((c) => toTemplate(c, leafOf)) };
 }
 
 export function templateKinds(t: LayoutTemplate): (SessionKind | null)[] {
-  return t.type === "leaf" ? [t.kind] : t.children.flatMap(templateKinds);
+  return templateLeaves(t).map((l) => l.kind);
+}
+
+/** The panes of a template in reading order. */
+export function templateLeaves(t: LayoutTemplate): Extract<LayoutTemplate, { type: "leaf" }>[] {
+  return t.type === "leaf" ? [t] : t.children.flatMap(templateLeaves);
 }
 
 /** Rebuilds a template, asking `make` for each pane (in reading order). */

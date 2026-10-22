@@ -1,4 +1,4 @@
-import { Match, Show, Switch, createEffect, onMount } from "solid-js";
+import { Match, Show, Switch, createEffect, createMemo, on, onMount } from "solid-js";
 import { errorText } from "../lib/i18n";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { store } from "../lib/store";
@@ -23,13 +23,13 @@ import { LayoutMenuHost } from "./layout-menu";
 import { RunsPage } from "./runs-page";
 import { RemoteDialog } from "./remote-dialog";
 import { HostsPage } from "./hosts-page";
-import { initSshHosts } from "../lib/ssh-hosts";
+import { initSshHosts, vault } from "../lib/ssh-hosts";
 import { MobileApprovals } from "./settings/mobile-settings";
 import { daemon as daemonCall } from "../lib/ipc";
 import { loadSshConfigPath, remoteConfigure } from "../lib/remote";
 import { initRuns } from "../lib/runs";
 import { setCovering } from "../lib/overlays";
-import { setLinkOpener } from "../lib/terminal-host";
+import { allViews, setLinkOpener } from "../lib/terminal-host";
 import { isLocalUrl, openBrowser } from "../lib/browser";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { daemonPalette, findTerminalTheme } from "../lib/terminal-themes";
@@ -63,6 +63,9 @@ export function App() {
     const mode = store.state.settings.keepAwake ?? "off";
     if (store.connected()) void daemon("daemon.set_awake", { mode }).catch(() => {});
   });
+  // A host's terminal theme changed: repaint the terminals (those on that host pick it up).
+  const hostThemes = createMemo(() => vault().hosts.map((h) => `${h.alias}=${h.terminalTheme}`).join("|"));
+  createEffect(on(hostThemes, () => { for (const v of allViews()) v.applySettings(store.state.settings); }, { defer: true }));
   // Hibernated agents resume as soon as their pane is on screen.
   createEffect(() => store.wakeVisible());
   // Theme, density and interface scale are plain CSS switches on the root element.

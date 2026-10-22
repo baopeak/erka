@@ -301,17 +301,26 @@ The **SSH hosts** page (the server icon at the bottom of the sidebar, `Ctrl+Alt+
   (or the SSH agent) or a **password** saved in the system credential store (Windows Credential
   Manager / macOS keychain) — never in Kelpie's files. Jump host, agent forwarding, keepalive,
   environment variables, a start folder and a **startup command** typed into every new shell.
-  *Import* adds the hosts of your SSH config. Search filters by name, address, group or tag.
+  *New host* and *Edit* open a drawer on the right: address and credentials first, the rest as
+  collapsed options, *Save* and **Connect** at the bottom. *Import* adds the hosts of your SSH
+  config. The box at the top filters by name, address, group or tag; type `user@host:port` and
+  press Enter to add that address as a new host. Each host shows a badge of its OS (seen on the
+  last connection).
+- **Appearance**: a colour and a **terminal theme** per host — every pane on that host uses it, so
+  production never looks like your laptop.
 - **One click on a host**: *Terminal*, **Claude Code here** or any other agent the host has, in
-  its folder and inside tmux. *Install Claude Code* types the official installer into a terminal
-  when the host lacks it. *Open as project* adds the host's folder to the sidebar (files, git,
-  search). Sessions on a host resume like local ones.
+  its folder and inside tmux. *Open in* chooses the host's own project or the local project you
+  have open. *Install Claude Code* types the official installer into a terminal when the host
+  lacks it. *Open as project* adds the host's folder to the sidebar (files, git, search). Sessions
+  on a host resume like local ones.
+- **Used in projects**: the projects this host is linked to and the folder each uses; link it to
+  the open project or unlink it (the host stays saved).
 - **First connection**: Kelpie shows the host's key fingerprints before trusting it, and warns
   loudly when a known host's key changed.
 - **Files**: browse the host, upload files or folders (or drop them from Explorer / Finder onto
   the list), download, new folder, rename, delete (`scp` / SFTP).
-- **Run a command on several hosts**: tick hosts in the list, type the command, one terminal
-  each.
+- **Run a command on several hosts**: tick hosts in the list, type the command (or pick a quick
+  command), one terminal each.
 - **Keychain**: the keys in `~/.ssh` with type and fingerprint; generate (Ed25519, RSA 4096,
   ECDSA), import, copy the public key, **install it on a host** (`authorized_keys`), add it to the
   SSH agent, save its passphrase, move it to the trash.
@@ -322,6 +331,32 @@ The **SSH hosts** page (the server icon at the bottom of the sidebar, `Ctrl+Alt+
 Saved hosts become entries of a config Kelpie generates (`ssh/config` in its data folder) that
 ends by including your own SSH config, so `ssh <alias>` aliases keep working and every remote
 project can use a saved host.
+
+### SSH panes in any project
+
+A local project can hold terminals and agents on any saved host, next to its local panes — in the
+same tab, split or grid. An empty pane (a split, a grid cell) and *New session…* have a **Run on**
+row: *This computer*, the hosts linked to the project, or *Other host…* for any saved one; `Tab`
+moves between them in an empty pane. Pick a host, then Claude Code or a shell: it starts in the
+host's folder for this project, inside tmux, with the host's saved password or key. Splitting a
+pane on a host offers that host first, and *Hand off* from an agent on a host starts the next
+agent there too.
+
+- **Links**: *Link to this project* remembers a host and a folder for the project, so its
+  launchers offer it first. Hosts are shared: several projects can link the same host with
+  different folders, and one project can link several hosts. A project can also run panes on a
+  host it is not linked to.
+- **Telling machines apart**: a pane on another machine has a stripe in the host's colour, the
+  host and folder in its header, the host on its tab, and the host's terminal theme. Activity
+  items name the host.
+- **Shared folders**: when an agent of another project already runs in the same folder of that
+  host, the launcher says so before you start a second one.
+- **Saved layouts** remember which panes ran on which host and start them there again — in the
+  folder the project you open the layout in uses on that host. A host that cannot be reached (a
+  new host key, offline) leaves an empty pane offering it.
+
+The file tree, search and source control of the project stay those of this computer; use the
+host's *Files* or *Open as project* to work with its files.
 
 ### Phone access
 

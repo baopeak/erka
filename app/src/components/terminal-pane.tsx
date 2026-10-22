@@ -10,6 +10,9 @@ import { isAgentKind, kindInfo, launchableAgents } from "../lib/agents";
 import { quickCommandsFor } from "../lib/quick-commands";
 import { t } from "../lib/i18n";
 import { commandHint as hint } from "../lib/commands";
+import { sessionTarget } from "../lib/remote";
+import { hostOf } from "../lib/ssh-hosts";
+import { findTerminalTheme } from "../lib/terminal-themes";
 
 export function TerminalPane(props: { sessionId: string; focused: boolean }) {
   let host!: HTMLDivElement;
@@ -18,6 +21,8 @@ export function TerminalPane(props: { sessionId: string; focused: boolean }) {
   const view = getView(props.sessionId, store.state.settings);
   const [finding, setFinding] = createSignal(false);
   const [query, setQuery] = createSignal("");
+  /** Background of the host's own terminal theme, around the terminal. */
+  const hostBg = () => findTerminalTheme(hostOf(session()?.remote)?.terminalTheme)?.colors[0];
 
   onMount(() => {
     view.mount(host);
@@ -82,7 +87,8 @@ export function TerminalPane(props: { sessionId: string; focused: boolean }) {
     if (!s?.project_id) return store.notify(t("Hand-off needs a project session"));
     const text = await transcript().catch(() => "");
     const prompt = `You are taking over a task from another coding agent (${kindInfo(s.kind).label}) working in this folder. Below is the end of its terminal session. Work out what was being done and what is left, then continue.\n\n----- transcript -----\n${text}\n----- end -----`;
-    await store.newSession(s.project_id, kind, { prompt, where: "right" });
+    // On the same machine: an agent on a host hands off to one there, next to it.
+    await store.newSession(s.project_id, kind, { prompt, where: "right", target: sessionTarget(s) });
   };
 
   const menu = (e: MouseEvent) => {
@@ -113,7 +119,7 @@ export function TerminalPane(props: { sessionId: string; focused: boolean }) {
   };
 
   return (
-    <div class="term-wrap" data-session={props.sessionId} onContextMenu={menu}>
+    <div class="term-wrap" data-session={props.sessionId} onContextMenu={menu} style={hostBg() ? { background: hostBg() } : undefined}>
       <div ref={host} style={{ width: "100%", height: "100%" }} />
       <Show when={view.scrolledAway().away}>
         <div class="scroll-pill" data-scroll-pill>
