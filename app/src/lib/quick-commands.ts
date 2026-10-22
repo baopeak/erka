@@ -1,16 +1,19 @@
 // Saved commands/prompts: typed into the focused shell (or a new one), or sent as a prompt to
 // the focused agent session.
 import { store } from "./store";
+import { t } from "./i18n";
 import { sendInput } from "./ipc";
 import { allPanes } from "./layout";
 import { peekView } from "./terminal-host";
 import { getController } from "../chat/mode-switch";
+import { pluginQuickCommands } from "./plugins";
 import type { QuickCommand, SessionInfo } from "./types";
 
-/** Commands for a project: global ones, its own, and ones whose project was removed. */
+/** Commands for a project: global ones, its own, ones whose project was removed, then plugins' ones. */
 export function quickCommandsFor(projectId: string | null): QuickCommand[] {
   const known = new Set(store.state.projects.map((p) => p.id));
-  return (store.state.settings.quickCommands ?? []).filter((c) => !c.projectId || c.projectId === projectId || !known.has(c.projectId));
+  const own = (store.state.settings.quickCommands ?? []).filter((c) => !c.projectId || c.projectId === projectId || !known.has(c.projectId));
+  return [...own, ...pluginQuickCommands()];
 }
 
 function focusedSession(): SessionInfo | undefined {
@@ -38,10 +41,10 @@ export async function typeInto(s: SessionInfo, text: string, enter: boolean, ent
 
 export async function runQuickCommand(c: QuickCommand) {
   const project = store.activeProject();
-  if (!project) return store.notify("Open a project first");
+  if (!project) return store.notify(t("Open a project first"));
   const s = focusedSession();
   if (c.action === "agent") {
-    if (!s?.alive || s.kind === "shell" || s.kind === "custom") return store.notify(`Focus an agent session to send "${c.label}"`);
+    if (!s?.alive || s.kind === "shell" || s.kind === "custom") return store.notify(t("Focus an agent session to send \"{name}\"", { name: c.label }));
     if (s.chat) return getController(s).send(c.text);
     return typeInto(s, c.text, c.enter, 250);
   }

@@ -7,19 +7,12 @@ with ERKA_ENDPOINT/ERKA_DATA_DIR set, debug app built (`cargo build -p erka`).
 """
 import json
 import os
-import subprocess
 import sys
 import time
 
 sys.path.insert(0, os.path.dirname(__file__))
 from wd import Driver  # noqa: E402
-
-REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-
-
-def default_app():
-    meta = json.loads(subprocess.check_output(["cargo", "metadata", "--format-version", "1", "--no-deps"], cwd=REPO))
-    return os.path.join(meta["target_directory"], "debug", "erka.exe" if os.name == "nt" else "erka")
+from smoke_support import REPO, default_app  # noqa: E402
 
 
 shots, scratch = sys.argv[1], sys.argv[2]
@@ -119,7 +112,11 @@ try:
     d.screenshot(os.path.join(shots, "01-terminal.png"))
 
     # Split right with the keyboard shortcut.
+    # A split opens an empty pane asking what to run; pick Terminal from its launcher.
     d.keys("ctrl+shift+d")
+    d.wait("return !!document.querySelector('.empty-pane')", 10)
+    check("split right opens a launcher pane", True)
+    d.js("[...document.querySelectorAll('.empty-pane-kind')].find(b => b.title === 'Terminal').click()")
     d.wait("return document.querySelectorAll('.pane .xterm-screen').length >= 2", 20)
     check("split right creates second terminal", True)
     time.sleep(1)

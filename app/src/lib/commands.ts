@@ -5,13 +5,18 @@
 // never sent to the terminal, so plain Cmd chords are safe.
 import { open } from "@tauri-apps/plugin-dialog";
 import { store } from "./store";
-import { allPanes, cyclePane } from "./layout";
+import { GRID_PRESETS, allPanes, cyclePane, findPane, gridLabel, paneInDirection } from "./layout";
 import { chordLabel, isMac } from "./platform";
 import { allViews, peekView, setAppShortcutMatcher, setOverlayCheck } from "./terminal-host";
 import { navBack, navForward } from "./nav-history";
 import { addExistingWorktrees } from "./worktrees";
 import { openWorktreeDialog } from "../components/worktree-dialog";
+import { openRuns } from "../components/runs-page";
+import { openHosts } from "../components/hosts-page";
+import { openBrowser } from "./browser";
+import { toggleDictation } from "./voice";
 import type { SessionKind } from "./types";
+import { msg, t } from "./i18n";
 
 export interface Command {
   id: string;
@@ -37,8 +42,15 @@ function newSession(kind: SessionKind, where: "tab" | "right" | "down" = "tab") 
   if (p) void store.newSession(p, kind, { where });
 }
 
+function moveActiveTab(delta: 1 | -1) {
+  const f = focusedPane();
+  if (!f) return;
+  const i = store.workspace(f.projectId).tabs.findIndex((x) => x.id === f.tab.id);
+  store.moveTab(f.projectId, f.tab.id, i + delta);
+}
+
 export async function pickProjectFolder() {
-  const dir = await open({ directory: true, multiple: false, title: "Add project folder" });
+  const dir = await open({ directory: true, multiple: false, title: t("Add project folder") });
   if (typeof dir !== "string") return;
   const id = store.addProject(dir);
   // A repository's other worktrees come along, under it.
@@ -52,67 +64,95 @@ function zoom(delta: number) {
   for (const v of allViews()) v.applySettings(store.state.settings);
 }
 
+const FOCUS_LABEL = { left: msg("Focus Pane Left"), right: msg("Focus Pane Right"), up: msg("Focus Pane Up"), down: msg("Focus Pane Down") } as const;
+
 export const commands: Command[] = [
-  { id: "palette", label: "Search Everything", win: "mod+shift+p", mac: "mod+shift+p", run: () => store.setOverlay("palette") },
-  { id: "quickopen", label: "Go to File…", win: "mod+shift+o", mac: "mod+p", run: () => store.setOverlay("quickopen"), when: hasProject },
-  { id: "jump", label: "Jump to Session / Project…", win: "mod+shift+k", mac: "mod+k", run: () => store.setOverlay("jump") },
-  { id: "dashboard", label: "Toggle Agent Dashboard", win: "mod+shift+m", mac: "mod+shift+m", run: () => store.setOverlay(store.overlay() === "dashboard" ? null : "dashboard") },
-  { id: "project.add", label: "Add Project Folder…", run: () => void pickProjectFolder() },
-  { id: "board", label: "Toggle Workspace Board", win: "mod+shift+j", mac: "mod+shift+j", run: () => store.setOverlay(store.overlay() === "board" ? null : "board") },
-  { id: "new.shell", label: "New Terminal", win: "mod+shift+t", mac: "mod+t", run: () => newSession("shell"), when: hasProject },
-  { id: "panel.history", label: "Agent Session History", run: () => store.showRightPanel("history"), when: hasProject },
-  { id: "new.menu", label: "New Session…", win: "mod+shift+n", mac: "mod+shift+n", run: () => store.setOverlay("newsession"), when: hasProject },
-  { id: "new.claude", label: "New Claude Code Session", run: () => newSession("claude"), when: hasProject },
-  { id: "new.codex", label: "New Codex Session", run: () => newSession("codex"), when: hasProject },
-  { id: "new.omp", label: "New OMP Session", run: () => newSession("omp"), when: hasProject },
-  { id: "split.right", label: "Split Right (Terminal)", win: "mod+shift+d", mac: "mod+d", run: () => newSession("shell", "right"), when: hasProject },
-  { id: "split.down", label: "Split Down (Terminal)", win: "mod+shift+s", mac: "mod+shift+d", run: () => newSession("shell", "down"), when: hasProject },
+  { id: "palette", label: msg("Search Everything"), win: "mod+shift+p", mac: "mod+shift+p", run: () => store.setOverlay("palette") },
+  { id: "quickopen", label: msg("Go to File…"), win: "mod+shift+o", mac: "mod+p", run: () => store.setOverlay("quickopen"), when: hasProject },
+  { id: "jump", label: msg("Jump to Session / Project…"), win: "mod+shift+k", mac: "mod+k", run: () => store.setOverlay("jump") },
+  { id: "dashboard", label: msg("Toggle Agent Dashboard"), win: "mod+shift+m", mac: "mod+shift+m", run: () => store.setOverlay(store.overlay() === "dashboard" ? null : "dashboard") },
+  { id: "project.add", label: msg("Add Project Folder…"), run: () => void pickProjectFolder() },
+  { id: "project.addRemote", label: msg("Add Remote Project (SSH)…"), run: () => store.setOverlay("remote") },
+  { id: "board", label: msg("Toggle Workspace Board"), win: "mod+shift+j", mac: "mod+shift+j", run: () => store.setOverlay(store.overlay() === "board" ? null : "board") },
+  { id: "new.shell", label: msg("New Terminal"), win: "mod+shift+t", mac: "mod+t", run: () => newSession("shell"), when: hasProject },
+  { id: "panel.history", label: msg("Agent Session History"), run: () => store.showRightPanel("history"), when: hasProject },
+  { id: "panel.issues", label: msg("Issues (Linear, Jira, GitLab)"), run: () => store.showRightPanel("issues"), when: hasProject },
+  { id: "browser.open", label: msg("Open Browser"), win: "mod+shift+u", mac: "mod+shift+u", run: () => openBrowser(), when: hasProject },
+  { id: "browser.split", label: msg("Open Browser to the Right"), run: () => openBrowser("", "right"), when: hasProject },
+  { id: "new.menu", label: msg("New Session…"), win: "mod+shift+n", mac: "mod+shift+n", run: () => store.setOverlay("newsession"), when: hasProject },
+  { id: "new.claude", label: msg("New Claude Code Session"), run: () => newSession("claude"), when: hasProject },
+  { id: "new.codex", label: msg("New Codex Session"), run: () => newSession("codex"), when: hasProject },
+  { id: "new.omp", label: msg("New OMP Session"), run: () => newSession("omp"), when: hasProject },
+  // Splits open an empty pane that asks which CLI to start (agent, terminal, or the full dialog).
+  { id: "split.right", label: msg("Split Right…"), win: "mod+shift+d", mac: "mod+d", run: () => store.splitPicker(pid()!, "right"), when: hasProject },
+  { id: "split.down", label: msg("Split Down…"), win: "mod+shift+s", mac: "mod+shift+d", run: () => store.splitPicker(pid()!, "down"), when: hasProject },
   {
-    id: "pane.close", label: "Close Pane", win: "mod+shift+w", mac: "mod+w", when: hasProject,
+    id: "pane.close", label: msg("Close Pane"), win: "mod+shift+w", mac: "mod+w", when: hasProject,
     run: () => {
       const f = focusedPane();
       if (!f) return;
       const pane = f.tab && findInTab(f.tab, f.paneId);
       const s = pane?.sessionId ? store.sessions[pane.sessionId] : undefined;
-      if (s?.alive && s.kind !== "shell" && !confirm(`Stop ${s.kind} and close this pane?`)) return;
+      if (s?.alive && s.kind !== "shell" && !confirm(t("Stop {kind} and close this pane?", { kind: s.kind }))) return;
       void store.closePane(f.projectId, f.tab.id, f.paneId);
     },
   },
   {
-    id: "pane.next", label: "Focus Next Pane", win: "alt+]", mac: "mod+]", when: hasProject,
+    id: "pane.next", label: msg("Focus Next Pane"), win: "alt+]", mac: "mod+]", when: hasProject,
     run: () => { const f = focusedPane(); if (f) store.focusPane(f.projectId, f.tab.id, cyclePane(f.tab.root, f.paneId, 1)); },
   },
   {
-    id: "pane.prev", label: "Focus Previous Pane", win: "alt+[", mac: "mod+[", when: hasProject,
+    id: "pane.prev", label: msg("Focus Previous Pane"), win: "alt+[", mac: "mod+[", when: hasProject,
     run: () => { const f = focusedPane(); if (f) store.focusPane(f.projectId, f.tab.id, cyclePane(f.tab.root, f.paneId, -1)); },
   },
-  { id: "tab.next", label: "Next Tab", win: "ctrl+tab", mac: "ctrl+tab", run: () => store.cycleTab(1) },
-  { id: "tab.prev", label: "Previous Tab", win: "ctrl+shift+tab", mac: "ctrl+shift+tab", run: () => store.cycleTab(-1) },
-  { id: "panel.files", label: "Toggle Explorer", win: "mod+shift+e", mac: "mod+shift+e", run: () => store.setRightPanel("files"), when: hasProject },
-  { id: "panel.git", label: "Toggle Source Control", win: "mod+shift+g", mac: "mod+shift+g", run: () => store.setRightPanel("git"), when: hasProject },
-  { id: "panel.search", label: "Search in Files", win: "mod+shift+h", mac: "mod+shift+f", run: () => store.showRightPanel("search"), when: hasProject },
+  ...(["left", "right", "up", "down"] as const).map((dir): Command => ({
+    id: `pane.${dir}`, label: FOCUS_LABEL[dir], win: `mod+alt+arrow${dir}`, mac: `ctrl+alt+arrow${dir}`, when: hasProject,
+    run: () => {
+      const f = focusedPane();
+      if (!f) return;
+      const rects = [...document.querySelectorAll<HTMLElement>(`[data-tab="${f.tab.id}"][data-pane]`)].map((el) => ({ id: el.dataset.pane!, r: el.getBoundingClientRect() }));
+      const next = paneInDirection(rects, f.paneId, dir);
+      if (next) store.focusPane(f.projectId, f.tab.id, next);
+    },
+  })),
+  { id: "layout.menu", label: msg("Layout…"), win: "mod+shift+l", mac: "mod+shift+l", when: () => hasProject() && !!focusedPane(), run: () => document.querySelector<HTMLElement>(".layout-btn")?.click() },
+  { id: "layout.equalize", label: msg("Layout: Make All Panes Equal"), when: () => !!focusedPane(), run: () => { const f = focusedPane(); if (f) store.equalizeTab(f.projectId, f.tab.id); } },
+  { id: "layout.broadcast", label: msg("Layout: Toggle Broadcast Input to All Terminals in Tab"), when: () => !!focusedPane(), run: () => { const f = focusedPane(); if (f) store.setBroadcast(f.projectId, f.tab.id, !f.tab.broadcast); } },
+  ...GRID_PRESETS.map((spec): Command => ({
+    id: `layout.grid.${spec.mode}.${spec.counts.join("-")}`, get label() { return t("Layout: Arrange as {grid}", { grid: gridLabel(spec) }); }, when: () => !!focusedPane(),
+    run: () => { const f = focusedPane(); if (f) store.arrangeTab(f.projectId, f.tab.id, spec); },
+  })),
+  { id: "tab.next", label: msg("Next Tab"), win: "ctrl+tab", mac: "ctrl+tab", run: () => store.cycleTab(1) },
+  { id: "tab.prev", label: msg("Previous Tab"), win: "ctrl+shift+tab", mac: "ctrl+shift+tab", run: () => store.cycleTab(-1) },
+  { id: "tab.moveLeft", label: msg("Move Tab Left"), when: () => !!focusedPane(), run: () => moveActiveTab(-1) },
+  { id: "tab.moveRight", label: msg("Move Tab Right"), when: () => !!focusedPane(), run: () => moveActiveTab(1) },
+  { id: "pane.toNewTab", label: msg("Move Pane to New Tab"), when: () => { const f = focusedPane(); return !!f && allPanes(f.tab.root).length > 1; }, run: () => { const f = focusedPane(); if (f) store.movePaneToTab(f.projectId, f.tab.id, f.paneId, null); } },
+  { id: "panel.files", label: msg("Toggle Explorer"), win: "mod+shift+e", mac: "mod+shift+e", run: () => store.setRightPanel("files"), when: hasProject },
+  { id: "panel.git", label: msg("Toggle Source Control"), win: "mod+shift+g", mac: "mod+shift+g", run: () => store.setRightPanel("git"), when: hasProject },
+  { id: "panel.search", label: msg("Search in Files"), win: "mod+shift+h", mac: "mod+shift+f", run: () => store.showRightPanel("search"), when: hasProject },
   {
-    id: "pane.zoom", label: "Toggle Maximize Pane", win: "mod+shift+enter", mac: "mod+shift+enter", when: hasProject,
+    id: "pane.zoom", label: msg("Toggle Maximize Pane"), win: "mod+shift+enter", mac: "mod+shift+enter", when: hasProject,
     run: () => { const f = focusedPane(); if (f) store.toggleZoom(f.tab.id, f.paneId); },
   },
-  { id: "sidebar", label: "Toggle Sidebar", win: "mod+shift+b", mac: "mod+b", run: () => store.setSettings({ sidebarCollapsed: !store.state.settings.sidebarCollapsed }) },
+  { id: "sidebar", label: msg("Toggle Sidebar"), win: "mod+shift+b", mac: "mod+b", run: () => store.setSettings({ sidebarCollapsed: !store.state.settings.sidebarCollapsed }) },
   {
-    id: "find", label: "Find in Terminal", win: "mod+shift+f", mac: "mod+f",
+    id: "find", label: msg("Find in Terminal"), win: "mod+shift+f", mac: "mod+f",
     run: () => window.dispatchEvent(new CustomEvent("erka:find")),
     // Pages and dialogs have their own find (e.g. Settings search).
     when: () => store.overlay() === null,
   },
-  { id: "settings", label: "Settings", win: "mod+,", mac: "mod+,", run: () => store.openSettings() },
-  { id: "floating.toggle", label: "Toggle Floating Terminal", win: "mod+shift+`", mac: "mod+alt+a", run: () => store.toggleFloating(), when: () => store.state.settings.floatingTerminal },
-  { id: "inbox", label: "Show Activity & Notifications", run: () => window.dispatchEvent(new CustomEvent("erka:inbox")) },
+  { id: "settings", label: msg("Settings"), win: "mod+,", mac: "mod+,", run: () => store.openSettings() },
+  { id: "voice.toggle", label: msg("Dictate (start / stop voice input)"), win: "mod+shift+space", mac: "mod+shift+space", run: toggleDictation },
+  { id: "floating.toggle", label: msg("Toggle Floating Terminal"), win: "mod+shift+`", mac: "mod+alt+a", run: () => store.toggleFloating(), when: () => store.state.settings.floatingTerminal },
+  { id: "inbox", label: msg("Show Activity & Notifications"), run: () => window.dispatchEvent(new CustomEvent("erka:inbox")) },
   {
-    id: "editor.wordWrap", label: "Toggle Word Wrap", win: "alt+z", mac: "alt+z",
+    id: "editor.wordWrap", label: msg("Toggle Word Wrap"), win: "alt+z", mac: "alt+z",
     run: () => store.setSettings({ wordWrap: !store.state.settings.wordWrap }),
     // Only with an editor focused: terminals keep Alt+Z.
     when: () => { const f = focusedPane(); return !!f && findInTab(f.tab, f.paneId)?.kind === "file"; },
   },
   {
-    id: "tabs.closeEditors", label: "Close All Editor Tabs", win: "mod+alt+w", mac: "mod+alt+w", when: hasProject,
+    id: "tabs.closeEditors", label: msg("Close All Editor Tabs"), win: "mod+alt+w", mac: "mod+alt+w", when: hasProject,
     run: () => {
       const p = pid();
       if (!p) return;
@@ -121,17 +161,28 @@ export const commands: Command[] = [
       }
     },
   },
-  { id: "worktree.new", label: "New Worktree…", when: () => { const a = store.activeProject(); const repo = a?.parentId ?? a?.id; return !!repo && !!store.projectInfo[repo]?.is_repo; }, run: () => { const a = store.activeProject()!; openWorktreeDialog(a.parentId ?? a.id); } },
-  { id: "project.sleep", label: "Sleep Project (stop agents, resume on open)", when: hasProject, run: () => void store.sleepProject(pid()!) },
-  { id: "automations", label: "Scheduled Automations…", run: () => store.openSettings("automations") },
+  { id: "worktree.new", label: msg("New Worktree…"), when: () => { const a = store.activeProject(); const repo = a?.parentId ?? a?.id; return !!repo && !a?.remote && !!store.projectInfo[repo]?.is_repo; }, run: () => { const a = store.activeProject()!; openWorktreeDialog(a.parentId ?? a.id); } },
+  { id: "project.sleep", label: msg("Sleep Project (stop agents, resume on open)"), when: hasProject, run: () => void store.sleepProject(pid()!) },
+  { id: "automations", label: msg("Scheduled Automations…"), run: () => store.openSettings("automations") },
+  { id: "accounts", label: msg("Claude / Codex Accounts…"), run: () => store.openSettings("accounts") },
+  { id: "runs", label: msg("Toggle Runs (Orchestration)"), win: "mod+shift+r", mac: "mod+shift+r", run: () => store.setOverlay(store.overlay() === "runs" ? null : "runs") },
+  { id: "runs.new", label: msg("New Run…"), run: () => openRuns(true) },
+  { id: "hosts", label: msg("SSH Hosts…"), win: "mod+alt+h", mac: "mod+alt+h", run: () => (store.overlay() === "hosts" ? store.setOverlay(null) : openHosts()) },
+  { id: "hosts.keys", label: msg("SSH Keys…"), run: () => openHosts("keys") },
+  { id: "hosts.forwards", label: msg("SSH Port Forwarding…"), run: () => openHosts("forwards") },
+  { id: "mobile", label: msg("Mobile Access (pair a phone)…"), run: () => store.openSettings("mobile") },
   // Alt+Shift+Arrow, not Alt+Arrow: shells use Alt+Arrow for word movement.
-  { id: "nav.back", label: "Go Back", win: "shift+alt+arrowleft", mac: "mod+alt+arrowleft", run: navBack, when: () => hasProject() && store.overlay() === null },
-  { id: "nav.forward", label: "Go Forward", win: "shift+alt+arrowright", mac: "mod+alt+arrowright", run: navForward, when: () => hasProject() && store.overlay() === null },
-  { id: "zoom.in", label: "Increase Font Size", win: "mod+=", mac: "mod+=", run: () => zoom(1) },
-  { id: "zoom.out", label: "Decrease Font Size", win: "mod+-", mac: "mod+-", run: () => zoom(-1) },
-  { id: "zoom.reset", label: "Reset Font Size", win: "mod+0", mac: "mod+0", run: () => zoom(0) },
+  { id: "nav.back", label: msg("Go Back"), win: "shift+alt+arrowleft", mac: "mod+alt+arrowleft", run: navBack, when: () => hasProject() && store.overlay() === null },
+  { id: "nav.forward", label: msg("Go Forward"), win: "shift+alt+arrowright", mac: "mod+alt+arrowright", run: navForward, when: () => hasProject() && store.overlay() === null },
+  { id: "zoom.in", label: msg("Increase Font Size"), win: "mod+=", mac: "mod+=", run: () => zoom(1) },
+  { id: "zoom.out", label: msg("Decrease Font Size"), win: "mod+-", mac: "mod+-", run: () => zoom(-1) },
+  { id: "zoom.reset", label: msg("Reset Font Size"), win: "mod+0", mac: "mod+0", run: () => zoom(0) },
+  // Long agent conversations: jump between the prompts you sent (Cmd+Up/Down as in iTerm2).
+  { id: "terminal.prevPrompt", label: msg("Terminal: Previous Prompt"), win: "mod+shift+arrowup", mac: "mod+arrowup", when: hasProject, run: () => focusedView()?.jumpPrompt(-1) },
+  { id: "terminal.nextPrompt", label: msg("Terminal: Next Prompt"), win: "mod+shift+arrowdown", mac: "mod+arrowdown", when: hasProject, run: () => focusedView()?.jumpPrompt(1) },
+  { id: "terminal.bottom", label: msg("Terminal: Scroll to Bottom"), win: "mod+shift+end", mac: "mod+end", when: hasProject, run: () => focusedView()?.scrollToBottom() },
   {
-    id: "terminal.clear", label: "Clear Terminal Buffer", when: hasProject,
+    id: "terminal.clear", label: msg("Clear Terminal Buffer"), when: hasProject,
     run: () => {
       const f = focusedPane();
       const pane = f && findInTab(f.tab, f.paneId);
@@ -140,17 +191,22 @@ export const commands: Command[] = [
   },
 ];
 
+/** The terminal of the focused pane, if it is one. */
+function focusedView() {
+  const f = focusedPane();
+  const pane = f && findInTab(f.tab, f.paneId);
+  return pane?.sessionId ? peekView(pane.sessionId) : undefined;
+}
+
 function findInTab(tab: { root: import("./types").LayoutNode }, paneId: string) {
-  const walk = (n: import("./types").LayoutNode): import("./types").Pane | undefined =>
-    n.type === "leaf" ? (n.pane.id === paneId ? n.pane : undefined) : walk(n.a) ?? walk(n.b);
-  return walk(tab.root);
+  return findPane(tab.root, paneId);
 }
 
 // Project switching: Alt+1..9 (Windows) / Cmd+1..9 (macOS).
 for (let i = 1; i <= 9; i++) {
   commands.push({
     id: `project.${i}`,
-    label: `Switch to Project ${i}`,
+    get label() { return t("Switch to Project {n}", { n: i }); },
     win: `alt+${i}`,
     mac: `mod+${i}`,
     run: () => {
@@ -178,6 +234,7 @@ export function eventChord(e: KeyboardEvent): string {
   else if (e.code === "Minus") key = "-";
   else if (e.code === "Comma") key = ",";
   else if (e.code === "Backquote") key = "`";
+  else if (e.code === "Space") key = "space";
   else if (/^Key[A-Z]$/.test(e.code)) key = e.code.slice(3).toLowerCase();
   // Numpad keys by name: "+" itself would be read as a separator.
   else if (/^Numpad/.test(e.code)) key = e.code.toLowerCase();
@@ -198,6 +255,12 @@ export function normalizeChord(chord: string): string {
 export const defaultChordOf = (c: Command) => (isMac ? c.mac : c.win);
 
 /** The user's override (from Settings → Shortcuts) or the default; "" means unbound. */
+/** " (Ctrl+Shift+X)" for a command's shortcut, to append to a tooltip; "" without one. */
+export function commandHint(id: string): string {
+  const c = commands.find((x) => x.id === id);
+  return c && chordOf(c) ? ` (${chordLabel(chordOf(c)!)})` : "";
+}
+
 export function chordOf(c: Command): string | undefined {
   const override = store.state.keymap?.[c.id];
   return override !== undefined ? override || undefined : defaultChordOf(c);
@@ -229,8 +292,8 @@ function explainIntercept(cmd: Command) {
   const chord = chordOf(cmd);
   if (!chord || explained.has(cmd.id) || !store.state.settings.shortcutHints) return;
   explained.add(cmd.id);
-  store.notify(`${chordLabel(chord)} → ${cmd.label} (kept from the terminal)`, {
-    label: "Don't show again",
+  store.notify(t("{chord} → {command} (kept from the terminal)", { chord: chordLabel(chord), command: t(cmd.label) }), {
+    label: t("Don't show again"),
     run: () => store.setSettings({ shortcutHints: false }),
   }, 5000);
 }

@@ -3,21 +3,28 @@
 // fields, so status ticks from 20 agents re-render single rows, not the list.
 import { For, Show, createMemo, createResource, createSignal } from "solid-js";
 import { store, sessionLabel } from "../lib/store";
-import { pickProjectFolder, chordOf, commands } from "../lib/commands";
+import { pickProjectFolder, chordOf, commandHint, commands } from "../lib/commands";
 import { chordLabel, isMac, relTimeShort } from "../lib/platform";
 import { editorOpen, editorsList, gitBranchDelete, revealEntry } from "../lib/ipc";
 import { pullRequests, prLabel } from "../lib/pull-requests";
 import { switchToChat, switchToTerminal, supportsChat } from "../chat/mode-switch";
 import { daemon } from "../lib/ipc";
 import { Icon, KindGlyph } from "./icons";
+import { findPane } from "../lib/layout";
+import { sessionAccount } from "../lib/accounts";
+import { hostLabel } from "../lib/remote";
 import { canGoBack, canGoForward, navBack, navForward } from "../lib/nav-history";
 import { addExistingWorktrees, checkRemoval, removeWorktree } from "../lib/worktrees";
 import { openWorktreeDialog } from "./worktree-dialog";
 import { openContextMenu, type MenuItem } from "./context-menu";
 import type { Project, SessionInfo } from "../lib/types";
+import { t, msg } from "../lib/i18n";
+import { openHosts } from "./hosts-page";
+
+export const STATUS_WORDS = { idle: msg("idle"), working: msg("working"), waiting: msg("waiting"), exited: msg("exited") } as const;
 
 export function StatusDot(props: { s: SessionInfo }) {
-  return <span class={`dot ${props.s.alive ? props.s.status : "exited"}${props.s.unread ? " unread" : ""}`} title={props.s.alive ? props.s.status : "exited"} />;
+  return <span class={`dot ${props.s.alive ? props.s.status : "exited"}${props.s.unread ? " unread" : ""}`} title={t(STATUS_WORDS[props.s.alive ? props.s.status : "exited"])} />;
 }
 
 /** Row being renamed inline: `s:<session id>` or `p:<project id>`. */
@@ -73,26 +80,24 @@ async function inPane(s: SessionInfo, fn: typeof switchToChat) {
   const project = loc && store.state.projects.find((p) => p.id === loc.projectId);
   const tab = loc && store.workspace(loc.projectId).tabs.find((t) => t.id === loc.tabId);
   if (!loc || !project || !tab) return;
-  const walk = (n: import("../lib/types").LayoutNode): import("../lib/types").Pane | undefined =>
-    n.type === "leaf" ? (n.pane.id === loc.paneId ? n.pane : undefined) : walk(n.a) ?? walk(n.b);
-  const pane = walk(tab.root);
+  const pane = findPane(tab.root, loc.paneId);
   if (pane) await fn(project, tab, pane);
 }
 
 function sessionMenu(s: SessionInfo): MenuItem[] {
   const items: MenuItem[] = [
-    { label: "Rename…", run: () => setRenaming(`s:${s.id}`) },
-    s.unread ? { label: "Mark as read", run: () => void store.markUnread(s.id, false) } : { label: "Mark as unread", run: () => void store.markUnread(s.id, true) },
+    { label: t("Rename…"), run: () => setRenaming(`s:${s.id}`) },
+    s.unread ? { label: t("Mark as read"), run: () => void store.markUnread(s.id, false) } : { label: t("Mark as unread"), run: () => void store.markUnread(s.id, true) },
   ];
-  if (!s.alive && !s.chat) items.push({ label: store.resumable(s) ? "Resume" : "Restart", run: () => void daemon("session.restart", { handle: s.handle }).catch((e) => store.notify(String(e))) });
+  if (!s.alive && !s.chat) items.push({ label: store.resumable(s) ? t("Resume") : t("Restart"), run: () => void daemon("session.restart", { handle: s.handle }).catch((e) => store.notify(String(e))) });
   if (s.alive && supportsChat(s.kind)) {
-    items.push(s.chat ? { label: "Continue in terminal (TUI)", run: () => void inPane(s, switchToTerminal) } : { label: "Continue in chat view", run: () => void inPane(s, switchToChat) });
+    items.push(s.chat ? { label: t("Continue in terminal (TUI)"), run: () => void inPane(s, switchToTerminal) } : { label: t("Continue in chat view"), run: () => void inPane(s, switchToChat) });
   }
   items.push(null, {
-    label: s.alive ? "Stop and close" : "Close", danger: true,
+    label: s.alive ? t("Stop and close") : t("Close"), danger: true,
     run: () => {
       const loc = store.paneLocation(s.id);
-      if (s.alive && s.kind !== "shell" && !confirm(`Stop ${sessionLabel(s)}?`)) return;
+      if (s.alive && s.kind !== "shell" && !confirm(t("Stop {name}?", { name: sessionLabel(s) }))) return;
       if (loc) void store.closePane(loc.projectId, loc.tabId, loc.paneId);
       else void daemon("session.close", { handle: s.handle }).catch((e) => store.notify(String(e)));
     },
@@ -102,39 +107,41 @@ function sessionMenu(s: SessionInfo): MenuItem[] {
 
 /** One confirmation that states everything removal loses, asked before anything is stopped. */
 async function confirmRemoveWorktree(p: Project) {
-  const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
   let check;
   try {
     check = await checkRemoval(p);
   } catch (e) {
-    return store.notify(`Could not inspect the worktree: ${String(e)}`, undefined, 8000);
+    return store.notify(t("Could not inspect the worktree: {error}", { error: String(e) }), undefined, 8000);
   }
   if (check.orphanCommits) {
+    const n = check.orphanCommits;
     return store.notify(
-      `“${p.name}” is on a detached HEAD with ${plural(check.orphanCommits, "commit")} no branch contains. Create a branch for them first (git switch -c <name>), then remove the worktree.`,
+      n === 1
+        ? t("“{name}” is on a detached HEAD with {n} commit no branch contains. Create a branch for them first (git switch -c <name>), then remove the worktree.", { name: p.name, n })
+        : t("“{name}” is on a detached HEAD with {n} commits no branch contains. Create a branch for them first (git switch -c <name>), then remove the worktree.", { name: p.name, n }),
       undefined, 15000,
     );
   }
   const running = projectSessions(p.id).filter((s) => s.alive).length;
   const text = [
-    `Remove worktree “${p.name}”?`,
+    t("Remove worktree “{name}”?", { name: p.name }),
     p.path,
-    running ? `Its ${plural(running, "running session")} will be stopped.` : "",
-    check.changes ? `${plural(check.changes, "uncommitted or untracked file")} will be lost.` : "",
-    "Ignored files in the folder (e.g. .env, build output) are deleted too.",
-    check.branch ? `The branch ${check.branch} is kept.` : "",
+    running ? (running === 1 ? t("Its {n} running session will be stopped.", { n: running }) : t("Its {n} running sessions will be stopped.", { n: running })) : "",
+    check.changes ? (check.changes === 1 ? t("{n} uncommitted or untracked file will be lost.", { n: check.changes }) : t("{n} uncommitted or untracked files will be lost.", { n: check.changes })) : "",
+    t("Ignored files in the folder (e.g. .env, build output) are deleted too."),
+    check.branch ? t("The branch {branch} is kept.", { branch: check.branch }) : "",
   ].filter(Boolean).join("\n\n");
   if (!confirm(text)) return;
   const repo = store.state.projects.find((x) => x.id === p.parentId);
   try {
     const { leftover } = await removeWorktree(p, { force: check.changes > 0 });
-    if (leftover) store.notify(`Removed worktree ${p.name}, but its folder could not be fully deleted (a program still uses it): ${p.path}`, undefined, 12000);
-    else if (!check.branch || !repo) store.notify(`Removed worktree ${p.name}`);
+    if (leftover) store.notify(t("Removed worktree {name}, but its folder could not be fully deleted (a program still uses it): {path}", { name: p.name, path: p.path }), undefined, 12000);
+    else if (!check.branch || !repo) store.notify(t("Removed worktree {name}", { name: p.name }));
   } catch (e) {
-    return store.notify(`Could not remove worktree: ${String(e).replace(/^Error: /, "")}`, undefined, 8000);
+    return store.notify(t("Could not remove worktree: {error}", { error: String(e).replace(/^Error: /, "") }), undefined, 8000);
   }
   if (check.branch && repo) {
-    store.notify(`Removed worktree ${p.name}; branch ${check.branch} kept.`, { label: "Delete branch", run: () => void deleteBranch(repo.path, check.branch!) }, 12000);
+    store.notify(t("Removed worktree {name}; branch {branch} kept.", { name: p.name, branch: check.branch }), { label: t("Delete branch"), run: () => void deleteBranch(repo.path, check.branch!) }, 12000);
   }
 }
 
@@ -142,10 +149,10 @@ async function confirmRemoveWorktree(p: Project) {
 async function deleteBranch(repoPath: string, branch: string) {
   try {
     await gitBranchDelete(repoPath, branch, false);
-    store.notify(`Deleted branch ${branch}`);
+    store.notify(t("Deleted branch {branch}", { branch }));
   } catch (e) {
-    if (!confirm(`${String(e)}\n\nThe branch ${branch} has commits that are not merged. Delete it anyway? Those commits are then only reachable from the reflog.`)) return;
-    await gitBranchDelete(repoPath, branch, true).then(() => store.notify(`Deleted branch ${branch}`), (err) => store.notify(String(err)));
+    if (!confirm(t("{error}\n\nThe branch {branch} has commits that are not merged. Delete it anyway? Those commits are then only reachable from the reflog.", { error: String(e), branch }))) return;
+    await gitBranchDelete(repoPath, branch, true).then(() => store.notify(t("Deleted branch {branch}", { branch })), (err) => store.notify(String(err)));
   }
 }
 
@@ -159,31 +166,36 @@ function projectMenu(p: Project): MenuItem[] {
   return [
     ...(repo
       ? [
-          { label: "New worktree…", run: () => openWorktreeDialog(p.id) },
+          { label: t("New worktree…"), run: () => openWorktreeDialog(p.id) },
           {
-            label: "Add existing worktrees",
-            run: () => void addExistingWorktrees(p).then((n) => store.notify(n ? `Added ${n} worktree${n > 1 ? "s" : ""}` : "No other worktrees")).catch((e) => store.notify(String(e))),
+            label: t("Add existing worktrees"),
+            run: () => void addExistingWorktrees(p).then((n) => store.notify(n ? (n === 1 ? t("Added {n} worktree", { n }) : t("Added {n} worktrees", { n })) : t("No other worktrees"))).catch((e) => store.notify(String(e))),
           },
           null,
         ]
       : []),
-    { label: "Rename…", run: () => setRenaming(`p:${p.id}`) },
-    { label: store.metaFor(p)?.comment ? "Edit comment…" : "Add comment…", run: () => setRenaming(`c:${p.id}`) },
-    { label: folded ? "Show sessions" : "Hide sessions", run: () => store.setCollapsed(p.id, !folded) },
-    { label: isMac ? "Reveal in Finder" : "Reveal in Explorer", run: () => void revealEntry(p.path, "") },
-    ...(editors() ?? []).slice(0, 4).map((ed) => ({ label: `Open in ${ed.label}`, run: () => void editorOpen(ed.id, p.path).catch((e) => store.notify(String(e))) })),
+    { label: t("Rename…"), run: () => setRenaming(`p:${p.id}`) },
+    { label: store.metaFor(p)?.comment ? t("Edit comment…") : t("Add comment…"), run: () => setRenaming(`c:${p.id}`) },
+    { label: folded ? t("Show sessions") : t("Hide sessions"), run: () => store.setCollapsed(p.id, !folded) },
+    { label: isMac ? t("Reveal in Finder") : t("Reveal in Explorer"), run: () => void revealEntry(p.path, "") },
+    ...(editors() ?? []).slice(0, 4).map((ed) => ({ label: t("Open in {editor}", { editor: ed.label }), run: () => void editorOpen(ed.id, p.path).catch((e) => store.notify(String(e))) })),
     ...(projectSessions(p.id).some((s) => s.alive && store.resumable(s))
-      ? [{ label: "Sleep (stop agents, resume on open)", run: () => void store.sleepProject(p.id) }]
+      ? [{ label: t("Sleep (stop agents, resume on open)"), run: () => void store.sleepProject(p.id) }]
       : []),
-    { label: "Move up", run: () => store.moveProject(p.id, -1) },
-    { label: "Move down", run: () => store.moveProject(p.id, 1) },
+    { label: t("Move up"), run: () => store.moveProject(p.id, -1) },
+    { label: t("Move down"), run: () => store.moveProject(p.id, 1) },
     null,
-    ...(worktree ? [{ label: "Remove worktree…", danger: true, run: () => void confirmRemoveWorktree(p) }] : []),
+    ...(worktree ? [{ label: t("Remove worktree…"), danger: true, run: () => void confirmRemoveWorktree(p) }] : []),
     {
-      label: "Remove from Erka", danger: true,
+      label: t("Remove from Erka"), danger: true,
       run: () => {
         const kids = store.childrenOf(p.id).length;
-        if (confirm(`Remove ${p.name}${kids ? ` and its ${kids} worktree${kids > 1 ? "s" : ""}` : ""} from the sidebar? Files and running sessions are not touched.`)) store.removeProject(p.id);
+        const text = !kids
+          ? t("Remove {name} from the sidebar? Files and running sessions are not touched.", { name: p.name })
+          : kids === 1
+            ? t("Remove {name} and its {n} worktree from the sidebar? Files and running sessions are not touched.", { name: p.name, n: kids })
+            : t("Remove {name} and its {n} worktrees from the sidebar? Files and running sessions are not touched.", { name: p.name, n: kids });
+        if (confirm(text)) store.removeProject(p.id);
       },
     },
   ];
@@ -203,7 +215,9 @@ function SessionRow(props: { s: SessionInfo }) {
         <Show when={renaming() === `s:${props.s.id}`} fallback={<span class="name">{sessionLabel(props.s)}</span>}>
           <RenameInput value={props.s.name ?? sessionLabel(props.s)} onDone={(v) => v !== null && void store.renameSession(props.s.id, v.trim() || null)} />
         </Show>
-        <Show when={props.s.model}><span class="model">{shortModel(props.s.model)}</span></Show>
+        <Show when={props.s.model || sessionAccount(props.s)}>
+          <span class="model">{[props.s.model && shortModel(props.s.model), sessionAccount(props.s)?.label].filter(Boolean).join(" · ")}</span>
+        </Show>
       </span>
       <span class="age">{relTimeShort(props.s.last_activity || props.s.created_at, now())}</span>
     </div>
@@ -244,7 +258,7 @@ function ProjectRow(props: { project: Project }) {
         data-project={props.project.id}
       >
         <Show when={!collapsedSidebar() && (sessions().length || children().length)}>
-          <button class="chev" title={folded() ? "Show sessions" : "Hide sessions"} onClick={(e) => { e.stopPropagation(); store.setCollapsed(props.project.id, !folded()); }}>
+          <button class="chev" title={folded() ? t("Show sessions") : t("Hide sessions")} onClick={(e) => { e.stopPropagation(); store.setCollapsed(props.project.id, !folded()); }}>
             <Icon name={folded() ? "chevronRight" : "chevronDown"} size={11} />
           </button>
         </Show>
@@ -259,15 +273,20 @@ function ProjectRow(props: { project: Project }) {
             <Show when={renaming() === `c:${props.project.id}`}>
               <RenameInput value={store.metaFor(props.project)?.comment ?? ""} onDone={(v) => v !== null && void store.setComment(props.project, v)} />
             </Show>
+            <Show when={props.project.remote}>
+              <span class="project-sub remote-host" title={props.project.remote!.tmux ? t("On {host} over SSH · sessions kept in tmux", { host: hostLabel(props.project) }) : t("On {host} over SSH", { host: hostLabel(props.project) })}>
+                <Icon name="server" size={10} /> {hostLabel(props.project)}
+              </span>
+            </Show>
             <Show when={info()?.is_repo}>
               <span class="project-sub">
-                <Show when={!worktree()}><Icon name="branch" size={10} /> {info()!.branch ?? "detached"}</Show>
-                <Show when={worktree() && info()!.branch !== props.project.name}>{info()!.branch ?? "detached"}</Show>
+                <Show when={!worktree()}><Icon name="branch" size={10} /> {info()!.branch ?? t("detached")}</Show>
+                <Show when={worktree() && info()!.branch !== props.project.name}>{info()!.branch ?? t("detached")}</Show>
                 {info()!.dirty ? "*" : ""}
                 <Show when={info()!.ahead || info()!.behind}> ↑{info()!.ahead}↓{info()!.behind}</Show>
-                <Show when={children().length}><span class="primary-tag">primary</span></Show>
+                <Show when={children().length}><span class="primary-tag">{t("primary")}</span></Show>
                 <Show when={pullRequests.prs[props.project.id]}>
-                  {(pr) => <span class={`primary-tag pr-${prLabel(pr())}`} title={`${pr().title} (${prLabel(pr())}, checks ${pr().checks})`}>#{pr().number}</span>}
+                  {(pr) => <span class={`primary-tag pr-${prLabel(pr())}`} title={t("{title} ({state}, checks {checks})", { title: pr().title, state: prLabel(pr()), checks: pr().checks })}>{pr().provider === "gitlab" ? "!" : "#"}{pr().number}</span>}
                 </Show>
               </span>
             </Show>
@@ -276,9 +295,9 @@ function ProjectRow(props: { project: Project }) {
             </Show>
           </span>
           <span class="project-badges">
-            <Show when={counts().waiting}><span class="badge waiting" title="Needs you">{counts().waiting}</span></Show>
-            <Show when={counts().working}><span class="badge working" title="Working">{counts().working}</span></Show>
-            <Show when={counts().unread}><span class="badge unread" title="Finished, unread">{counts().unread}</span></Show>
+            <Show when={counts().waiting}><span class="badge waiting" title={t("Needs you")}>{counts().waiting}</span></Show>
+            <Show when={counts().working}><span class="badge working" title={t("Working")}>{counts().working}</span></Show>
+            <Show when={counts().unread}><span class="badge unread" title={t("Finished, unread")}>{counts().unread}</span></Show>
           </span>
         </Show>
         <Show when={collapsedSidebar() && (counts().waiting || counts().unread)}>
@@ -299,12 +318,9 @@ function ProjectRow(props: { project: Project }) {
   );
 }
 
-const navHint = (id: string) => {
-  const c = commands.find((x) => x.id === id);
-  return c && chordOf(c) ? ` (${chordLabel(chordOf(c)!)})` : "";
-};
+const navHint = commandHint;
 
-const FILTERS = { all: "All projects", running: "Projects with running sessions", attention: "Projects that need you" } as const;
+const FILTERS = { all: msg("All projects"), running: msg("Projects with running sessions"), attention: msg("Projects that need you") } as const;
 
 export function Sidebar() {
   const collapsed = () => store.state.settings.sidebarCollapsed;
@@ -346,42 +362,44 @@ export function Sidebar() {
         <Show when={!collapsed()}>
           <span>Erka</span>
           <span class="spacer" />
-          <button class="icon-btn mini" title={`Back${navHint("nav.back")}`} disabled={!canGoBack()} onClick={navBack}><Icon name="back" size={14} /></button>
-          <button class="icon-btn mini" title={`Forward${navHint("nav.forward")}`} disabled={!canGoForward()} onClick={navForward}><Icon name="forward" size={14} /></button>
+          <button class="icon-btn mini" title={t("Back") + navHint("nav.back")} disabled={!canGoBack()} onClick={navBack}><Icon name="back" size={14} /></button>
+          <button class="icon-btn mini" title={t("Forward") + navHint("nav.forward")} disabled={!canGoForward()} onClick={navForward}><Icon name="forward" size={14} /></button>
         </Show>
       </div>
-      <Show when={!collapsed()} fallback={<button class="icon-btn" style={{ margin: "0 auto 6px" }} title="Search" onClick={() => store.setOverlay("palette")}><Icon name="search" /></button>}>
+      <Show when={!collapsed()} fallback={<button class="icon-btn" style={{ margin: "0 auto 6px" }} title={t("Search")} onClick={() => store.setOverlay("palette")}><Icon name="search" /></button>}>
         <button class="search-btn" onClick={() => store.setOverlay("palette")}>
           <Icon name="search" size={14} />
-          <span>Search</span>
+          <span>{t("Search")}</span>
           <span class="kbd">{searchChord()}</span>
         </button>
         <div class="section-label">
-          Projects<span class="spacer" />
-          <button class={`icon-btn mini${store.state.settings.projectFilter !== "all" ? " active" : ""}`} title={`Filter: ${FILTERS[store.state.settings.projectFilter ?? "all"]}`} onClick={cycleFilter}><Icon name="filter" size={13} /></button>
-          <button class={`icon-btn mini${store.state.settings.projectSort === "recent" ? " active" : ""}`} title={store.state.settings.projectSort === "recent" ? "Sorted by recent activity" : "Manual order"}
+          {t("Projects")}<span class="spacer" />
+          <button class={`icon-btn mini${store.state.settings.projectFilter !== "all" ? " active" : ""}`} title={t("Filter: {filter}", { filter: t(FILTERS[store.state.settings.projectFilter ?? "all"]) })} onClick={cycleFilter}><Icon name="filter" size={13} /></button>
+          <button class={`icon-btn mini${store.state.settings.projectSort === "recent" ? " active" : ""}`} title={store.state.settings.projectSort === "recent" ? t("Sorted by recent activity") : t("Manual order")}
             onClick={() => store.setSettings({ projectSort: store.state.settings.projectSort === "recent" ? "manual" : "recent" })}><Icon name="history" size={13} /></button>
-          <button class="icon-btn mini" title="Add project folder" onClick={() => void pickProjectFolder()}><Icon name="plus" size={14} /></button>
+          <button class="icon-btn mini" title={t("Add remote project (SSH)")} onClick={() => store.setOverlay("remote")}><Icon name="server" size={13} /></button>
+          <button class="icon-btn mini" title={t("Add project folder")} onClick={() => void pickProjectFolder()}><Icon name="plus" size={14} /></button>
         </div>
       </Show>
       <div class="project-list">
         <For each={projects()}>{(p) => <ProjectRow project={p} />}</For>
         <Show when={!collapsed() && orphans().length}>
-          <div class="section-label other-label">Other sessions</div>
+          <div class="section-label other-label">{t("Other sessions")}</div>
           <div class="session-list">
             <For each={orphans()}>{(s) => <SessionRow s={s} />}</For>
           </div>
         </Show>
         <Show when={collapsed()}>
-          <button class="icon-btn" title="Add project" onClick={() => void pickProjectFolder()} style={{ margin: "6px 6px" }}><Icon name="plus" /></button>
+          <button class="icon-btn" title={t("Add project")} onClick={() => void pickProjectFolder()} style={{ margin: "6px 6px" }}><Icon name="plus" /></button>
         </Show>
       </div>
       <div class="sidebar-footer">
-        <button class="icon-btn" data-tip="dashboard" title="Agent dashboard" onClick={() => store.setOverlay("dashboard")}><Icon name="dashboard" /></button>
-        <button class="icon-btn" title={`Workspace board${navHint("board")}`} onClick={() => store.setOverlay("board")}><Icon name="board" /></button>
-        <button class="icon-btn" title="Settings" onClick={() => store.openSettings()}><Icon name="settings" /></button>
+        <button class="icon-btn" data-tip="dashboard" title={t("Agent dashboard")} onClick={() => store.setOverlay("dashboard")}><Icon name="dashboard" /></button>
+        <button class="icon-btn" title={t("Workspace board") + navHint("board")} onClick={() => store.setOverlay("board")}><Icon name="board" /></button>
+        <button class="icon-btn" data-tip="hosts" title={t("SSH hosts") + navHint("hosts")} onClick={() => openHosts()}><Icon name="server" /></button>
+        <button class="icon-btn" title={t("Settings")} onClick={() => store.openSettings()}><Icon name="settings" /></button>
         <span style={{ flex: 1 }} />
-        <button class="icon-btn" title="Toggle sidebar" onClick={() => store.setSettings({ sidebarCollapsed: !collapsed() })}><Icon name="sidebar" /></button>
+        <button class="icon-btn" title={t("Toggle sidebar")} onClick={() => store.setSettings({ sidebarCollapsed: !collapsed() })}><Icon name="sidebar" /></button>
       </div>
     </aside>
   );

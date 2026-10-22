@@ -2,14 +2,15 @@ import { For, Show, createMemo, onCleanup, onMount } from "solid-js";
 import { store, sessionLabel } from "../lib/store";
 import { relTime } from "../lib/platform";
 import { Icon, KindGlyph } from "./icons";
-import { StatusDot } from "./sidebar";
+import { StatusDot, STATUS_WORDS } from "./sidebar";
 import type { SessionInfo } from "../lib/types";
+import { t, msg } from "../lib/i18n";
 
 const columns: { id: string; title: string; color: string; test: (s: SessionInfo) => boolean }[] = [
-  { id: "waiting", title: "Needs you", color: "var(--waiting)", test: (s) => s.alive && s.status === "waiting" },
-  { id: "working", title: "Working", color: "var(--working)", test: (s) => s.alive && s.status === "working" },
-  { id: "done", title: "Done · unread", color: "var(--idle)", test: (s) => s.alive && s.status === "idle" && s.unread },
-  { id: "idle", title: "Idle / exited", color: "var(--text-faint)", test: (s) => !s.alive || (s.status === "idle" && !s.unread) },
+  { id: "waiting", title: msg("Needs you"), color: "var(--waiting)", test: (s) => s.alive && s.status === "waiting" },
+  { id: "working", title: msg("Working"), color: "var(--working)", test: (s) => s.alive && s.status === "working" },
+  { id: "done", title: msg("Done · unread"), color: "var(--idle)", test: (s) => s.alive && s.status === "idle" && s.unread },
+  { id: "idle", title: msg("Idle / exited"), color: "var(--text-faint)", test: (s) => !s.alive || (s.status === "idle" && !s.unread) },
 ];
 
 /** Every session in every project, grouped by what it needs — without rendering a single terminal. */
@@ -25,12 +26,12 @@ export function Dashboard() {
   return (
     <div class="dashboard" tabIndex={-1} ref={(el) => queueMicrotask(() => el.focus())}>
       <div class="dash-head">
-        <h2>Agents</h2>
+        <h2>{t("Agents")}</h2>
         <span class="stats">
-          {all().filter((s) => s.alive).length} running · {store.state.projects.length} projects
+          {t("{n} running", { n: all().filter((s) => s.alive).length })} · {store.state.projects.length === 1 ? t("{n} project", { n: 1 }) : t("{n} projects", { n: store.state.projects.length })}
         </span>
         <span class="spacer" />
-        <button class="icon-btn" title="Close (Esc)" onClick={() => store.setOverlay(null)}><Icon name="close" /></button>
+        <button class="icon-btn" title={t("Close (Esc)")} onClick={() => store.setOverlay(null)}><Icon name="close" /></button>
       </div>
       <div class="dash-cols">
         <For each={columns}>
@@ -38,7 +39,7 @@ export function Dashboard() {
             const items = createMemo(() => all().filter(col.test));
             return (
               <div class="dash-col">
-                <h3><span class="dot" style={{ background: col.color }} />{col.title}<span class="count">{items().length}</span></h3>
+                <h3><span class="dot" style={{ background: col.color }} />{t(col.title)}<span class="count">{items().length}</span></h3>
                 <div class="dash-cards">
                   <For each={items()}>
                     {(s) => {
@@ -54,14 +55,14 @@ export function Dashboard() {
                             <Show when={project()}>
                               {(p) => <span class="chip" style={{ "border-color": p().color, color: p().color }}>{p().name}</span>}
                             </Show>
-                            <span>{s.alive ? s.status : `exited ${s.exit_code ?? ""}`}</span>
+                            <span>{s.alive ? t(STATUS_WORDS[s.status]) : t("exited {code}", { code: s.exit_code ?? "" })}</span>
                             <span>· {relTime(s.created_at)}</span>
                           </div>
                         </div>
                       );
                     }}
                   </For>
-                  <Show when={items().length === 0}><div class="muted">Nothing here</div></Show>
+                  <Show when={items().length === 0}><div class="muted">{t("Nothing here")}</div></Show>
                 </div>
               </div>
             );

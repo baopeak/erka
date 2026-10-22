@@ -59,12 +59,25 @@ pub fn editors_list() -> Vec<EditorInfo> {
 #[tauri::command]
 pub fn editor_open(editor: String, path: String) -> CmdResult<()> {
     let e = EDITORS.iter().find(|e| e.id == editor).ok_or("unknown editor")?;
-    if !std::path::Path::new(&path).exists() {
+    // A remote project opens through the editor's own SSH remoting (VS Code and its forks).
+    let remote = crate::remote::parse_root(&path);
+    if remote.is_some() && !matches!(e.id, "vscode" | "cursor" | "windsurf") {
+        return Err(format!("{} cannot open a folder on another machine; use VS Code, Cursor or Windsurf", e.label));
+    }
+    if remote.is_none() && !std::path::Path::new(&path).exists() {
         return Err(format!("{path} does not exist"));
     }
     let mut cmd = if cfg!(target_os = "macos") {
         let mut c = std::process::Command::new("open");
-        c.args(["-a", e.mac_app, &path]);
+        match &remote {
+            Some(r) => {
+                let host = r.port.map_or(r.dest.clone(), |p| format!("{}:{p}", r.dest));
+                c.args(["-a", e.mac_app, "--args", "--remote", &format!("ssh-remote+{host}"), &r.path]);
+            }
+            None => {
+                c.args(["-a", e.mac_app, &path]);
+            }
+        }
         c
     } else {
         // `code` is `code.cmd` on Windows. Spawned directly (not via `cmd /c`), std escapes the
@@ -72,7 +85,18 @@ pub fn editor_open(editor: String, path: String) -> CmdResult<()> {
         // must never become a second command.
         let exe = which(e.cli).ok_or_else(|| format!("{} is not on PATH", e.label))?;
         let mut c = std::process::Command::new(exe);
-        c.arg(&path);
+        match &remote {
+            Some(r) => {
+                let host = match r.port {
+                    Some(p) => format!("{}:{p}", r.dest),
+                    None => r.dest.clone(),
+                };
+                c.args(["--remote", &format!("ssh-remote+{host}"), &r.path]);
+            }
+            None => {
+                c.arg(&path);
+            }
+        }
         c
     };
     cmd.stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());

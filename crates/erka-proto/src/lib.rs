@@ -154,6 +154,27 @@ impl Endpoint {
     }
 }
 
+/// OS credential store service for Erka's secrets. Dev and test instances use their own
+/// endpoint name, so their secrets never mix with the real ones.
+pub fn keyring_service() -> String {
+    match std::env::var("ERKA_ENDPOINT") {
+        Ok(e) if !e.is_empty() => format!("Erka ({e})"),
+        _ => "Erka".into(),
+    }
+}
+
+/// Credential-store key of a saved SSH host's password.
+pub fn ssh_password_key(host_id: &str) -> String {
+    format!("ssh-password:{host_id}")
+}
+
+/// Credential-store key of a private key's passphrase. ssh names the key in its prompt with
+/// mixed separators (`C:\Users\me/.ssh/id_ed25519`), so the path is normalised.
+pub fn ssh_passphrase_key(key_path: &str) -> String {
+    let p = key_path.trim().replace('\\', "/");
+    format!("ssh-passphrase:{}", if cfg!(windows) { p.to_lowercase() } else { p })
+}
+
 /// Root for daemon state: `%LOCALAPPDATA%\Erka` / `~/Library/Application Support/Erka`.
 pub fn data_dir() -> std::path::PathBuf {
     if let Ok(dir) = std::env::var("ERKA_DATA_DIR") {

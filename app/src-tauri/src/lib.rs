@@ -2,14 +2,21 @@
 //! live in `erkad`; this crate relays them to the webview and serves file/git/search
 //! commands for the workbench.
 
+mod accounts;
 mod agent_history;
+mod browser;
 mod daemon_client;
 mod external_editor;
 mod fs_ops;
 mod git;
 mod git_sync;
 mod github;
+mod integrations;
+mod plugins;
+mod voice;
+mod remote;
 mod search;
+mod ssh_hosts;
 mod sys_stats;
 mod usage;
 mod watcher;
@@ -112,18 +119,37 @@ fn platform_info() -> Value {
     })
 }
 
+/// End-to-end tests only (dev builds or ERKA_E2E): resizes the window itself. WebDriver's
+/// `window/rect` moves the WebView2 control inside the window instead, so the whole UI ends up
+/// offset and clipped.
+#[tauri::command]
+fn test_window_size(window: tauri::Window, width: f64, height: f64) -> CmdResult<()> {
+    if !(cfg!(debug_assertions) || std::env::var_os("ERKA_E2E").is_some()) {
+        return Err("only available to the end-to-end tests".into());
+    }
+    if window.is_maximized().unwrap_or(false) {
+        window.unmaximize().map_err(err)?;
+    }
+    window.set_size(tauri::LogicalSize::new(width, height)).map_err(err)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
-        .plugin(tauri_plugin_opener::init())
+        // Its link interception would also run in browser panes, where it cannot work (no IPC):
+        // the app opens links itself.
+        .plugin(tauri_plugin_opener::Builder::new().open_js_links_on_click(false).build())
         .plugin(tauri_plugin_clipboard_manager::init())
         .setup(|app| {
             let index = Arc::new(search::FileIndex::default());
             app.manage(DaemonClient::start(app.handle().clone()));
             app.manage(watcher::Watchers::new(app.handle().clone(), index.clone()));
             app.manage(index);
+            app.manage(browser::Browsers::default());
+            app.manage(ssh_hosts::Forwards::default());
+            ssh_hosts::init();
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -177,6 +203,83 @@ pub fn run() {
             agent_history::agent_claude_transcript,
             agent_history::agent_history_list,
             usage::usage_fetch,
+            accounts::account_create,
+            accounts::account_remove,
+            accounts::account_status,
+            integrations::integration_secret_set,
+            integrations::integration_secret_clear,
+            integrations::integration_secret_has,
+            integrations::linear_issues,
+            integrations::linear_states,
+            integrations::linear_set_state,
+            integrations::linear_viewer,
+            integrations::jira_issues,
+            integrations::jira_transitions,
+            integrations::jira_transition,
+            integrations::jira_myself,
+            integrations::gitlab_project,
+            integrations::gitlab_mr_status,
+            integrations::gitlab_default_branch,
+            integrations::gitlab_mr_create,
+            integrations::gitlab_issues,
+            integrations::gitlab_user,
+            browser::browser_open,
+            browser::browser_bounds,
+            browser::browser_visible,
+            browser::browser_navigate,
+            browser::browser_go,
+            browser::browser_design,
+            browser::browser_devtools,
+            browser::browser_close,
+            browser::browser_info,
+            remote::remote_configure,
+            remote::remote_hosts,
+            remote::remote_check,
+            remote::remote_folders,
+            plugins::plugin_list,
+            plugins::plugin_dir,
+            plugins::plugin_install_folder,
+            plugins::plugin_install_git,
+            plugins::plugin_remove,
+            plugins::plugin_approve,
+            plugins::plugin_create,
+            plugins::plugin_status,
+            voice::voice_available,
+            voice::voice_models,
+            voice::voice_devices,
+            voice::voice_download,
+            voice::voice_download_cancel,
+            voice::voice_delete,
+            voice::voice_start,
+            voice::voice_stop,
+            voice::voice_cancel,
+            voice::voice_transcribe,
+            browser::browser_screenshot,
+            browser::browser_test_input,
+            test_window_size,
+            ssh_hosts::ssh_vault_load,
+            ssh_hosts::ssh_vault_save,
+            ssh_hosts::ssh_host_touch,
+            ssh_hosts::ssh_paths,
+            ssh_hosts::ssh_session_env,
+            ssh_hosts::ssh_import_config,
+            ssh_hosts::ssh_secret_set,
+            ssh_hosts::ssh_secret_has,
+            ssh_hosts::ssh_keys_list,
+            ssh_hosts::ssh_key_generate,
+            ssh_hosts::ssh_key_import,
+            ssh_hosts::ssh_key_delete,
+            ssh_hosts::ssh_key_install,
+            ssh_hosts::ssh_agent_list,
+            ssh_hosts::ssh_agent_add,
+            ssh_hosts::ssh_known_hosts_list,
+            ssh_hosts::ssh_known_hosts_remove,
+            ssh_hosts::ssh_host_keys,
+            ssh_hosts::ssh_host_trust,
+            ssh_hosts::ssh_transfer,
+            ssh_hosts::ssh_forward_start,
+            ssh_hosts::ssh_forward_stop,
+            ssh_hosts::ssh_forward_status,
             sys_stats::memory_stats,
         ])
         .run(tauri::generate_context!())

@@ -19,6 +19,14 @@ pub struct SavedSession {
     pub chat: bool,
     #[serde(default)]
     pub last_activity: u64,
+    /// Running (or interrupted and not yet resumed) when saved. Files from before this field
+    /// count every session as running.
+    #[serde(default = "yes")]
+    pub alive: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 pub struct Store {
@@ -68,4 +76,19 @@ pub fn write_atomic(path: &Path, data: &[u8]) -> Result<()> {
     std::fs::write(&tmp, data)?;
     std::fs::rename(&tmp, path)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sessions_saved_before_alive_existed_count_as_running() {
+        let old = r#"[{"spec":{"id":"a","kind":"shell","cwd":"."},"cols":80,"rows":24}]"#;
+        let saved: Vec<SavedSession> = serde_json::from_str(old).unwrap();
+        assert!(saved[0].alive);
+        let stopped = r#"[{"spec":{"id":"a","kind":"shell","cwd":"."},"cols":80,"rows":24,"alive":false}]"#;
+        let saved: Vec<SavedSession> = serde_json::from_str(stopped).unwrap();
+        assert!(!saved[0].alive);
+    }
 }

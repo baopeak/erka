@@ -7,12 +7,13 @@ import { Icon, KindGlyph } from "./icons";
 import { openContextMenu, type MenuItem } from "./context-menu";
 import { StatusDot } from "./sidebar";
 import type { Project, WorkStatus } from "../lib/types";
+import { t, msg } from "../lib/i18n";
 
 const COLUMNS: { id: WorkStatus; label: string }[] = [
-  { id: "todo", label: "Todo" },
-  { id: "progress", label: "In progress" },
-  { id: "review", label: "Review" },
-  { id: "done", label: "Done" },
+  { id: "todo", label: msg("Todo") },
+  { id: "progress", label: msg("In progress") },
+  { id: "review", label: msg("Review") },
+  { id: "done", label: msg("Done") },
 ];
 
 interface Drag {
@@ -27,10 +28,10 @@ interface Drag {
 
 function cardMenu(p: Project, open: () => void): MenuItem[] {
   return [
-    { label: "Open", run: open },
-    { label: p.pinned ? "Unpin" : "Pin to top", run: () => store.togglePin(p.id) },
+    { label: t("Open"), run: open },
+    { label: p.pinned ? t("Unpin") : t("Pin to top"), run: () => store.togglePin(p.id) },
     null,
-    ...COLUMNS.filter((c) => c.id !== (p.status ?? "todo")).map((c) => ({ label: `Move to ${c.label}`, run: () => store.setProjectStatus(p.id, c.id) })),
+    ...COLUMNS.filter((c) => c.id !== (p.status ?? "todo")).map((c) => ({ label: t("Move to {column}", { column: t(c.label) }), run: () => store.setProjectStatus(p.id, c.id) })),
   ];
 }
 
@@ -61,7 +62,7 @@ function Card(props: { project: Project; ghost?: boolean; onPointerDown?: (e: Po
           <span class="wt-glyph" style={{ color: props.project.color }}><Icon name="branch" size={13} /></span>
         </Show>
         <span class="board-card-name">{props.project.name}</span>
-        <button class={`icon-btn mini pin${props.project.pinned ? " on" : ""}`} title={props.project.pinned ? "Unpin" : "Pin to top"}
+        <button class={`icon-btn mini pin${props.project.pinned ? " on" : ""}`} title={props.project.pinned ? t("Unpin") : t("Pin to top")}
           onPointerDown={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); store.togglePin(props.project.id); }}>
           <Icon name="pin" size={12} />
         </button>
@@ -69,7 +70,7 @@ function Card(props: { project: Project; ghost?: boolean; onPointerDown?: (e: Po
       <div class="board-card-sub">
         <Show when={parent()}><span>{parent()!.name}</span></Show>
         <Show when={info()?.is_repo && (info()!.branch ?? "") !== props.project.name}>
-          <span class="board-branch"><Icon name="branch" size={10} /> {info()!.branch ?? props.project.branch ?? "detached"}{info()!.dirty ? "*" : ""}</span>
+          <span class="board-branch"><Icon name="branch" size={10} /> {info()!.branch ?? props.project.branch ?? t("detached")}{info()!.dirty ? "*" : ""}</span>
         </Show>
       </div>
       <Show when={store.metaFor(props.project)?.comment}>
@@ -148,16 +149,16 @@ export function Board() {
   return (
     <div class="board" tabIndex={-1} ref={(el) => queueMicrotask(() => el.focus())} onKeyDown={(e) => e.key === "Escape" && store.setOverlay(null)}>
       <div class="board-head">
-        <h2>Workspace board</h2>
-        <span class="muted-inline">Drag cards between columns · click to open</span>
+        <h2>{t("Workspace board")}</h2>
+        <span class="muted-inline">{t("Drag cards between columns · click to open")}</span>
         <span style={{ flex: 1 }} />
-        <button class="icon-btn" title="Close (Esc)" onClick={() => store.setOverlay(null)}><Icon name="close" /></button>
+        <button class="icon-btn" title={t("Close (Esc)")} onClick={() => store.setOverlay(null)}><Icon name="close" /></button>
       </div>
       <div class="board-cols">
         <For each={COLUMNS}>
           {(col) => (
             <div class={`board-col${drag()?.over === col.id ? " over" : ""}`} data-col={col.id}>
-              <div class="board-col-head">{col.label}<span class="board-count">{byColumn()[col.id].length}</span></div>
+              <div class="board-col-head">{t(col.label)}<span class="board-count">{byColumn()[col.id].length}</span></div>
               <div class="board-col-body">
                 <For each={byColumn()[col.id]}>
                   {(p) => (

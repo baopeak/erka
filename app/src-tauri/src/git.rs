@@ -22,6 +22,10 @@ pub struct GitOutput {
 
 pub async fn git(cwd: &Path, args: &[&str]) -> CmdResult<GitOutput> {
     let _slot = GIT_SLOTS.acquire().await.map_err(err)?;
+    // A remote project's folder (`ssh://…`): the same git command, on the host.
+    if let Some(dir) = cwd.to_str().filter(|d| crate::remote::is_remote(d)) {
+        return crate::remote::git(dir, args).await;
+    }
     let mut cmd = tokio::process::Command::new("git");
     cmd.args(["-c", "core.quotepath=off", "-c", "color.ui=false"])
         .args(args)
@@ -166,6 +170,8 @@ pub async fn git_file_versions(root: String, path: String, staged: bool) -> CmdR
     let modified = if staged {
         let idx = git(&dir, &["show", &format!(":{path}")]).await?;
         idx.ok.then(|| String::from_utf8_lossy(&idx.stdout).into_owned())
+    } else if crate::remote::is_remote(&root) {
+        crate::remote::read_file(&root, &path, 8 << 20).await.ok().map(|(b, _, _)| String::from_utf8_lossy(&b).into_owned())
     } else {
         std::fs::read(&full).ok().map(|b| String::from_utf8_lossy(&b).into_owned())
     };
@@ -188,7 +194,11 @@ pub async fn git_stage(root: String, paths: Vec<String>, stage: bool) -> CmdResu
 pub async fn git_discard(root: String, paths: Vec<String>, untracked: Vec<String>) -> CmdResult<()> {
     let dir = guard(&root, "")?;
     for p in &untracked {
-        trash::delete(guard(&root, p)?).map_err(err)?;
+        if crate::remote::is_remote(&root) {
+            crate::remote::delete(&root, p).await?;
+        } else {
+            trash::delete(guard(&root, p)?).map_err(err)?;
+        }
     }
     if paths.is_empty() {
         return Ok(());

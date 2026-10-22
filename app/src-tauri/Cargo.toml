@@ -6,14 +6,14 @@ description = "Erka - multi-project agent workbench"
 
 [lib]
 name = "erka_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
+crate-type = ["cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2.6", features = [] }
 
 [dependencies]
 erka-proto = { path = "../../crates/erka-proto" }
-tauri = { version = "2.12", features = [] }
+tauri = { version = "2.12", features = ["unstable", "devtools"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-notification = "2"
 tauri-plugin-opener = "2"
@@ -31,6 +31,14 @@ nucleo-matcher = "0.3"
 notify = "8"
 regex = "1"
 trash = "5"
-ureq = "3"
+sha2 = "0.10"
+ureq = { version = "3", features = ["json"] }
+keyring = { version = "3.6", default-features = false, features = ["windows-native", "apple-native"] }
 sysinfo = { version = "0.39.6", default-features = false, features = ["system"] }
 zstd = "0.14.3"
+
+
+[target.'cfg(windows)'.dependencies]
+# Same versions as Tauri's own (browser pane screenshots through the WebView2 DevTools protocol).
+webview2-com = "0.39"
+windows = { version = "0.62", features = ["Win32_Foundation"] }

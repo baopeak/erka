@@ -12,6 +12,7 @@
 //!   erkad worktree get|set …               this folder's comment / board status
 
 mod agents;
+mod askpass;
 mod automations;
 mod awake;
 mod bench;
@@ -20,9 +21,11 @@ mod cli;
 mod client;
 mod daemon;
 mod meta;
+mod mobile;
 mod oneshot;
 mod persist;
 mod proc_tree;
+mod runs;
 mod server;
 mod session;
 mod status;
@@ -68,6 +71,9 @@ fn main() -> Result<()> {
         Some("bench") => runtime()?.block_on(bench::run(&args[1..])),
         Some("terminal") => runtime()?.block_on(cli::terminal(&args[1..])),
         Some("worktree") => runtime()?.block_on(cli::worktree(&args[1..])),
+        Some("run") => runtime()?.block_on(cli::run(&args[1..])),
+        // ssh runs its SSH_ASKPASS program with the prompt as the only argument.
+        Some(prompt) if std::env::var_os("ERKA_ASKPASS").is_some() => std::process::exit(askpass::run(prompt)),
         Some(other) => anyhow::bail!("unknown command `{other}`"),
     }
 }
@@ -106,6 +112,22 @@ fn inherits_editor_host(key: &str) -> bool {
     key == "ELECTRON_RUN_AS_NODE" || key == "ELECTRON_NO_ATTACH_CONSOLE" || key.starts_with("VSCODE_")
 }
 
+/// The app starts us in a new process group (so its console never takes us down), and Windows
+/// then marks this process as ignoring Ctrl+C — a mark every child inherits. Sessions would get
+/// it too, and Ctrl+C would no longer stop `ping`, a build or a PowerShell pipeline. Clear the
+/// mark so children handle Ctrl+C normally, and ignore Ctrl+C / Ctrl+Break here ourselves.
+#[cfg(windows)]
+fn enable_ctrl_c_for_sessions() {
+    use windows_sys::Win32::System::Console::{SetConsoleCtrlHandler, CTRL_BREAK_EVENT, CTRL_C_EVENT};
+    unsafe extern "system" fn ignore(kind: u32) -> windows_sys::core::BOOL {
+        (kind == CTRL_C_EVENT || kind == CTRL_BREAK_EVENT) as windows_sys::core::BOOL
+    }
+    unsafe {
+        SetConsoleCtrlHandler(None, 0);
+        SetConsoleCtrlHandler(Some(ignore), 1);
+    }
+}
+
 fn serve() -> Result<()> {
     // Single-threaded at this point, so mutating the process environment is sound.
     for key in PARENT_AGENT_ENV {
@@ -128,6 +150,8 @@ fn serve() -> Result<()> {
     for key in inherited {
         std::env::remove_var(key);
     }
+    #[cfg(windows)]
+    enable_ctrl_c_for_sessions();
     let data_dir = erka_proto::data_dir();
     std::fs::create_dir_all(data_dir.join("logs"))?;
     let _lock = match acquire_lock(&data_dir.join("erkad.lock")) {
@@ -145,6 +169,7 @@ fn serve() -> Result<()> {
     let rt = runtime()?;
     let result = rt.block_on(async {
         tokio::spawn(daemon.clone().ticker());
+        tokio::spawn(mobile::autostart(daemon.clone()));
         server::serve(daemon.clone(), erka_proto::endpoint()).await
     });
     // Stop the ticker before the final save so the two never persist concurrently.

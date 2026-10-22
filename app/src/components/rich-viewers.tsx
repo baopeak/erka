@@ -6,6 +6,7 @@ import DOMPurify from "dompurify";
 import { readFile } from "../lib/ipc";
 import { store } from "../lib/store";
 import type { Project } from "../lib/types";
+import { intlLocale, t } from "../lib/i18n";
 
 const MAX_ROWS = 5000;
 
@@ -60,7 +61,7 @@ export function CsvView(props: { project: Project; path: string }) {
       const num = list.every((r) => r[s.col] === undefined || r[s.col] === "" || !isNaN(+r[s.col]));
       list = [...list].sort((a, b) => {
         const x = a[s.col] ?? "", y = b[s.col] ?? "";
-        const d = num ? +x - +y : x.localeCompare(y, undefined, { numeric: true });
+        const d = num ? +x - +y : x.localeCompare(y, intlLocale(), { numeric: true });
         return s.desc ? -d : d;
       });
     }
@@ -70,8 +71,8 @@ export function CsvView(props: { project: Project; path: string }) {
   return (
     <div class="table-view">
       <div class="table-tools">
-        <input class="text-input" placeholder="Filter rows" value={query()} onInput={(e) => setQuery(e.currentTarget.value)} />
-        <span class="muted-inline">{body().length} of {Math.max(0, rows().length - 1)} rows{body().length > MAX_ROWS ? ` (first ${MAX_ROWS} shown)` : ""}</span>
+        <input class="text-input" placeholder={t("Filter rows")} value={query()} onInput={(e) => setQuery(e.currentTarget.value)} />
+        <span class="muted-inline">{t("{shown} of {total} rows", { shown: body().length, total: Math.max(0, rows().length - 1) })}{body().length > MAX_ROWS ? ` ${t("(first {n} shown)", { n: MAX_ROWS })}` : ""}</span>
       </div>
       <div class="table-scroll">
         <table class="data-table">
@@ -106,7 +107,7 @@ export function PdfView(props: { project: Project; path: string }) {
   });
   onCleanup(() => url() && URL.revokeObjectURL(url()!));
   return (
-    <Show when={url()} fallback={<div class="muted">Loading…</div>}>
+    <Show when={url()} fallback={<div class="muted">{t("Loading…")}</div>}>
       <iframe class="pdf-frame" src={url()!} title={props.path} />
     </Show>
   );
@@ -161,7 +162,7 @@ export function MermaidView(props: { project: Project; path: string }) {
           <button class="btn" onClick={() => setZoom((z) => Math.max(0.25, z / 1.2))}>−</button>
           <span class="muted-inline">{Math.round(zoom() * 100)}%</span>
           <button class="btn" onClick={() => setZoom((z) => Math.min(4, z * 1.2))}>+</button>
-          <button class="btn" onClick={() => setZoom(1)}>Reset</button>
+          <button class="btn" onClick={() => setZoom(1)}>{t("Reset")}</button>
         </div>
         <div class="diagram-canvas" style={{ transform: `scale(${zoom()})` }} innerHTML={svg()} />
       </Show>
@@ -177,8 +178,8 @@ const joined = (v: string | string[] | undefined) => (Array.isArray(v) ? v.join(
 
 function Output(props: { o: NbOutput }) {
   const d = props.o.data ?? {};
-  if (d["image/png"]) return <img class="nb-image" src={`data:image/png;base64,${joined(d["image/png"]).replace(/\s/g, "")}`} alt="output" />;
-  if (d["image/jpeg"]) return <img class="nb-image" src={`data:image/jpeg;base64,${joined(d["image/jpeg"]).replace(/\s/g, "")}`} alt="output" />;
+  if (d["image/png"]) return <img class="nb-image" src={`data:image/png;base64,${joined(d["image/png"]).replace(/\s/g, "")}`} alt={t("output")} />;
+  if (d["image/jpeg"]) return <img class="nb-image" src={`data:image/jpeg;base64,${joined(d["image/jpeg"]).replace(/\s/g, "")}`} alt={t("output")} />;
   if (d["image/svg+xml"]) return <div class="nb-html" innerHTML={DOMPurify.sanitize(joined(d["image/svg+xml"]), { USE_PROFILES: { svg: true } })} />;
   if (d["text/html"]) return <div class="nb-html" innerHTML={DOMPurify.sanitize(joined(d["text/html"]))} />;
   if (props.o.output_type === "error") return <pre class="nb-out nb-err">{`${props.o.ename}: ${props.o.evalue}`}</pre>;
@@ -194,7 +195,7 @@ export function NotebookView(props: { project: Project; path: string }) {
       const f = await readFile(props.project.path, props.path, 40 << 20);
       setCells(JSON.parse(f.text ?? "{}").cells ?? []);
     } catch (e) {
-      setError(`Not a readable notebook: ${e}`);
+      setError(t("Not a readable notebook: {error}", { error: String(e) }));
     }
   });
   return (

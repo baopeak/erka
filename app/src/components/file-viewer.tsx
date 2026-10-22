@@ -10,6 +10,7 @@ import { baseExtensions, languageFor } from "../lib/codemirror";
 import { isMac } from "../lib/platform";
 import { CsvView, MermaidView, NotebookView, PdfView, renderMermaidBlocks } from "./rich-viewers";
 import type { FileContent, Project } from "../lib/types";
+import { msg, t } from "../lib/i18n";
 
 const EDIT_LIMIT = 5 << 20; // larger files open read-only (first 5 MiB)
 const IMAGE_EXT: Record<string, string> = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", svg: "image/svg+xml", ico: "image/x-icon", bmp: "image/bmp", avif: "image/avif" };
@@ -30,7 +31,7 @@ function kindOf(path: string): Kind {
 }
 
 /** Label of the rendered view for kinds that also have an editable source. */
-const RENDERED: Partial<Record<Kind, string>> = { markdown: "Preview", csv: "Table", notebook: "Notebook", mermaid: "Diagram" };
+const RENDERED: Partial<Record<Kind, string>> = { markdown: msg("Preview"), csv: msg("Table"), notebook: msg("Notebook"), mermaid: msg("Diagram") };
 
 export function FileViewer(props: { project: Project; path: string; line?: number; focused: boolean }) {
   const kind = () => kindOf(props.path);
@@ -42,12 +43,12 @@ export function FileViewer(props: { project: Project; path: string; line?: numbe
         <span class="path" title={props.path}>&lrm;{props.path}</span>
         <Show when={RENDERED[kind()]}>
           <div class="toggles">
-            <button class={`toggle${mode() === "rendered" ? " on" : ""}`} onClick={() => setMode("rendered")}>{RENDERED[kind()]}</button>
-            <button class={`toggle${mode() === "source" ? " on" : ""}`} onClick={() => setMode("source")}>{kind() === "markdown" ? "Edit" : "Source"}</button>
+            <button class={`toggle${mode() === "rendered" ? " on" : ""}`} onClick={() => setMode("rendered")}>{t(RENDERED[kind()]!)}</button>
+            <button class={`toggle${mode() === "source" ? " on" : ""}`} onClick={() => setMode("source")}>{kind() === "markdown" ? t("Edit") : t("Source")}</button>
           </div>
         </Show>
         <Show when={kind() === "text" || mode() === "source"}>
-          <button class={`toggle${store.state.settings.wordWrap ? " on" : ""}`} title="Word wrap (Alt+Z)" onClick={() => store.setSettings({ wordWrap: !store.state.settings.wordWrap })}>Wrap</button>
+          <button class={`toggle${store.state.settings.wordWrap ? " on" : ""}`} title={t("Word wrap (Alt+Z)")} onClick={() => store.setSettings({ wordWrap: !store.state.settings.wordWrap })}>{t("Wrap")}</button>
         </Show>
       </div>
       <Switch>
@@ -131,7 +132,7 @@ function TextEditor(props: { project: Project; path: string; line?: number; focu
     try {
       const r = await writeFile(props.project.path, props.path, text, mtime, force);
       if (r.conflict) {
-        if (confirm(`${props.path} changed on disk since it was opened. Overwrite it?`)) return save(true);
+        if (confirm(t("{path} changed on disk since it was opened. Overwrite it?", { path: props.path }))) return save(true);
         return;
       }
       mtime = r.mtime;
@@ -139,7 +140,7 @@ function TextEditor(props: { project: Project; path: string; line?: number; focu
       setDirty(false);
       setExternal(false);
     } catch (e) {
-      store.notify(`Save failed: ${e}`);
+      store.notify(t("Save failed: {error}", { error: String(e) }));
     }
   }
 
@@ -149,7 +150,7 @@ function TextEditor(props: { project: Project; path: string; line?: number; focu
       if (!initial && f.mtime === mtime) return;
       setFile(f);
       mtime = f.mtime;
-      if (f.binary) return setError(`Binary file (${(f.size / 1024).toFixed(1)} KB) — not shown.`);
+      if (f.binary) return setError(t("Binary file ({size} KB) — not shown.", { size: (f.size / 1024).toFixed(1) }));
       const text = f.text ?? "";
       loadedText = text;
       if (!view) {
@@ -203,11 +204,11 @@ function TextEditor(props: { project: Project; path: string; line?: number; focu
     <>
       <Show when={dirty() || readOnly() || external()}>
         <div class="viewer-bar" style={{ "border-top": "0" }}>
-          <Show when={dirty()}><span class="dirty">● Unsaved — {isMac ? "⌘" : "Ctrl"}+S to save</span></Show>
-          <Show when={readOnly() && file()?.truncated}><span>Read-only: showing the first 5 MiB of {(file()!.size / 1048576).toFixed(1)} MiB</span></Show>
+          <Show when={dirty()}><span class="dirty">● {t("Unsaved — {key}+S to save", { key: isMac ? "⌘" : "Ctrl" })}</span></Show>
+          <Show when={readOnly() && file()?.truncated}><span>{t("Read-only: showing the first 5 MiB of {size} MiB", { size: (file()!.size / 1048576).toFixed(1) })}</span></Show>
           <Show when={external()}>
-            <span style={{ color: "var(--waiting)" }}>Changed on disk.</span>
-            <button class="btn" style={{ height: "22px" }} onClick={() => { setDirty(false); setExternal(false); void load(true); }}>Reload</button>
+            <span style={{ color: "var(--waiting)" }}>{t("Changed on disk.")}</span>
+            <button class="btn" style={{ height: "22px" }} onClick={() => { setDirty(false); setExternal(false); void load(true); }}>{t("Reload")}</button>
           </Show>
         </div>
       </Show>

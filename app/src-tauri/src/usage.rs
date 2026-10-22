@@ -3,7 +3,7 @@
 //! agent vendor's usage endpoint. Tokens never leave this module: they are not logged and not
 //! returned to the webview, which only sees percentages and reset times.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use serde::Serialize;
@@ -88,25 +88,44 @@ fn parse_iso_ms(s: &str) -> Option<u64> {
 
 // ---------- Claude ----------
 
-fn claude_token() -> Option<String> {
-    let dir = std::env::var_os("CLAUDE_CONFIG_DIR").map(PathBuf::from).unwrap_or_else(|| home().join(".claude"));
-    let raw = std::fs::read_to_string(dir.join(".credentials.json")).ok().or_else(claude_keychain)?;
-    let v: Value = serde_json::from_str(&raw).ok()?;
+fn default_claude_dir() -> PathBuf {
+    std::env::var_os("CLAUDE_CONFIG_DIR").map(PathBuf::from).unwrap_or_else(|| home().join(".claude"))
+}
+
+fn default_codex_dir() -> PathBuf {
+    std::env::var_os("CODEX_HOME").map(PathBuf::from).unwrap_or_else(|| home().join(".codex"))
+}
+
+fn claude_token(dir: &Path) -> Option<String> {
+    let v: Value = std::fs::read_to_string(dir.join(".credentials.json"))
+        .ok()
+        .and_then(|raw| serde_json::from_str(&raw).ok())
+        .or_else(|| claude_keychain_json(dir))?;
     v["claudeAiOauth"]["accessToken"].as_str().filter(|t| !t.is_empty()).map(str::to_string)
 }
 
-/// macOS keeps Claude Code's login in the keychain instead of the credentials file.
+/// macOS keeps Claude Code's login in the keychain instead of the credentials file: service
+/// `Claude Code-credentials`, or with a custom `CLAUDE_CONFIG_DIR` that name plus `-` and the
+/// first 8 hex digits of the SHA-256 of the directory path.
 #[cfg(target_os = "macos")]
-fn claude_keychain() -> Option<String> {
-    let out = std::process::Command::new("security")
-        .args(["find-generic-password", "-s", "Claude Code-credentials", "-w"])
-        .output()
-        .ok()?;
-    out.status.success().then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
+pub(crate) fn claude_keychain_json(dir: &Path) -> Option<Value> {
+    use sha2::Digest as _;
+    let service = if dir == home().join(".claude") {
+        "Claude Code-credentials".to_string()
+    } else {
+        let hash = sha2::Sha256::digest(dir.to_string_lossy().as_bytes());
+        let hex: String = hash.iter().take(4).map(|b| format!("{b:02x}")).collect();
+        format!("Claude Code-credentials-{hex}")
+    };
+    let out = std::process::Command::new("security").args(["find-generic-password", "-s", &service, "-w"]).output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim()).ok()
 }
 
 #[cfg(not(target_os = "macos"))]
-fn claude_keychain() -> Option<String> {
+pub(crate) fn claude_keychain_json(_dir: &Path) -> Option<Value> {
     None
 }
 
@@ -120,8 +139,8 @@ fn claude_window(v: &Value, minutes: u64) -> Option<UsageWindow> {
     Some(UsageWindow { label: window_label(minutes), used_percent: used.clamp(0.0, 100.0), resets_at })
 }
 
-fn claude_usage(agent: &ureq::Agent) -> ProviderUsage {
-    let Some(token) = claude_token() else { return ProviderUsage { error: Some("not signed in".into()), ..Default::default() } };
+fn claude_usage(agent: &ureq::Agent, dir: &Path) -> ProviderUsage {
+    let Some(token) = claude_token(dir) else { return ProviderUsage { error: Some("not signed in".into()), ..Default::default() } };
     let resp = agent
         .get("https://api.anthropic.com/api/oauth/usage")
         .header("Authorization", &format!("Bearer {token}"))
@@ -141,8 +160,7 @@ fn claude_usage(agent: &ureq::Agent) -> ProviderUsage {
 
 // ---------- Codex ----------
 
-fn codex_usage(agent: &ureq::Agent) -> ProviderUsage {
-    let dir = std::env::var_os("CODEX_HOME").map(PathBuf::from).unwrap_or_else(|| home().join(".codex"));
+fn codex_usage(agent: &ureq::Agent, dir: &Path) -> ProviderUsage {
     let auth: Option<Value> = std::fs::read_to_string(dir.join("auth.json")).ok().and_then(|s| serde_json::from_str(&s).ok());
     let tokens = auth.as_ref().map(|a| &a["tokens"]);
     let Some(token) = tokens.and_then(|t| t["access_token"].as_str()).filter(|t| !t.is_empty()) else {
@@ -190,14 +208,17 @@ fn read_json(resp: Result<ureq::http::Response<ureq::Body>, ureq::Error>) -> Res
     serde_json::from_str(&text).map_err(|_| "unexpected response".to_string())
 }
 
-/// Both providers' windows. Each provider fails independently.
+/// Both providers' windows for the active accounts (`*_dir` = an account's config home; none =
+/// the agent's default). Each provider fails independently.
 #[tauri::command]
-pub async fn usage_fetch() -> CmdResult<UsageReport> {
-    tauri::async_runtime::spawn_blocking(|| {
+pub async fn usage_fetch(claude_dir: Option<String>, codex_dir: Option<String>) -> CmdResult<UsageReport> {
+    let claude_dir = claude_dir.filter(|d| !d.is_empty()).map(PathBuf::from).unwrap_or_else(default_claude_dir);
+    let codex_dir = codex_dir.filter(|d| !d.is_empty()).map(PathBuf::from).unwrap_or_else(default_codex_dir);
+    tauri::async_runtime::spawn_blocking(move || {
         let agent = agent();
         let (claude, codex) = std::thread::scope(|s| {
-            let c = s.spawn(|| claude_usage(&agent));
-            let x = codex_usage(&agent);
+            let c = s.spawn(|| claude_usage(&agent, &claude_dir));
+            let x = codex_usage(&agent, &codex_dir);
             (c.join().unwrap_or_default(), x)
         });
         UsageReport { claude, codex }
@@ -223,7 +244,7 @@ mod tests {
     #[ignore]
     fn live_usage() {
         let agent = agent();
-        for (name, u) in [("claude", claude_usage(&agent)), ("codex", codex_usage(&agent))] {
+        for (name, u) in [("claude", claude_usage(&agent, &default_claude_dir())), ("codex", codex_usage(&agent, &default_codex_dir()))] {
             let w: Vec<String> = u.windows.iter().map(|w| format!("{} {:.0}%", w.label, w.used_percent)).collect();
             println!("{name}: {w:?} error={:?}", u.error);
         }

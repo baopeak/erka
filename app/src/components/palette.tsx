@@ -10,17 +10,18 @@ import { settingsCatalog } from "../lib/settings-catalog";
 import { quickCommandsFor, runQuickCommand } from "../lib/quick-commands";
 import { Icon, KindGlyph } from "./icons";
 import { KeyHints } from "./key-hints";
-import { StatusDot } from "./sidebar";
+import { StatusDot, STATUS_WORDS } from "./sidebar";
 import { openWorktreeDialog } from "./worktree-dialog";
 import type { Project, SessionInfo } from "../lib/types";
+import { t, msg } from "../lib/i18n";
 
 export type SearchScope = "all" | "commands" | "sessions" | "files" | "settings";
 const SCOPES: { id: SearchScope; label: string; prefix: string }[] = [
-  { id: "all", label: "All", prefix: "" },
-  { id: "sessions", label: "Sessions", prefix: "@" },
-  { id: "files", label: "Files", prefix: "#" },
-  { id: "commands", label: "Commands", prefix: ">" },
-  { id: "settings", label: "Settings", prefix: "/" },
+  { id: "all", label: msg("All"), prefix: "" },
+  { id: "sessions", label: msg("Sessions"), prefix: "@" },
+  { id: "files", label: msg("Files"), prefix: "#" },
+  { id: "commands", label: msg("Commands"), prefix: ">" },
+  { id: "settings", label: msg("Settings"), prefix: "/" },
 ];
 
 interface Item {
@@ -42,7 +43,7 @@ interface Group {
 export function fuzzy(query: string, text: string): { score: number; marks: number[] } | null {
   if (!query) return { score: 0, marks: [] };
   const q = query.toLowerCase();
-  const t = text.toLowerCase();
+  const lower = text.toLowerCase();
   const marks: number[] = [];
   let ti = 0;
   let score = 0;
@@ -52,10 +53,10 @@ export function fuzzy(query: string, text: string): { score: number; marks: numb
   let midWordRuns = 0;
   for (const ch of q) {
     if (ch === " ") continue;
-    const i = t.indexOf(ch, ti);
+    const i = lower.indexOf(ch, ti);
     if (i < 0) return null;
     marks.push(i);
-    const wordStart = i === 0 || " /-_.·›".includes(t[i - 1]);
+    const wordStart = i === 0 || " /-_.·›".includes(lower[i - 1]);
     if (i !== prev + 1 && !wordStart) midWordRuns++;
     score += i === prev + 1 ? 8 : 1;
     if (wordStart) score += 6;
@@ -63,7 +64,7 @@ export function fuzzy(query: string, text: string): { score: number; marks: numb
     ti = i + 1;
   }
   if (midWordRuns > 1) return null;
-  return { score: score - t.length * 0.02, marks };
+  return { score: score - lower.length * 0.02, marks };
 }
 
 function Highlight(props: { text: string; marks?: number[] }) {
@@ -89,7 +90,7 @@ function sessionItem(s: SessionInfo, marks?: number[]): Item {
     key: "s" + s.id,
     label,
     marks: marks?.filter((i) => i < label.length),
-    hint: `${proj?.name ?? "—"} · ${s.alive ? s.status : "exited"}${s.model ? " · " + s.model : ""} · ${relTime(s.last_activity || s.created_at)}`,
+    hint: `${proj?.name ?? "—"} · ${t(STATUS_WORDS[s.alive ? s.status : "exited"])}${s.model ? " · " + s.model : ""} · ${relTime(s.last_activity || s.created_at)}`,
     icon: () => <><StatusDot s={s} /><KindGlyph kind={s.kind} size={16} /></>,
     run: () => store.revealSession(s.id),
   };
@@ -172,10 +173,10 @@ export function Palette(props: { scope: SearchScope }) {
         else if (r.kind === "project" && projectOf(r.id) && r.id !== store.state.activeProject) recent.push(projectItem(projectOf(r.id)!));
         else if (r.kind === "file" && r.projectId === store.state.activeProject) recent.push(fileItem(r.projectId, r.id));
       }
-      if (recent.length) out.push({ title: "Recent", items: recent });
+      if (recent.length) out.push({ title: t("Recent"), items: recent });
       const attention = Object.values(store.sessions).filter((s) => s.alive && (s.status === "waiting" || s.unread));
-      if (attention.length) out.push({ title: "Needs attention", items: attention.map((s) => sessionItem(s)) });
-      out.push({ title: "Commands", items: commandItems("").slice(0, 6) });
+      if (attention.length) out.push({ title: t("Needs attention"), items: attention.map((s) => sessionItem(s)) });
+      out.push({ title: t("Commands"), items: commandItems("").slice(0, 6) });
       return out;
     }
 
@@ -188,43 +189,44 @@ export function Palette(props: { scope: SearchScope }) {
         if (m) ranked.push({ ...sessionItem(s, m.marks), score: m.score - sessionOrder[s.alive ? s.status : "exited"] * 0.5 });
       }
       ranked.sort((a, b) => b.score - a.score);
-      if (ranked.length) out.push({ title: "Sessions", items: ranked.slice(0, sc === "all" ? 5 : 50) });
+      if (ranked.length) out.push({ title: t("Sessions"), items: ranked.slice(0, sc === "all" ? 5 : 50) });
       const projects = store.state.projects
         .map((p) => ({ p, m: fuzzy(q, p.name) }))
         .filter((x) => x.m)
         .sort((a, b) => b.m!.score - a.m!.score)
         .map((x) => projectItem(x.p, x.m!.marks));
-      if (projects.length) out.push({ title: "Projects", items: projects.slice(0, sc === "all" ? 5 : 50) });
+      if (projects.length) out.push({ title: t("Projects"), items: projects.slice(0, sc === "all" ? 5 : 50) });
       // Nothing by that name: offer to create it as a worktree of the current repository.
       const active = store.activeProject();
       const repo = active?.parentId ? projectOf(active.parentId) : active;
       const exact = store.state.projects.some((p) => p.name.toLowerCase() === q.toLowerCase());
       if (q && repo && store.projectInfo[repo.id]?.is_repo && !exact && sc === "sessions") {
-        out.push({ title: "Create", items: [{ key: "new-wt", label: `Create worktree “${q}”`, hint: `in ${repo.name}`, icon: () => <Icon name="branch" size={14} />, run: () => openWorktreeDialog(repo.id, q) }] });
+        out.push({ title: t("Create"), items: [{ key: "new-wt", label: t("Create worktree “{name}”", { name: q }), hint: t("in {project}", { project: repo.name }), icon: () => <Icon name="branch" size={14} />, run: () => openWorktreeDialog(repo.id, q) }] });
       }
     }
     if ((sc === "all" || sc === "files") && project()) {
       const items = files().map((h) => fileItem(project()!.id, h.path, h.indices));
-      if (items.length) out.push({ title: `Files in ${project()!.name}`, items });
+      if (items.length) out.push({ title: t("Files in {project}", { project: project()!.name }), items });
     }
     if (sc === "all" || sc === "commands") {
       const items = commandItems(q);
-      if (items.length) out.push({ title: "Commands", items: sc === "all" ? items.slice(0, 6) : items });
+      if (items.length) out.push({ title: t("Commands"), items: sc === "all" ? items.slice(0, 6) : items });
     }
     if (sc === "all" || sc === "settings") {
       const items = settingsCatalog
-        .map((c) => ({ c, m: fuzzy(q, `${c.label} ${c.keywords}`) }))
+        .map((c) => ({ c, shown: t(c.label) }))
+        .map(({ c, shown }) => ({ c, shown, m: fuzzy(q, `${shown} ${c.label} ${c.keywords}`) }))
         .filter((x) => x.m)
         .sort((a, b) => b.m!.score - a.m!.score)
-        .map(({ c, m }) => ({
+        .map(({ c, shown, m }) => ({
           key: "st" + c.label,
-          label: c.label,
-          marks: m!.marks.filter((i) => i < c.label.length),
-          hint: "Settings",
+          label: shown,
+          marks: m!.marks.filter((i) => i < shown.length),
+          hint: t("Settings"),
           icon: () => <Icon name="settings" size={14} />,
           run: () => store.openSettings(c.section, c.id),
         }));
-      if (items.length) out.push({ title: "Settings", items: sc === "all" ? items.slice(0, 4) : items });
+      if (items.length) out.push({ title: t("Settings"), items: sc === "all" ? items.slice(0, 4) : items });
     }
     return out;
   });
@@ -233,16 +235,18 @@ export function Palette(props: { scope: SearchScope }) {
     const ranked: (Item & { score: number })[] = [];
     for (const c of commands) {
       if (c.when && !c.when()) continue;
-      const m = fuzzy(q, c.label);
+      const shown = t(c.label);
+      const m = fuzzy(q, `${shown} ${c.label}`);
       if (!m) continue;
       const k = chordOf(c);
-      ranked.push({ key: c.id, label: c.label, chord: k ? chordLabel(k) : undefined, marks: m.marks, score: m.score, run: c.run, icon: () => <Icon name="bolt" size={14} /> });
+      ranked.push({ key: c.id, label: shown, chord: k ? chordLabel(k) : undefined, marks: m.marks.filter((i) => i < shown.length), score: m.score, run: c.run, icon: () => <Icon name="bolt" size={14} /> });
     }
     for (const c of quickCommandsFor(store.state.activeProject)) {
-      const m = fuzzy(q, `Run: ${c.label}`);
+      const shown = t("Run: {label}", { label: c.label });
+      const m = fuzzy(q, shown);
       if (!m) continue;
       ranked.push({
-        key: `qc${c.id}`, label: `Run: ${c.label}`, hint: c.action === "agent" ? "Quick prompt" : "Quick command", marks: m.marks, score: m.score,
+        key: `qc${c.id}`, label: shown, hint: c.action === "agent" ? t("Quick prompt") : t("Quick command"), marks: m.marks, score: m.score,
         run: () => void runQuickCommand(c), icon: () => <Icon name={c.action === "agent" ? "chat" : "terminal"} size={14} />,
       });
     }
@@ -280,11 +284,11 @@ export function Palette(props: { scope: SearchScope }) {
 
   const placeholder = () =>
     ({
-      all: "Search sessions, projects, files, commands and settings…",
-      sessions: "Jump to a session or project…",
-      files: `Go to file in ${project()?.name ?? "project"}…`,
-      commands: "Run a command…",
-      settings: "Find a setting…",
+      all: t("Search sessions, projects, files, commands and settings…"),
+      sessions: t("Jump to a session or project…"),
+      files: project() ? t("Go to file in {project}…", { project: project()!.name }) : t("Go to file in project…"),
+      commands: t("Run a command…"),
+      settings: t("Find a setting…"),
     })[scope()];
 
   return (
@@ -311,7 +315,7 @@ export function Palette(props: { scope: SearchScope }) {
           <For each={SCOPES}>
             {(s) => (
               <button class={`scope${scope() === s.id ? " on" : ""}`} onPointerDown={(e) => { e.preventDefault(); setScope(s.id); }}>
-                {s.label}{s.prefix ? <span class="pfx">{s.prefix}</span> : null}
+                {t(s.label)}{s.prefix ? <span class="pfx">{s.prefix}</span> : null}
               </button>
             )}
           </For>
@@ -338,10 +342,10 @@ export function Palette(props: { scope: SearchScope }) {
             )}
           </For>
           <Show when={flat().length === 0}>
-            <div class="muted">{scope() === "files" && !query() ? "Type to search files" : "No matches"}</div>
+            <div class="muted">{scope() === "files" && !query() ? t("Type to search files") : t("No matches")}</div>
           </Show>
         </div>
-        <KeyHints items={[["Enter", "Open"], ["Esc", "Close"], ["↑↓", "Move"], ["Tab", "Scope"]]} />
+        <KeyHints items={[["Enter", t("Open")], ["Esc", t("Close")], ["↑↓", t("Move")], ["Tab", t("Scope")]]} />
       </div>
     </div>
   );

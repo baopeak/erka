@@ -2,6 +2,7 @@
 // ACP-native agent. We advertise no client fs/terminal capabilities so the agent uses its
 // own tools, exactly like in its TUI.
 import { type Adapter, type AdapterContext, type ChatItem, summarize, textOf } from "./chat-model";
+import { t } from "../lib/i18n";
 
 export const ompAcpArgs = () => ["omp", "acp"];
 
@@ -106,7 +107,7 @@ export function createAcpAdapter(ctx: AdapterContext): Adapter {
       if (!m || typeof m !== "object") return;
       if ("id" in m && !("method" in m)) {
         if (m.error) {
-          ctx.upsert({ kind: "system", id: `e-${String(m.id)}`, text: `Agent: ${m.error.message ?? JSON.stringify(m.error)}`, tone: "error" });
+          ctx.upsert({ kind: "system", id: `e-${String(m.id)}`, text: t("Agent: {error}", { error: String(m.error.message ?? JSON.stringify(m.error)) }), tone: "error" });
           if (String(m.id).startsWith("erka-prompt-")) ctx.set("busy", false);
           if (m.id === SESSION_ID && ctx.state.conversationId && !ctx.replaying()) {
             ctx.set("conversationId", null);
@@ -137,7 +138,7 @@ export function createAcpAdapter(ctx: AdapterContext): Adapter {
         requests.set(id, m.id);
         const tc = m.params?.toolCall ?? {};
         ctx.upsert({
-          kind: "permission", id, title: tc.title ? `Allow: ${tc.title}?` : "Allow this action?",
+          kind: "permission", id, title: tc.title ? t("Allow: {title}?", { title: String(tc.title) }) : t("Allow this action?"),
           detail: summarize(tc.rawInput ?? "", 600),
           options: (m.params?.options ?? []).map((o: any) => ({ id: o.optionId, label: o.name, tone: String(o.kind).startsWith("allow") ? "allow" : "deny" })),
         });

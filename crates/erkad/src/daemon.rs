@@ -17,7 +17,8 @@ use crate::awake::{self, Awake};
 use crate::chat::ChatSession;
 use crate::meta::MetaStore;
 use crate::status::Status;
-use crate::persist::{SavedSession, Store};
+use crate::persist::{write_atomic, SavedSession, Store};
+use crate::runs::{self, Action, NewRun, Runs, SessionView, TaskStatus};
 use crate::session::{json_out, now_millis, ClientTx, Session, SessionInfo, SessionSpec};
 use crate::status::hook_event_status;
 
@@ -72,6 +73,8 @@ pub struct Daemon {
     pub shutdown: tokio::sync::Notify,
     workspace_meta: Mutex<MetaStore>,
     automations: Mutex<Automations>,
+    runs: Mutex<Runs>,
+    pub mobile: crate::mobile::Mobile,
     awake: Awake,
     awake_mode: Mutex<awake::Mode>,
 }
@@ -103,6 +106,8 @@ struct CreateParams {
     /// First message for an agent (as an argument, or typed once it is ready).
     #[serde(default)]
     prompt: Option<String>,
+    #[serde(default)]
+    remote: Option<crate::session::RemoteSpec>,
 }
 
 fn default_kind() -> String {
@@ -146,6 +151,8 @@ impl Daemon {
             store: Store::new(&data_dir),
             workspace_meta: Mutex::new(MetaStore::load(&data_dir)),
             automations: Mutex::new(Automations::load(&data_dir)),
+            runs: Mutex::new(Runs::load(&data_dir)),
+            mobile: crate::mobile::Mobile::load(&data_dir),
             awake: Awake::new(),
             awake_mode: Mutex::new(awake::Mode::Off),
             data_dir,
@@ -157,8 +164,28 @@ impl Daemon {
 
     /// What `restart` resumes: the known conversation, else (agents that report no id) the
     /// folder's most recent one.
+    /// The command line of a session: local, or over SSH for a remote one.
+    fn launch_for(spec: &SessionSpec, resume: Resume, prompt: Option<&str>, exe: &std::path::Path, data_dir: &std::path::Path) -> Result<agents::Launch> {
+        match &spec.remote {
+            Some(r) => agents::build_remote_launch(&spec.kind, &spec.args, resume, prompt, r, &spec.cwd, &spec.id),
+            None => agents::build_launch(&spec.kind, &spec.args, resume, prompt, exe, data_dir),
+        }
+    }
+
     fn resume_for(spec: &SessionSpec) -> Resume<'_> {
+        if spec.remote.is_some() {
+            // No hooks reach us from another host: the conversation id is rarely known, and
+            // the folder's latest conversation is the one this session had.
+            return match spec.agent_session_id.as_deref() {
+                Some(id) => Resume::Id(id),
+                None if agents::preset_for(&spec.kind).is_some_and(|p| !p.resume_latest.is_empty()) => Resume::Latest,
+                None => Resume::None,
+            };
+        }
         match spec.agent_session_id.as_deref() {
+            // Claude reports its id at start but saves the conversation only with the first
+            // turn: `--resume` of one never saved fails, so that session starts fresh.
+            Some(id) if spec.kind == "claude" && !agents::claude_conversation_saved(id, &spec.env) => Resume::None,
             Some(id) => Resume::Id(id),
             None if !matches!(spec.kind.as_str(), "claude" | "codex")
                 && agents::preset_for(&spec.kind).is_some_and(|p| !p.resume_latest.is_empty()) =>
@@ -178,6 +205,7 @@ impl Daemon {
             "project_id": a.project_id,
             "name": a.name,
             "args": a.args,
+            "env": a.env,
             "prompt": a.prompt,
         }));
         let (session, error) = match &result {
@@ -195,9 +223,10 @@ impl Daemon {
         let prompt = param(params, "prompt")?.as_str().unwrap_or_default().to_string();
         let cwd = params.get("cwd").and_then(Value::as_str).unwrap_or(".").to_string();
         let timeout = Duration::from_secs(params.get("timeout_s").and_then(Value::as_u64).unwrap_or(180).clamp(5, 900));
+        let env: BTreeMap<String, String> = params.get("env").cloned().and_then(|v| serde_json::from_value(v).ok()).unwrap_or_default();
         let (tx, id) = (tx.clone(), id.clone());
         std::thread::Builder::new().name("erka-oneshot".into()).spawn(move || {
-            let reply = match crate::oneshot::run(&kind, &prompt, &cwd, timeout) {
+            let reply = match crate::oneshot::run(&kind, &prompt, &cwd, &env, timeout) {
                 Ok(text) => json!({"id": id, "result": {"text": text}}),
                 Err(e) => json!({"id": id, "error": {"message": format!("{e:#}")}}),
             };
@@ -217,6 +246,224 @@ impl Daemon {
             }),
         };
         self.awake.set(want);
+    }
+
+    // ---------- orchestration runs (see runs.rs) ----------
+
+    /// Saves runs and tells clients about the ones that changed.
+    fn runs_changed(&self, ids: &[String]) {
+        if ids.is_empty() {
+            return;
+        }
+        let runs = self.runs.lock();
+        if let Err(e) = runs.save() {
+            tracing::warn!("save runs: {e:#}");
+        }
+        for id in ids {
+            if let Some(r) = runs.get(id) {
+                self.broadcast("run.updated", json!(r));
+            }
+        }
+    }
+
+    /// One engine step: finish, skip and start tasks (called every second by the ticker).
+    fn run_tick(self: &Arc<Self>) {
+        let view = |sid: &str| {
+            self.by_id(sid).map(|e| {
+                let i = e.info();
+                SessionView { alive: i.alive, working: i.status == Status::Working, idle: i.status == Status::Idle, exit_code: i.exit_code, last_activity: i.last_activity }
+            })
+        };
+        let (actions, changed) = self.runs.lock().step(now_millis(), view);
+        self.runs_changed(&changed);
+        for a in actions {
+            let me = self.clone();
+            // Worktrees and process starts take a moment: never on the ticker itself.
+            tokio::task::spawn_blocking(move || match a {
+                Action::Start { run, task } => me.start_task(&run, &task),
+                Action::Capture { run, task, session } => me.capture_task(&run, &task, &session),
+            });
+        }
+    }
+
+    /// Creates the task's worktree (when asked) and starts its agent with the task prompt.
+    fn start_task(&self, run_id: &str, task_id: &str) {
+        let Some((run, task)) = self.runs.lock().get(run_id).and_then(|r| r.tasks.iter().find(|t| t.id == task_id).cloned().map(|t| (r.clone(), t))) else { return };
+        let prepared = if task.worktree { create_task_worktree(&run, &task).map(|(p, b)| (p, Some(b))) } else { Ok((run.cwd.clone(), None)) };
+        // The session id is the task's before its process starts: an agent that reports at once
+        // must find its task.
+        let sid = uuid::Uuid::new_v4().to_string();
+        if let Ok((t, _)) = self.runs.lock().task_mut(run_id, task_id) {
+            t.session_id = Some(sid.clone());
+        }
+        let started = prepared.and_then(|(cwd, branch)| {
+            let prompt = runs::task_prompt(&run, &task, &self.exe);
+            let info = self.create(json!({
+                "id": sid,
+                "kind": task.kind,
+                "cwd": cwd,
+                "project_id": run.project_id,
+                "name": format!("{} · {}", run.name, task.title),
+                "args": task.args,
+                "env": task.env,
+                "prompt": prompt,
+            }))?;
+            Ok((info.spec.id, cwd, branch))
+        });
+        {
+            let mut runs = self.runs.lock();
+            let Ok((t, _)) = runs.task_mut(run_id, task_id) else { return };
+            match started {
+                Ok((sid, cwd, branch)) => {
+                    // A report may already have finished it.
+                    if t.status == TaskStatus::Starting {
+                        t.status = TaskStatus::Running;
+                    }
+                    t.session_id = Some(sid);
+                    t.cwd = Some(cwd);
+                    t.branch = branch;
+                    t.started_at = now_millis();
+                }
+                Err(e) => {
+                    t.status = TaskStatus::Failed;
+                    t.error = Some(format!("{e:#}"));
+                    t.finished_at = now_millis();
+                }
+            }
+        }
+        self.runs_changed(&[run_id.to_string()]);
+    }
+
+    /// Keeps the end of a finished task's output when its agent reported no summary.
+    fn capture_task(&self, run_id: &str, task_id: &str, session: &str) {
+        let tail = match self.by_id(session) {
+            Some(Entry::Term(s)) => s.text_tail(40),
+            _ => return,
+        };
+        let text: Vec<&str> = tail.lines().map(str::trim_end).filter(|l| !l.trim().is_empty()).collect();
+        let tail = text[text.len().saturating_sub(12)..].join("\n");
+        {
+            let mut runs = self.runs.lock();
+            let Ok((t, _)) = runs.task_mut(run_id, task_id) else { return };
+            if t.summary.is_some() || tail.is_empty() {
+                return;
+            }
+            t.summary = Some(tail.chars().take(2000).collect());
+        }
+        self.runs_changed(&[run_id.to_string()]);
+    }
+
+    fn run_rpc(&self, method: &str, params: &Value) -> Result<Value> {
+        let id = || params.get("id").and_then(Value::as_str).unwrap_or_default().to_string();
+        let task = || params.get("task").and_then(Value::as_str).unwrap_or_default().to_string();
+        let mut kill: Vec<String> = Vec::new();
+        let result = match method {
+            "run.list" => return Ok(json!(self.runs.lock().list)),
+            "run.get" => return Ok(json!(self.runs.lock().get(&id()).ok_or_else(|| anyhow!("no run {}", id()))?)),
+            "run.create" => {
+                let new: NewRun = serde_json::from_value(params.clone()).context("run.create params")?;
+                let run = runs::build_run(new, uuid::Uuid::new_v4().to_string(), now_millis())?;
+                let out = json!(run);
+                let rid = run.id.clone();
+                self.runs.lock().list.insert(0, run);
+                self.runs_changed(&[rid]);
+                return Ok(out);
+            }
+            "run.approve" => {
+                let mut runs = self.runs.lock();
+                let (t, rid) = runs.task_mut(&id(), &task())?;
+                t.approved = true;
+                if t.status == TaskStatus::WaitingApproval {
+                    t.status = TaskStatus::Pending;
+                }
+                rid
+            }
+            "run.retry" => {
+                let mut runs = self.runs.lock();
+                let r = runs.get_mut(&id()).ok_or_else(|| anyhow!("no run {}", id()))?;
+                let tid = task();
+                let t = r.tasks.iter_mut().find(|t| t.id == tid).ok_or_else(|| anyhow!("no task {tid}"))?;
+                anyhow::ensure!(matches!(t.status, TaskStatus::Failed | TaskStatus::Skipped | TaskStatus::Cancelled), "only a failed, skipped or cancelled task can be retried");
+                // It and the tasks skipped because of it run again.
+                for t in r.tasks.iter_mut().filter(|t| t.id == tid || t.status == TaskStatus::Skipped) {
+                    t.status = TaskStatus::Pending;
+                    t.session_id = None;
+                    t.error = None;
+                    t.summary = None;
+                    t.finished_at = 0;
+                    t.worked = false;
+                }
+                r.status = runs::RunStatus::Running;
+                r.finished_at = 0;
+                r.id.clone()
+            }
+            "run.task_done" | "run.task_skip" => {
+                let mut runs = self.runs.lock();
+                let (t, rid) = runs.task_mut(&id(), &task())?;
+                anyhow::ensure!(!t.status.finished(), "the task has already finished");
+                if let Some(sid) = t.session_id.clone().filter(|_| t.status == TaskStatus::Running && method == "run.task_skip") {
+                    kill.push(sid);
+                }
+                t.status = if method == "run.task_done" { TaskStatus::Done } else { TaskStatus::Skipped };
+                if let Some(s) = params.get("summary").and_then(Value::as_str).filter(|s| !s.trim().is_empty()) {
+                    t.summary = Some(s.trim().to_string());
+                }
+                t.finished_at = now_millis();
+                rid
+            }
+            "run.cancel" => {
+                let mut runs = self.runs.lock();
+                let r = runs.get_mut(&id()).ok_or_else(|| anyhow!("no run {}", id()))?;
+                for t in r.tasks.iter_mut().filter(|t| !t.status.finished()) {
+                    if let Some(sid) = t.session_id.clone().filter(|_| t.status == TaskStatus::Running) {
+                        kill.push(sid);
+                    }
+                    t.status = TaskStatus::Cancelled;
+                    t.finished_at = now_millis();
+                }
+                if r.status == runs::RunStatus::Running {
+                    r.status = runs::RunStatus::Cancelled;
+                    r.finished_at = now_millis();
+                }
+                r.id.clone()
+            }
+            "run.delete" => {
+                let mut runs = self.runs.lock();
+                let rid = runs.get(&id()).map(|r| r.id.clone()).ok_or_else(|| anyhow!("no run {}", id()))?;
+                anyhow::ensure!(runs.get(&rid).is_some_and(|r| r.status != runs::RunStatus::Running), "cancel the run before deleting it");
+                runs.list.retain(|r| r.id != rid);
+                runs.save()?;
+                self.broadcast("run.deleted", json!({"id": rid}));
+                return Ok(json!(true));
+            }
+            "run.report" => {
+                let sid = params.get("session_id").and_then(Value::as_str).unwrap_or_default().to_string();
+                let failed = params.get("status").and_then(Value::as_str) == Some("failed");
+                let summary = params.get("summary").and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
+                let mut runs = self.runs.lock();
+                let (r, i) = runs.by_session(&sid).ok_or_else(|| anyhow!("this session is not running a task of any run"))?;
+                let t = &mut r.tasks[i];
+                t.status = if failed { TaskStatus::Failed } else { TaskStatus::Done };
+                if failed {
+                    t.error = summary.clone().or_else(|| Some("reported as failed".into()));
+                }
+                t.summary = summary;
+                t.finished_at = now_millis();
+                let out = json!({"run": r.id, "task": t.id});
+                let rid = r.id.clone();
+                drop(runs);
+                self.runs_changed(&[rid]);
+                return Ok(out);
+            }
+            other => bail!("unknown method {other}"),
+        };
+        for sid in kill {
+            if let Some(e) = self.by_id(&sid) {
+                e.kill();
+            }
+        }
+        self.runs_changed(&[result.clone()]);
+        Ok(json!(self.runs.lock().get(&result)))
     }
 
     pub fn register_client(&self, id: u64, tx: ClientTx) {
@@ -247,19 +494,38 @@ impl Daemon {
     }
 
     /// Restores sessions recorded by a previous daemon run as exited-but-restartable entries
-    /// whose screens show the last persisted snapshot.
+    /// whose screens show the last persisted snapshot. Sessions that were running are flagged
+    /// `interrupted`: the app resumes them (agents into the same conversation) when shown, at
+    /// once, or on request (`resumeSessions` setting). Chat sessions come back without a
+    /// process; the app starts a chat front-end resuming the conversation in the same pane.
     pub fn restore(&self) {
-        for saved in self.store.load_sessions() {
-            if saved.chat {
-                continue; // chat processes are re-created from the agent transcript instead
+        // Plugin agents first: restored sessions may be theirs.
+        if let Some(defs) = std::fs::read(self.data_dir.join("custom-agents.json")).ok().and_then(|b| serde_json::from_slice::<Vec<agents::AgentDef>>(&b).ok()) {
+            if let Err(e) = agents::set_custom(&defs) {
+                tracing::warn!("plugin agents: {e:#}");
             }
+        }
+        for saved in self.store.load_sessions() {
             let handle = self.next_handle.fetch_add(1, Ordering::Relaxed);
+            if saved.chat {
+                let chat = ChatSession::new(handle, saved.spec.clone());
+                if saved.alive {
+                    chat.mark_interrupted(saved.last_activity);
+                }
+                self.sessions.write().insert(handle, Entry::Chat(chat));
+                continue;
+            }
             let session = Session::new(handle, saved.spec.clone(), saved.cols, saved.rows);
             if let Some(snapshot) = self.store.load_snapshot(&saved.spec.id) {
                 session.ingest(&snapshot);
-                session.ingest(b"\r\n\x1b[0;2m[session ended when Erka's daemon stopped - restart to continue]\x1b[0m\r\n");
+                if saved.alive {
+                    session.ingest(b"\r\n\x1b[0;2m[stopped when Erka's session daemon stopped]\x1b[0m\r\n");
+                }
             }
             session.set_last_activity(saved.last_activity);
+            if saved.alive {
+                session.mark_interrupted(saved.last_activity);
+            }
             self.sessions.write().insert(handle, Entry::Term(session));
         }
     }
@@ -278,6 +544,7 @@ impl Daemon {
             model,
             agent_session_id: p.agent_session_id,
             created_at: now_millis(),
+            remote: p.remote,
         };
         if self.by_id(&spec.id).is_some() {
             bail!("session id {} already exists", spec.id);
@@ -290,7 +557,7 @@ impl Daemon {
             Entry::Chat(chat)
         } else {
             let resume = spec.agent_session_id.as_deref().map_or(Resume::None, Resume::Id);
-            let launch = agents::build_launch(&spec.kind, &spec.args, resume, p.prompt.as_deref(), &self.exe, &self.data_dir)?;
+            let launch = Self::launch_for(&spec, resume, p.prompt.as_deref(), &self.exe, &self.data_dir)?;
             let session = Session::new(handle, spec, p.cols, p.rows);
             session.spawn(&launch)?;
             Entry::Term(session)
@@ -306,8 +573,14 @@ impl Daemon {
         let Entry::Term(session) = self.entry(handle)? else { bail!("chat sessions cannot be restarted") };
         anyhow::ensure!(!session.is_alive(), "session is still running");
         let spec = session.spec.lock().clone();
-        let launch = agents::build_launch(&spec.kind, &spec.args, Self::resume_for(&spec), None, &self.exe, &self.data_dir)?;
-        session.ingest(b"\x1b[0m\x1b[2J\x1b[3J\x1b[H");
+        let launch = Self::launch_for(&spec, Self::resume_for(&spec), None, &self.exe, &self.data_dir)?;
+        if matches!(spec.kind.as_str(), "shell" | "custom") {
+            // A new shell starts below the old screen, which stays readable above it.
+            session.ingest(b"\x1b[0m\r\n\x1b[2m--- restarted ---\x1b[0m\r\n");
+        } else {
+            // Agents redraw their resumed conversation themselves.
+            session.ingest(b"\x1b[0m\x1b[2J\x1b[3J\x1b[H");
+        }
         session.spawn(&launch)?;
         Ok(session.info())
     }
@@ -417,6 +690,7 @@ impl Daemon {
                     rows: info.rows,
                     chat: info.chat,
                     last_activity: info.last_activity,
+                    alive: info.alive || info.interrupted,
                 }
             })
             .collect()
@@ -451,9 +725,15 @@ impl Daemon {
         let mut interval = tokio::time::interval(Duration::from_millis(250));
         let mut last_persist = Instant::now();
         let mut last_schedule = Instant::now();
+        let mut last_alive: HashMap<u32, bool> = HashMap::new();
+        let mut last_run_tick = Instant::now();
         loop {
             interval.tick().await;
             let now = Instant::now();
+            if now.duration_since(last_run_tick) >= Duration::from_secs(1) {
+                last_run_tick = now;
+                self.run_tick();
+            }
             if now.duration_since(last_schedule) >= Duration::from_secs(10) {
                 last_schedule = now;
                 self.update_awake();
@@ -475,6 +755,11 @@ impl Daemon {
                     Entry::Chat(c) => c.tick(now),
                 };
                 if let Some(info) = changed {
+                    // Started or stopped: `sessions.json` records which sessions were running,
+                    // so a later restart resumes only those (see `restore`).
+                    if last_alive.insert(info.handle, info.alive) != Some(info.alive) {
+                        self.meta_dirty.store(true, Ordering::Relaxed);
+                    }
                     if let Ok(v) = serde_json::to_value(&info) {
                         self.broadcast("session.updated", v);
                     }
@@ -526,8 +811,8 @@ impl Daemon {
             }
             "agent.presets" => {
                 let installed = agents::installed_presets();
-                json!(agents::PRESETS
-                    .iter()
+                json!(agents::all_presets()
+                    .into_iter()
                     .map(|p| json!({
                         "id": p.id,
                         "label": p.label,
@@ -541,6 +826,52 @@ impl Daemon {
             "agent.run" => {
                 self.agent_run(tx, id, &params)?;
                 return Ok(None);
+            }
+            "agent.set_custom" => {
+                let defs: Vec<agents::AgentDef> = serde_json::from_value(params.get("agents").cloned().unwrap_or_else(|| json!([]))).context("agents")?;
+                agents::set_custom(&defs)?;
+                // Kept for the next start: restored sessions of plugin agents must still resume.
+                write_atomic(&self.data_dir.join("custom-agents.json"), &serde_json::to_vec_pretty(&defs)?)?;
+                json!(true)
+            }
+            "mobile.status" => self.mobile.status(),
+            "mobile.enable" => {
+                // Binding the listener is async: answer when it is up (or failed).
+                let (me, tx, id) = (self.clone(), tx.clone(), id.clone());
+                tokio::spawn(async move {
+                    let reply = match crate::mobile::enable(me.clone(), params).await {
+                        Ok(v) => json!({"id": id, "result": v}),
+                        Err(e) => json!({"id": id, "error": {"message": format!("{e:#}")}}),
+                    };
+                    let _ = tx.send(json_out(&reply));
+                    me.broadcast("mobile.updated", json!({}));
+                });
+                return Ok(None);
+            }
+            "mobile.disable" => {
+                self.mobile.disable();
+                self.broadcast("mobile.updated", json!({}));
+                json!(true)
+            }
+            "mobile.pair_start" => self.mobile.pair_start()?,
+            "mobile.approve" => {
+                let v = self.mobile.approve(&params)?;
+                self.broadcast("mobile.updated", json!({}));
+                v
+            }
+            "mobile.revoke" => {
+                let v = self.mobile.revoke(param(&params, "id")?.as_str().unwrap_or_default())?;
+                self.broadcast("mobile.updated", json!({}));
+                v
+            }
+            "mobile.set_write" => {
+                let v = self.mobile.set_write(param(&params, "id")?.as_str().unwrap_or_default(), params.get("can_write").and_then(Value::as_bool).unwrap_or(false))?;
+                self.broadcast("mobile.updated", json!({}));
+                v
+            }
+            "mobile.set_projects" => {
+                self.mobile.set_projects(&params);
+                json!(true)
             }
             "meta.list" => serde_json::to_value(&self.workspace_meta.lock().map)?,
             "meta.get" => {
@@ -570,6 +901,7 @@ impl Daemon {
                 self.broadcast("automation.changed", json!({}));
                 json!(true)
             }
+            m if m.starts_with("run.") => self.run_rpc(m, &params)?,
             "automation.run" => serde_json::to_value(self.run_automation(param(&params, "id")?.as_str().unwrap_or_default())?)?,
             "daemon.shutdown" => {
                 if params.get("kill_sessions").and_then(Value::as_bool).unwrap_or(false) {
@@ -663,4 +995,33 @@ impl Daemon {
             other => bail!("unknown method {other}"),
         }))
     }
+}
+
+/// A new git worktree for a task: branch `erka/<run>-<id>-<task>` from the run folder's HEAD, in
+/// `<repo>-worktrees/` next to the repository (where Erka's worktree dialog puts them).
+fn create_task_worktree(run: &runs::Run, task: &runs::Task) -> Result<(String, String)> {
+    let git = |args: &[&str]| -> Result<String> {
+        let mut cmd = std::process::Command::new("git");
+        cmd.args(args).stdin(std::process::Stdio::null());
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(0x0800_0000);
+        }
+        let out = cmd.output().context("run git")?;
+        if !out.status.success() {
+            bail!("git {}: {}", args.first().unwrap_or(&""), String::from_utf8_lossy(&out.stderr).trim());
+        }
+        Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    };
+    let top = git(&["-C", &run.cwd, "rev-parse", "--show-toplevel"]).map_err(|_| anyhow!("a task worktree needs the run folder to be a git repository"))?;
+    let top = PathBuf::from(top);
+    let name = top.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "repo".into());
+    let short: String = run.id.chars().take(6).collect();
+    let leaf = format!("{}-{short}-{}", runs::slug(&run.name), task.id);
+    let branch = format!("erka/{leaf}");
+    let path = top.parent().unwrap_or(&top).join(format!("{name}-worktrees")).join(&leaf);
+    let path_s = path.to_string_lossy().into_owned();
+    git(&["-C", &top.to_string_lossy(), "worktree", "add", "-b", &branch, &path_s, "HEAD"])?;
+    Ok((path_s, branch))
 }

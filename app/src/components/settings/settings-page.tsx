@@ -1,7 +1,9 @@
 // Settings as a full page: grouped navigation on the left, one section at a time on the right,
 // and a search box (Ctrl/Cmd+F) that shows every matching row across sections.
 import { For, createMemo, onCleanup, onMount, type JSX } from "solid-js";
+import { Dynamic } from "solid-js/web";
 import { store } from "../../lib/store";
+import { t } from "../../lib/i18n";
 import { isMac } from "../../lib/platform";
 import { settingsCatalog, settingsSections, entryMatches, type SettingsSection } from "../../lib/settings-catalog";
 import { QuickCommandsEditor } from "../quick-commands";
@@ -12,19 +14,33 @@ import { AutomationSettings } from "./automation-settings";
 import { AppearanceSettings, NotificationSettings, TerminalSettings, UsageSettings } from "./interface-settings";
 import { ShortcutSettings, shortcutsMatch } from "./shortcut-settings";
 import { AboutSettings, DaemonSettings } from "./system-settings";
+import { LayoutSettings } from "./layout-settings";
+import { AccountSettings } from "./account-settings";
+import { IntegrationSettings } from "./integration-settings";
+import { RemoteSettings } from "./remote-settings";
+import { MobileSettings } from "./mobile-settings";
+import { PluginSettings } from "./plugin-settings";
+import { VoiceSettings } from "./voice-settings";
 
 const SECTIONS: Record<SettingsSection, () => JSX.Element> = {
   agents: AgentSettings,
+  accounts: AccountSettings,
+  integrations: IntegrationSettings,
+  remote: RemoteSettings,
+  mobile: MobileSettings,
   automations: AutomationSettings,
+  voice: VoiceSettings,
   commands: () => (
     <SettingRow id="quick-commands" wide>
       <QuickCommandsEditor />
     </SettingRow>
   ),
   terminal: TerminalSettings,
+  layouts: LayoutSettings,
   appearance: AppearanceSettings,
   shortcuts: ShortcutSettings,
   notifications: NotificationSettings,
+  plugins: PluginSettings,
   usage: UsageSettings,
   daemon: DaemonSettings,
   about: AboutSettings,
@@ -70,17 +86,17 @@ export function SettingsPage() {
   return (
     <div class="settings-page" ref={page} tabIndex={-1}>
       <nav class="settings-nav">
-        <button class="settings-back" onClick={close} title="Back (Esc)"><Icon name="back" size={14} /> Settings</button>
+        <button class="settings-back" onClick={close} title={t("Back (Esc)")}><Icon name="back" size={14} /> {t("Settings")}</button>
         <For each={groups()}>
           {(g) => (
             <>
-              <div class="settings-group">{g.group}</div>
+              <div class="settings-group">{t(g.group)}</div>
               <For each={g.items}>
                 {(s) => (
                   <button class={`settings-link${!query() && store.settingsSection() === s.id ? " on" : ""}${query() && !sectionMatches(s.id, query()) ? " dim" : ""}`}
                     data-section={s.id}
                     onClick={() => { setSettingsQuery(""); store.setSettingsSection(s.id); }}>
-                    {s.label}
+                    {t(s.label)}
                   </button>
                 )}
               </For>
@@ -91,14 +107,14 @@ export function SettingsPage() {
       <main class="settings-main">
         <div class="settings-search">
           <Icon name="search" size={14} />
-          <input ref={search} placeholder={`Search settings (${isMac ? "⌘F" : "Ctrl+F"})`} value={settingsQuery()} onInput={(e) => setSettingsQuery(e.currentTarget.value)} />
+          <input ref={search} placeholder={t("Search settings ({key})", { key: isMac ? "⌘F" : "Ctrl+F" })} value={settingsQuery()} onInput={(e) => setSettingsQuery(e.currentTarget.value)} />
         </div>
         <div class="settings-scroll">
-          <For each={shown()} fallback={<div class="muted">No settings match “{query()}”.</div>}>
+          <For each={shown()} fallback={<div class="muted">{t("No settings match “{query}”.", { query: query() })}</div>}>
             {(s) => (
               <section class="settings-section" data-section={s.id}>
-                <h2>{s.label}</h2>
-                {SECTIONS[s.id]()}
+                <h2>{t(s.label)}</h2>
+                <Dynamic component={SECTIONS[s.id]} />
               </section>
             )}
           </For>

@@ -1,3 +1,5 @@
+import { formatRelative, t } from "./i18n";
+
 export const isMac = /Mac|iPhone|iPad/.test(navigator.platform) || navigator.userAgent.includes("Mac OS");
 
 /** Human label for a chord like "mod+shift+p". */
@@ -39,22 +41,16 @@ export function joinPath(root: string, rel: string): string {
   return rel ? root.replace(/[\\/]+$/, "") + sep + rel.replace(/\//g, sep) : root;
 }
 
-export function relTime(ms: number): string {
-  const d = Date.now() - ms;
-  if (d < 60_000) return "just now";
-  if (d < 3_600_000) return `${Math.floor(d / 60_000)}m ago`;
-  if (d < 86_400_000) return `${Math.floor(d / 3_600_000)}h ago`;
-  return `${Math.floor(d / 86_400_000)}d ago`;
-}
+export const relTime = (ms: number) => formatRelative(ms);
 
-/** Compact age: "now", "5m", "3h", "2d", "4w". */
+/** Compact age: "now", "5m", "3h", "2d", "4w" (Vietnamese: "vừa xong", "5 ph", …). */
 export function relTimeShort(ms: number, now = Date.now()): string {
   const d = Math.max(0, now - ms);
-  if (d < 60_000) return "now";
-  if (d < 3_600_000) return `${Math.floor(d / 60_000)}m`;
-  if (d < 86_400_000) return `${Math.floor(d / 3_600_000)}h`;
-  if (d < 7 * 86_400_000) return `${Math.floor(d / 86_400_000)}d`;
-  return `${Math.floor(d / (7 * 86_400_000))}w`;
+  if (d < 60_000) return t("now");
+  if (d < 3_600_000) return t("{n}m", { n: Math.floor(d / 60_000) });
+  if (d < 86_400_000) return t("{n}h", { n: Math.floor(d / 3_600_000) });
+  if (d < 7 * 86_400_000) return t("{n}d", { n: Math.floor(d / 86_400_000) });
+  return t("{n}w", { n: Math.floor(d / (7 * 86_400_000)) });
 }
 
 export const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);

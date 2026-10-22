@@ -2,6 +2,7 @@
 // and reports which are installed; the UI adds glyphs and decides what launchers show.
 import { createSignal } from "solid-js";
 import { daemon } from "./ipc";
+import { msg, t } from "./i18n";
 
 export interface AgentPreset {
   id: string;
@@ -31,11 +32,11 @@ export async function loadAgentPresets() {
 export const presetFor = (kind: string) => presets().find((p) => p.id === kind);
 
 const BUILTIN: Record<string, { glyph: string; color: string; label: string }> = {
-  shell: { glyph: ">_", color: "#9aa4b5", label: "Terminal" },
+  shell: { glyph: ">_", color: "#9aa4b5", label: msg("Terminal") },
   claude: { glyph: "✳", color: "#e8a27c", label: "Claude Code" },
   codex: { glyph: "◎", color: "#8fc8ff", label: "Codex" },
   omp: { glyph: "π", color: "#c592ff", label: "OMP" },
-  custom: { glyph: "$", color: "#8bd58b", label: "Command" },
+  custom: { glyph: "$", color: "#8bd58b", label: msg("Command") },
   gemini: { glyph: "✦", color: "#8ab4f8", label: "Gemini" },
   cursor: { glyph: "▲", color: "#d0d4dc", label: "Cursor CLI" },
   opencode: { glyph: "◇", color: "#f2c96d", label: "OpenCode" },
@@ -47,7 +48,7 @@ const HUES = ["#5fd7d7", "#ffb86c", "#ff8f9c", "#a8e6a1", "#d7b0ff", "#87e8e8", 
 /** Glyph, colour and label for any session kind. */
 export function kindInfo(kind: string): { glyph: string; color: string; label: string } {
   const known = BUILTIN[kind];
-  if (known) return known;
+  if (known) return { ...known, label: t(known.label) };
   const p = presetFor(kind);
   const label = p?.label ?? kind;
   let h = 0;
@@ -57,10 +58,16 @@ export function kindInfo(kind: string): { glyph: string; color: string; label: s
 
 /** Short name for session titles ("Claude", not "Claude Code"). */
 export function kindShortName(kind: string): string {
-  return ({ shell: "Terminal", claude: "Claude", codex: "Codex", omp: "OMP", custom: "Command" } as Record<string, string>)[kind] ?? kindInfo(kind).label;
+  return ({ shell: t("Terminal"), claude: "Claude", codex: "Codex", omp: "OMP", custom: t("Command") } as Record<string, string>)[kind] ?? kindInfo(kind).label;
 }
 
 export const isAgentKind = (kind: string) => kind !== "shell" && kind !== "custom";
+
+/** Agents for a project's launchers: on a remote host, the ones found there. */
+export function projectAgents(project: { remote?: { agents?: string[] } } | null | undefined, hidden: string[] = []): string[] {
+  if (project?.remote) return (project.remote.agents ?? CORE_AGENTS).filter((k) => !hidden.includes(k));
+  return launchableAgents(hidden);
+}
 
 /** Agents for launchers: the core three plus installed presets the user has not hidden. */
 export function launchableAgents(hidden: string[] = []): string[] {

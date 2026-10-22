@@ -3,6 +3,7 @@
 import { parse as parseYaml } from "yaml";
 import { store } from "./store";
 import * as ipc from "./ipc";
+import { t } from "./i18n";
 import { basename, normPath } from "./platform";
 import { disposeView } from "./terminal-host";
 import type { Project, SessionKind } from "./types";
@@ -33,20 +34,20 @@ function hashText(text: string): string {
 
 /** Parses `.erka.yaml` text. Throws a readable message when it is invalid. */
 export function parseErkaConfig(text: string): ErkaConfig {
-  if (text.length > MAX_CONFIG) throw new Error(".erka.yaml is larger than 64 KB");
+  if (text.length > MAX_CONFIG) throw new Error(t(".erka.yaml is larger than 64 KB"));
   let raw: any;
   try {
     raw = parseYaml(text) ?? {};
   } catch (e) {
-    throw new Error(`.erka.yaml: ${String(e).split("\n")[0]}`);
+    throw new Error(t(".erka.yaml: {error}", { error: String(e).split("\n")[0] }));
   }
   const list = (v: unknown) => (v == null ? [] : Array.isArray(v) ? v : [v]);
   const setup = list(raw.setup).map(String).filter((c) => c.trim());
   const tabs: ErkaConfig["tabs"] = [];
-  for (const t of list(raw.tabs)) {
-    if (typeof t === "string" && KIND_RE.test(t) && t !== "custom") tabs.push({ kind: t as SessionKind });
-    else if (t && typeof t === "object" && typeof t.command === "string" && t.command.trim()) tabs.push({ command: t.command.trim() });
-    else throw new Error(`.erka.yaml: unknown tab ${JSON.stringify(t)} (use an agent such as claude, shell, or { command: … })`);
+  for (const tab of list(raw.tabs)) {
+    if (typeof tab === "string" && KIND_RE.test(tab) && tab !== "custom") tabs.push({ kind: tab as SessionKind });
+    else if (tab && typeof tab === "object" && typeof tab.command === "string" && tab.command.trim()) tabs.push({ command: tab.command.trim() });
+    else throw new Error(t(".erka.yaml: unknown tab {tab} (use an agent such as claude, shell, or { command: … })", { tab: JSON.stringify(tab) }));
   }
   const paths = (v: unknown) => list(v).map(String).map((x) => x.trim()).filter(Boolean);
   return { setup, tabs, copy: paths(raw.copy), link: paths(raw.link), hash: hashText(text) };
@@ -94,21 +95,21 @@ export function worktreeFolder(repo: Project, branch: string): string {
  * runs afterwards; its failures are reported, not thrown — the worktree exists by then.
  */
 export async function createWorktree(repo: Project, opts: { branch: string; base?: string; path: string; config: ErkaConfig | null }) {
-  if (!validBranch(opts.branch)) throw new Error(`"${opts.branch}" is not a valid branch name`);
+  if (!validBranch(opts.branch)) throw new Error(t("\"{name}\" is not a valid branch name", { name: opts.branch }));
   await ipc.gitWorktreeAdd(repo.path, opts.path.trim(), opts.branch, opts.base?.trim() || undefined);
   // Ignored files a checkout lacks (.env, node_modules): before setup runs, which may need them.
   const files = await ipc.worktreeMaterialize(repo.path, opts.path.trim(), opts.config?.copy ?? [], opts.config?.link ?? []).catch((e) => {
-    store.notify(`Copying ignored files failed: ${String(e)}`, undefined, 8000);
+    store.notify(t("Copying ignored files failed: {error}", { error: String(e) }), undefined, 8000);
     return null;
   });
   const id = store.addProject(opts.path.trim(), { parentId: repo.id, branch: opts.branch, name: opts.branch });
   const project = store.state.projects.find((p) => p.id === id)!;
-  const parts = [files?.copied.length ? `copied ${files.copied.join(", ")}` : "", files?.linked.length ? `linked ${files.linked.join(", ")}` : ""].filter(Boolean);
-  store.addInbox({ kind: "worktree", title: `Worktree ${opts.branch}`, body: `Created in ${repo.name}${parts.length ? ` · ${parts.join(" · ")}` : ""}`, projectId: id });
-  if (files?.skipped.length) store.notify(`Not brought into the worktree: ${files.skipped.map((x) => `${x.path} (${x.reason})`).join("; ")}`, undefined, 12000);
+  const parts = [files?.copied.length ? t("copied {files}", { files: files.copied.join(", ") }) : "", files?.linked.length ? t("linked {files}", { files: files.linked.join(", ") }) : ""].filter(Boolean);
+  store.addInbox({ kind: "worktree", title: t("Worktree {name}", { name: opts.branch }), body: parts.length ? t("Created in {repo} · {details}", { repo: repo.name, details: parts.join(" · ") }) : t("Created in {repo}", { repo: repo.name }), projectId: id });
+  if (files?.skipped.length) store.notify(t("Not brought into the worktree: {files}", { files: files.skipped.map((x) => `${x.path} (${x.reason})`).join("; ") }), undefined, 12000);
   if (opts.config) {
     store.approveSetup(repo.path, opts.config.hash);
-    void applyErkaConfig(project, opts.config).catch((e) => store.notify(`.erka.yaml: ${String(e)}`));
+    void applyErkaConfig(project, opts.config).catch((e) => store.notify(t(".erka.yaml: {error}", { error: String(e) })));
   }
   return project;
 }
@@ -178,9 +179,9 @@ async function stopSessions(wt: Project, timeoutMs = 10_000) {
  */
 export async function removeWorktree(wt: Project, opts: { force: boolean }): Promise<{ leftover: boolean }> {
   const repo = store.state.projects.find((p) => p.id === wt.parentId);
-  if (!repo) throw new Error("This worktree's repository is not in the sidebar");
+  if (!repo) throw new Error(t("This worktree's repository is not in the sidebar"));
   if (store.state.activeProject === wt.id) store.switchProject(repo.id);
-  if (!(await stopSessions(wt))) throw new Error("Some processes in this worktree did not stop; close them and try again");
+  if (!(await stopSessions(wt))) throw new Error(t("Some processes in this worktree did not stop; close them and try again"));
   for (let attempt = 0; ; attempt++) {
     try {
       await ipc.gitWorktreeRemove(repo.path, wt.path, opts.force);

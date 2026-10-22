@@ -5,13 +5,17 @@ import { createStore, produce, reconcile } from "solid-js/store";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import * as ipc from "./ipc";
-import { allPanes, findPane, leaf, removePane, replacePane, setRatio, splitPane } from "./layout";
+import { t } from "./i18n";
+import { allPanes, buildGrid, cellCount, equalize, findPane, fromTemplate, insertBeside, leaf, migrateLayout, moveGutter, movePane, removePane, replacePane, splitPane, swapPanes, templateKinds, toTemplate, type GridSpec, type Side } from "./layout";
 import { basename, isMac, normPath, uid } from "./platform";
 import { projectColors } from "./theme";
-import { disposeView, peekView, resetStreams } from "./terminal-host";
+import { disposeView, peekView, resetStreams, setInputFanout } from "./terminal-host";
 import { CORE_AGENTS, isAgentKind, kindShortName, loadAgentPresets, presetFor } from "./agents";
 import type { SettingsSection } from "./settings-catalog";
-import type { WorkStatus, AgentProfile, AppState, BranchInfo, InboxItem, LayoutNode, Pane, Project, RecentItem, ReviewNote, SessionInfo, SessionKind, Settings, Tab, Workspace, WorkspaceMeta } from "./types";
+import { accountEnv, accountHomes, sessionHome } from "./accounts";
+import { closeBrowser } from "./browser";
+import { sessionEnv, sessionRemote } from "./remote";
+import type { WorkStatus, AgentProfile, AppState, BranchInfo, InboxItem, LayoutNode, LayoutTemplate, Pane, Project, RecentItem, ReviewNote, SessionInfo, SessionKind, Settings, Tab, Workspace, WorkspaceMeta } from "./types";
 
 export const defaultSettings: Settings = {
   fontFamily: '"JetBrains Mono", "Cascadia Code", "Cascadia Mono", Menlo, Consolas, "Symbols Nerd Font Mono", monospace',
@@ -46,6 +50,15 @@ export const defaultSettings: Settings = {
   wordWrap: false,
   aiAgent: "claude",
   floatingTerminal: true,
+  layouts: [],
+  resumeSessions: "shown",
+  accounts: [],
+  activeAccounts: {},
+  integrations: { linear: false, jira: null, gitlabHosts: [] },
+  localhostInBrowser: true,
+  sshConfig: "",
+  voice: { model: null, language: "auto", device: null },
+  language: "system",
   profiles: [
     { kind: "claude", label: "Claude Code", args: [] },
     { kind: "codex", label: "Codex", args: [] },
@@ -54,7 +67,7 @@ export const defaultSettings: Settings = {
 };
 
 /** app-state.json format; older files are migrated (after a backup) on load. */
-const STATE_VERSION = 2;
+const STATE_VERSION = 3;
 const emptyState = (): AppState => ({
   version: STATE_VERSION, projects: [], activeProject: null, workspaces: {}, settings: { ...defaultSettings }, recent: [], collapsed: {}, keymap: {}, approvedSetups: {},
   hibernated: [], inbox: [], reviewNotes: {}, floating: { sessions: [], active: null, open: false },
@@ -91,7 +104,10 @@ function chime() {
   }
 }
 
-export type Overlay = null | "palette" | "quickopen" | "jump" | "dashboard" | "settings" | "newsession" | "board" | "worktree";
+export type Overlay = null | "palette" | "quickopen" | "jump" | "dashboard" | "settings" | "newsession" | "board" | "worktree" | "runs" | "remote" | "hosts";
+
+/** A pane of a tab (an empty pane a new session takes the place of). */
+export type PaneTarget = { tabId: string; paneId: string };
 
 function createAppStore() {
   const [state, setState] = createStore<AppState>(emptyState());
@@ -190,10 +206,10 @@ function createAppStore() {
   async function checkDaemonApi() {
     const [info, app] = await Promise.all([ipc.daemon<{ api?: number }>("daemon.info", {}), ipc.platformInfo()]).catch(() => [null, null]);
     if (!info || !app || (info.api ?? 1) >= app.api) return;
-    notify("The session daemon is older than this app; some features are unavailable until it restarts.", {
-      label: "Restart daemon",
+    notify(t("The session daemon is older than this app; some features are unavailable until it restarts."), {
+      label: t("Restart daemon"),
       run: () => {
-        if (confirm("Restart the session daemon? Running sessions stop; their screens are kept and they can be restarted.")) {
+        if (confirm(t("Restart the session daemon? Running sessions stop; their screens are kept and they can be restarted."))) {
           void ipc.daemon("daemon.shutdown", { kill_sessions: true }).catch(() => {});
         }
       },
@@ -249,7 +265,7 @@ function createAppStore() {
     if (visible) return;
     const project = state.projects.find((p) => p.id === next.project_id);
     const title = `${sessionLabel(next)}${project ? " · " + project.name : ""}`;
-    const body = next.status === "waiting" ? "Needs your input" : "Finished";
+    const body = next.status === "waiting" ? t("Needs your input") : t("Finished");
     addInbox({ kind: next.status === "waiting" ? "waiting" : "finished", title, body, sessionId: next.id, projectId: next.project_id ?? undefined });
     await desktopNotify(title, body);
   }
@@ -299,8 +315,8 @@ function createAppStore() {
         break;
       }
       case "automation.ran": {
-        const title = `Automation · ${p.name}`;
-        const body = p.error ? `Failed: ${p.error}` : "Started";
+        const title = t("Automation · {name}", { name: p.name });
+        const body = p.error ? t("Failed: {error}", { error: p.error }) : t("Started");
         addInbox({ kind: p.error ? "error" : "automation", title, body, sessionId: p.session_id ?? undefined, projectId: (p.session_id && sessions[p.session_id]?.project_id) || undefined });
         void desktopNotify(title, body);
         window.dispatchEvent(new CustomEvent("erka:automations"));
@@ -314,7 +330,7 @@ function createAppStore() {
         const s = byHandle(p.handle);
         if (s && document.hasFocus() && isSessionVisible(s.id) && typeof p.text === "string") {
           void writeText(p.text);
-          notify(`Clipboard set by ${sessionLabel(s)}`);
+          notify(t("Clipboard set by {name}", { name: sessionLabel(s) }));
         }
         break;
       }
@@ -332,7 +348,7 @@ function createAppStore() {
   const samePath = (a: string, b: string) => normPath(a) === normPath(b);
 
   /** Adds a folder (or, with `parentId`, a worktree of that project) and returns its id. */
-  function addProject(path: string, opts: { parentId?: string; branch?: string; name?: string; open?: boolean } = {}): string {
+  function addProject(path: string, opts: { parentId?: string; branch?: string; name?: string; open?: boolean; remote?: Project["remote"] } = {}): string {
     const existing = state.projects.find((p) => samePath(p.path, path));
     if (existing) {
       if (opts.open !== false) switchProject(existing.id);
@@ -346,6 +362,7 @@ function createAppStore() {
       // Worktrees share their repository's colour.
       color: parent?.color ?? projectColors[topProjects().length % projectColors.length],
       ...(parent ? { parentId: parent.id, branch: opts.branch } : {}),
+      ...(opts.remote ? { remote: opts.remote } : {}),
     };
     update((s) => s.projects.push(project));
     ensureWorkspace(project.id);
@@ -526,8 +543,13 @@ function createAppStore() {
     });
   }
 
-  /** Places a pane: split the focused pane, or a new tab. */
-  function placePane(projectId: string, pane: Pane, where: "tab" | "right" | "down" = "tab") {
+  /** Places a pane: in place of an empty pane (`into`, keeping its id), split the focused pane,
+   *  or a new tab. */
+  function placePane(projectId: string, pane: Pane, where: "tab" | "right" | "down" = "tab", into?: PaneTarget) {
+    // Found by pane id (its tab may have been merged meanwhile), and only while still empty: a
+    // second start into the same pane must not replace the first session.
+    const target = into && workspace(projectId).tabs.find((t) => findPane(t.root, into.paneId)?.kind === "empty");
+    if (target) return setTabRoot(projectId, target.id, replacePane(target.root, into!.paneId, { ...pane, id: into!.paneId }), into!.paneId);
     const tab = activeTab(projectId);
     if (where === "tab" || !tab) return addTab(projectId, pane);
     // Splitting while a pane is maximized would hide the new pane: restore the layout first.
@@ -552,31 +574,244 @@ function createAppStore() {
     return activeTab(loc.projectId)?.id === loc.tabId;
   }
 
-  async function newSession(projectId: string, kind: SessionKind, opts: { where?: "tab" | "right" | "down"; args?: string[]; name?: string; agentSessionId?: string; cwd?: string; prompt?: string } = {}) {
+  /** `account`: an account id for Claude / Codex ("default" = the agent's own; absent = the
+   *  active one); `env` adds to the profile's environment (e.g. a history item's account). */
+  type StartOpts = { args?: string[]; name?: string; agentSessionId?: string; cwd?: string; prompt?: string; account?: string; env?: Record<string, string> };
+
+  /** Starts a session for a project without placing it in a layout. */
+  async function startSession(projectId: string, kind: SessionKind, opts: StartOpts = {}): Promise<SessionInfo | undefined> {
     const project = state.projects.find((p) => p.id === projectId);
     if (!project) return;
-    const launch = profileLaunch(kind);
+    const launch = profileLaunch(kind, { account: opts.account });
+    const remoteEnv = await sessionEnv(project);
+    const env = opts.env || Object.keys(remoteEnv).length ? { ...(launch.env ?? {}), ...remoteEnv, ...(opts.env ?? {}) } : launch.env;
+    const remote = sessionRemote(project);
     try {
       const info = await ipc.createSession({
         kind,
         // Resuming must use the conversation's own folder: agents look transcripts up by cwd.
-        cwd: opts.cwd ?? project.path,
+        // A remote project's sessions start in its folder on the host.
+        cwd: opts.cwd ?? (project.remote ? project.remote.path : project.path),
+        remote,
         project_id: projectId,
         name: opts.name,
         args: opts.args ?? (kind === "shell" ? state.settings.shellArgs : launch.args),
-        env: launch.env,
+        env,
         agent_session_id: opts.agentSessionId,
         prompt: opts.prompt,
         cols: 120,
         rows: 32,
       });
       setSessions(info.id, info);
-      placePane(projectId, { id: uid(), kind: "terminal", sessionId: info.id }, opts.where ?? "tab");
       return info;
     } catch (e) {
-      notify(`Could not start ${kind}: ${e}`);
+      notify(t("Could not start {kind}: {error}", { kind, error: String(e) }));
     }
   }
+
+  /** Starts a session and shows it: in a new tab, split next to the focused pane, or in place
+   *  of an empty pane (`into`). */
+  async function newSession(projectId: string, kind: SessionKind, opts: StartOpts & { where?: "tab" | "right" | "down"; into?: PaneTarget } = {}) {
+    const info = await startSession(projectId, kind, opts);
+    if (!info) return;
+    placePane(projectId, { id: uid(), kind: "terminal", sessionId: info.id }, opts.where ?? "tab", opts.into);
+    return info;
+  }
+
+  // ---------- grids & saved layouts ----------
+  const emptyPane = (): Pane => ({ id: uid(), kind: "empty" });
+
+  /** Splits the focused pane (or opens a tab) with an empty pane whose launcher asks what to
+   *  run in it: every "split" entry point goes through here. */
+  function splitPicker(projectId: string, where: "tab" | "right" | "down") {
+    placePane(projectId, emptyPane(), where);
+  }
+
+  /** Rearranges a tab's panes into a grid (reading order). Cells left over become empty panes;
+   *  panes that do not fit move to new tabs in the same arrangement. */
+  function arrangeTab(projectId: string, tabId: string, spec: GridSpec) {
+    const tab = workspace(projectId).tabs.find((t) => t.id === tabId);
+    if (!tab) return;
+    if (zoomed()[tab.id]) toggleZoom(tab.id, zoomed()[tab.id]);
+    const n = cellCount(spec);
+    // Empty panes are placeholders: drop them before filling the new grid.
+    const panes = allPanes(tab.root).filter((p) => p.kind !== "empty");
+    const keep = panes.slice(0, n);
+    const rest = panes.slice(n);
+    const root = buildGrid(spec, keep, emptyPane);
+    setTabRoot(projectId, tabId, root, keep.some((p) => p.id === tab.focus) ? tab.focus : allPanes(root)[0].id);
+    for (let i = 0; i < rest.length; i += n) {
+      const chunk = rest.slice(i, i + n);
+      const extra = addTab(projectId, chunk[0]);
+      setTabRoot(projectId, extra.id, buildGrid(spec, chunk, emptyPane), chunk[0].id);
+    }
+    if (rest.length) {
+      selectTab(projectId, tabId);
+      notify(rest.length === 1 ? t("{n} pane did not fit and moved to another tab", { n: rest.length }) : t("{n} panes did not fit and moved to another tab", { n: rest.length }));
+    }
+  }
+
+  /** Opens a new tab with a grid; cell i runs `kinds[i]` (null = an empty pane with a
+   *  launcher). `prompt` goes to every agent started. */
+  async function launchGrid(projectId: string, spec: GridSpec, kinds: (SessionKind | null)[], opts: { prompt?: string; args?: string[]; account?: string } = {}) {
+    const n = cellCount(spec);
+    const wanted = Array.from({ length: n }, (_, i) => kinds[i] ?? null);
+    const started = await Promise.all(wanted.map((k) => (k ? startSession(projectId, k, { args: opts.args, account: opts.account, prompt: isAgentKind(k) || k === "shell" ? opts.prompt : undefined }) : Promise.resolve(undefined))));
+    const panes = started.map((info): Pane => (info ? { id: uid(), kind: "terminal", sessionId: info.id } : emptyPane()));
+    const tab = addTab(projectId, panes[0]);
+    setTabRoot(projectId, tab.id, buildGrid(spec, panes, emptyPane), panes[0].id);
+    return tab;
+  }
+
+  /** Saves the shape of a tab and what each pane runs (replacing a layout of the same name). */
+  function saveLayout(projectId: string, tabId: string, name: string) {
+    const tab = workspace(projectId).tabs.find((t) => t.id === tabId);
+    if (!tab || !name.trim()) return;
+    const kindOf = (p: Pane): SessionKind | null => (p.sessionId ? sessions[p.sessionId]?.kind ?? null : null);
+    const template = toTemplate(tab.root, kindOf);
+    update((s) => {
+      s.settings.layouts ??= [];
+      const same = s.settings.layouts.find((l) => l.name.toLowerCase() === name.trim().toLowerCase());
+      if (same) same.template = template;
+      else s.settings.layouts.push({ id: uid(), name: name.trim(), template });
+    });
+    notify(t("Layout “{name}” saved", { name: name.trim() }));
+  }
+
+  function deleteLayout(id: string) {
+    update((s) => (s.settings.layouts = (s.settings.layouts ?? []).filter((l) => l.id !== id)));
+  }
+
+  function renameLayout(id: string, name: string) {
+    update((s) => {
+      const l = s.settings.layouts?.find((x) => x.id === id);
+      if (l && name.trim()) l.name = name.trim();
+    });
+  }
+
+  /** Opens a saved layout in a new tab, starting what each pane ran. */
+  async function applyLayout(projectId: string, template: LayoutTemplate) {
+    const kinds = templateKinds(template);
+    const started = await Promise.all(kinds.map((k) => (k ? startSession(projectId, k) : Promise.resolve(undefined))));
+    let i = 0;
+    const root = fromTemplate(template, () => {
+      const info = started[i++];
+      return info ? { id: uid(), kind: "terminal", sessionId: info.id } : emptyPane();
+    });
+    const first = allPanes(root)[0];
+    const tab = addTab(projectId, first);
+    setTabRoot(projectId, tab.id, root, first.id);
+    return tab;
+  }
+
+  function equalizeTab(projectId: string, tabId: string) {
+    const tab = workspace(projectId).tabs.find((t) => t.id === tabId);
+    if (tab) setTabRoot(projectId, tabId, equalize(tab.root));
+  }
+
+  /** Drag and drop of panes: "center" swaps the two panes, an edge moves the pane there. */
+  function dropPane(projectId: string, tabId: string, paneId: string, targetId: string, side: "center" | "left" | "right" | "top" | "bottom") {
+    const tab = workspace(projectId).tabs.find((t) => t.id === tabId);
+    if (!tab || paneId === targetId) return;
+    const root = side === "center" ? swapPanes(tab.root, paneId, targetId) : movePane(tab.root, paneId, targetId, side);
+    setTabRoot(projectId, tabId, root, paneId);
+  }
+
+  /** Moves a tab to position `to` in the tab bar (clamped). */
+  function moveTab(projectId: string, tabId: string, to: number) {
+    update((s) => {
+      const tabs = s.workspaces[projectId]?.tabs;
+      const from = tabs?.findIndex((t) => t.id === tabId) ?? -1;
+      if (!tabs || from < 0) return;
+      const dest = Math.max(0, Math.min(tabs.length - 1, to));
+      if (dest === from) return;
+      const [tab] = tabs.splice(from, 1);
+      tabs.splice(dest, 0, tab);
+    });
+  }
+
+  /** Moves a pane out of its tab: split to the right of another tab's focused pane, or into a
+   *  new tab (`toTabId` null). A tab left empty closes; the session keeps running. */
+  function movePaneToTab(projectId: string, fromTabId: string, paneId: string, toTabId: string | null) {
+    const tabs = workspace(projectId).tabs;
+    const from = tabs.find((t) => t.id === fromTabId);
+    const pane = from && findPane(from.root, paneId);
+    if (!from || !pane || fromTabId === toTabId) return;
+    const dest = toTabId ? tabs.find((t) => t.id === toTabId) : undefined;
+    if (toTabId && !dest) return;
+    // Alone in its tab, "to a new tab" would change nothing.
+    if (!dest && allPanes(from.root).length === 1) return;
+    if (zoomed()[fromTabId]) toggleZoom(fromTabId, zoomed()[fromTabId]);
+    const rest = removePane(from.root, paneId);
+    update((st) => {
+      const w = st.workspaces[projectId];
+      if (!rest) w.tabs = w.tabs.filter((t) => t.id !== fromTabId);
+      else {
+        const t = w.tabs.find((x) => x.id === fromTabId)!;
+        t.root = rest;
+        if (t.focus === paneId) t.focus = allPanes(rest)[0].id;
+      }
+    });
+    if (!dest) {
+      // The new tab sits right after the one the pane came from.
+      const tab = addTab(projectId, pane);
+      const at = workspace(projectId).tabs.findIndex((t) => t.id === fromTabId);
+      if (at >= 0) moveTab(projectId, tab.id, at + 1);
+      return;
+    }
+    if (zoomed()[dest.id]) toggleZoom(dest.id, zoomed()[dest.id]);
+    // A stale focus would make the split a no-op and lose the pane.
+    const anchor = findPane(dest.root, dest.focus) ? dest.focus : allPanes(dest.root).at(-1)!.id;
+    setTabRoot(projectId, dest.id, splitPane(dest.root, anchor, pane, "row"), pane.id);
+    selectTab(projectId, dest.id);
+  }
+
+  /** Merges a whole tab into another: its layout goes next to pane `targetId` on `side`. */
+  function mergeTab(projectId: string, fromTabId: string, toTabId: string, targetId: string, side: Side) {
+    const tabs = workspace(projectId).tabs;
+    const from = tabs.find((t) => t.id === fromTabId);
+    const dest = tabs.find((t) => t.id === toTabId);
+    if (!from || !dest || fromTabId === toTabId || !findPane(dest.root, targetId)) return;
+    for (const id of [fromTabId, toTabId]) if (zoomed()[id]) toggleZoom(id, zoomed()[id]);
+    const focus = findPane(from.root, from.focus) ? from.focus : allPanes(from.root)[0].id;
+    const root = insertBeside(dest.root, targetId, from.root, side);
+    update((st) => {
+      const w = st.workspaces[projectId];
+      w.tabs = w.tabs.filter((t) => t.id !== fromTabId);
+      const t = w.tabs.find((x) => x.id === toTabId)!;
+      t.root = root;
+      t.focus = focus;
+      w.activeTab = toTabId;
+    });
+  }
+
+  function setBroadcast(projectId: string, tabId: string, on: boolean) {
+    update((s) => {
+      const t = s.workspaces[projectId]?.tabs.find((x) => x.id === tabId);
+      if (t) t.broadcast = on;
+    });
+  }
+
+  function renameTab(projectId: string, tabId: string, name: string) {
+    update((s) => {
+      const t = s.workspaces[projectId]?.tabs.find((x) => x.id === tabId);
+      if (t) t.name = name.trim() || undefined;
+    });
+  }
+
+  /** What is typed into a terminal of a tab with broadcast on also goes to its other live
+   *  terminals. */
+  setInputFanout((sessionId) => {
+    const loc = paneLocation(sessionId);
+    if (!loc) return [];
+    const tab = state.workspaces[loc.projectId]?.tabs.find((t) => t.id === loc.tabId);
+    if (!tab?.broadcast) return [];
+    return allPanes(tab.root)
+      .filter((p) => p.kind === "terminal" && p.sessionId && p.sessionId !== sessionId)
+      .map((p) => sessions[p.sessionId!])
+      .filter((x): x is SessionInfo => !!x?.alive)
+      .map((x) => x.handle);
+  });
 
   /** Reveals a session: switches project/tab, or opens it in a new tab if not in any layout. */
   function revealSession(sessionId: string) {
@@ -615,6 +850,7 @@ function createAppStore() {
     const tab = ws?.tabs.find((t) => t.id === tabId);
     if (!tab) return;
     const pane = findPane(tab.root, paneId);
+    if (pane?.kind === "browser") closeBrowser(pane.id);
     if (pane?.sessionId && kill) {
       const s = sessions[pane.sessionId];
       disposeView(pane.sessionId);
@@ -634,14 +870,22 @@ function createAppStore() {
     });
   }
 
+  /** Changes a pane's fields without moving focus (a page loading in a background pane). */
+  function updatePane(projectId: string, tabId: string, paneId: string, patch: Partial<Pane>) {
+    const tab = workspace(projectId).tabs.find((t) => t.id === tabId);
+    const pane = tab && findPane(tab.root, paneId);
+    if (tab && pane) setTabRoot(projectId, tabId, replacePane(tab.root, paneId, { ...pane, ...patch }));
+  }
+
   function replacePaneIn(projectId: string, tabId: string, paneId: string, pane: Pane) {
     const tab = workspace(projectId).tabs.find((t) => t.id === tabId);
     if (tab) setTabRoot(projectId, tabId, replacePane(tab.root, paneId, pane), pane.id);
   }
 
-  function resizeSplit(projectId: string, tabId: string, splitId: string, ratio: number) {
+  /** Moves the gutter after child `index` of a split to `pos` (0–1 along the split). */
+  function resizeSplit(projectId: string, tabId: string, splitId: string, index: number, pos: number) {
     const tab = workspace(projectId).tabs.find((t) => t.id === tabId);
-    if (tab) setTabRoot(projectId, tabId, setRatio(tab.root, splitId, ratio));
+    if (tab) setTabRoot(projectId, tabId, moveGutter(tab.root, splitId, index, pos));
   }
 
   function setRightPanel(panel: Workspace["rightPanel"]) {
@@ -692,7 +936,7 @@ function createAppStore() {
 
   /** Launch arguments and environment of an agent profile, permission mode included. */
   /** `yolo: false`: without the Yolo flags (chat view asks Allow / Deny itself). */
-  function profileLaunch(kind: SessionKind, opts: { yolo?: boolean } = {}): { args: string[]; env?: Record<string, string> } {
+  function profileLaunch(kind: SessionKind, opts: { yolo?: boolean; account?: string | null } = {}): { args: string[]; env?: Record<string, string> } {
     const p = state.settings.profiles.find((x) => x.kind === kind);
     const args = [...(p?.args ?? [])];
     if (p?.permission && kind === "claude") args.push("--permission-mode", p.permission);
@@ -700,7 +944,8 @@ function createAppStore() {
     // Yolo applies to agents without an explicit per-agent permission choice.
     const yolo = presetFor(kind)?.yolo ?? [];
     if (opts.yolo !== false && state.settings.agentPermissions === "yolo" && !p?.permission && yolo.length && !yolo.every((a) => args.includes(a))) args.push(...yolo);
-    return { args, env: p?.env && Object.keys(p.env).length ? { ...p.env } : undefined };
+    const env = { ...(p?.env ?? {}), ...(accountEnv(kind, opts.account) ?? {}) };
+    return { args, env: Object.keys(env).length ? env : undefined };
   }
 
   /** Edits an agent profile in place (rows bound to it stay mounted); preset agents get one
@@ -741,7 +986,7 @@ function createAppStore() {
   async function sleepProject(projectId: string) {
     const ids = Object.values(sessions).filter((s) => s.project_id === projectId && s.alive && resumable(s)).map((s) => s.id);
     const n = await hibernateSessions(ids);
-    notify(n ? `${n} agent${n > 1 ? "s" : ""} stopped; ${n > 1 ? "they resume" : "it resumes"} when you open this worktree` : "No resumable agents running here");
+    notify(n === 0 ? t("No resumable agents running here") : n === 1 ? t("{n} agent stopped; it resumes when you open this worktree", { n }) : t("{n} agents stopped; they resume when you open this worktree", { n }));
   }
 
   /** Periodic pass: finished agents in background projects, idle for the configured time. */
@@ -773,16 +1018,78 @@ function createAppStore() {
       // Still stopping (re-checked when `alive` flips), or slept while being looked at.
       if (s.alive || sleptInView.has(id)) continue;
       update((st) => (st.hibernated = st.hibernated.filter((x) => x !== id)));
-      void ipc.daemon("session.restart", { handle: s.handle }).catch((e) => notify(`Could not resume ${sessionLabel(s)}: ${e}`));
+      void resumeSession(id);
     }
   }
 
+  // ---------- resume (after hibernation or a daemon restart) ----------
+  /** Set by chat/mode-switch.ts: starts a chat front-end resuming a stopped chat session. */
+  let chatResumer: ((s: SessionInfo) => Promise<void>) | null = null;
+  const setChatResumer = (fn: (s: SessionInfo) => Promise<void>) => (chatResumer = fn);
+  const resuming = new Set<string>();
+
+  /** The conversation a stopped Claude / Codex / OMP session was in when it never reported its
+   *  id (Codex does so only after a turn): the newest transcript of that folder written since
+   *  the session started that no other session owns. */
+  async function findConversation(s: SessionInfo): Promise<string | null> {
+    if (!["claude", "codex", "omp"].includes(s.kind)) return null;
+    const [items, folder] = await Promise.all([ipc.agentHistoryList(false, accountHomes()).catch(() => []), ipc.canonicalPath(s.cwd).catch(() => s.cwd)]);
+    const owned = new Set(Object.values(sessions).map((x) => x.agent_session_id).filter(Boolean));
+    const home = sessionHome(s) ?? null;
+    const hit = items
+      .filter((h) => h.agent === s.kind && (h.home ?? null) === home && normPath(h.folder) === normPath(folder) && h.updated_at >= s.created_at - 5000 && !owned.has(h.id))
+      .sort((a, b) => b.updated_at - a.updated_at)[0];
+    return hit?.id ?? null;
+  }
+
+  /** Restarts a stopped session. Agents continue their conversation; chat sessions get a new
+   *  chat front-end in the same pane. */
+  async function resumeSession(id: string) {
+    const s = sessions[id];
+    if (!s || s.alive || resuming.has(id)) return;
+    resuming.add(id);
+    try {
+      if (s.chat) {
+        await chatResumer?.(s);
+        return;
+      }
+      if (!s.agent_session_id && isAgentKind(s.kind)) {
+        const conv = await findConversation(s);
+        if (conv) await ipc.daemon("session.update", { handle: s.handle, agent_session_id: conv }).catch(() => {});
+      }
+      await ipc.daemon("session.restart", { handle: s.handle });
+    } catch (e) {
+      notify(t("Could not resume {name}: {error}", { name: sessionLabel(s), error: String(e) }));
+    } finally {
+      resuming.delete(id);
+    }
+  }
+
+  /** Sessions the daemon restored after it stopped while they ran (reboot, update, crash):
+   *  resume them when shown, all now, or leave them for the Resume button. */
+  function resumeInterrupted() {
+    const mode = state.settings.resumeSessions ?? "shown";
+    const ids = Object.values(sessions).filter((s) => s.interrupted && !s.alive).map((s) => s.id);
+    if (!ids.length || mode === "off") return;
+    if (mode === "all") {
+      // Staggered: twenty agents starting in the same instant fight over disk and CPU.
+      ids.forEach((id, i) => setTimeout(() => void resumeSession(id), i * 400));
+      notify(ids.length === 1 ? t("Resuming {n} session stopped by a restart", { n: ids.length }) : t("Resuming {n} sessions stopped by a restart", { n: ids.length }));
+      return;
+    }
+    update((st) => (st.hibernated = [...new Set([...(st.hibernated ?? []), ...ids])]));
+    wakeVisible();
+  }
+
   // ---------- floating terminal ----------
-  async function newFloating(kind: SessionKind = "shell") {
+  /** A floating-terminal session in the home folder (`opts` for a one-off command, e.g. an
+   *  agent's sign-in). */
+  async function newFloating(kind: SessionKind = "shell", opts: { args?: string[]; env?: Record<string, string>; name?: string } = {}) {
     const home = (await ipc.platformInfo().catch(() => null))?.home ?? ".";
     const launch = profileLaunch(kind);
     try {
-      const info = await ipc.createSession({ kind, cwd: home, args: kind === "shell" ? state.settings.shellArgs : launch.args, env: launch.env, cols: 120, rows: 24 });
+      const env = opts.env ? { ...(launch.env ?? {}), ...opts.env } : launch.env;
+      const info = await ipc.createSession({ kind, cwd: home, name: opts.name, args: opts.args ?? (kind === "shell" ? state.settings.shellArgs : launch.args), env, cols: 120, rows: 24 });
       setSessions(info.id, info);
       update((s) => {
         s.floating ??= { sessions: [], active: null, open: true };
@@ -791,7 +1098,7 @@ function createAppStore() {
         s.floating.open = true;
       });
     } catch (e) {
-      notify(`Could not start a terminal: ${e}`);
+      notify(t("Could not start a terminal: {error}", { error: String(e) }));
     }
   }
 
@@ -837,6 +1144,7 @@ function createAppStore() {
     void loadAgentPresets();
     void loadMeta();
     void ipc.daemon("daemon.set_awake", { mode: state.settings.keepAwake ?? "off" }).catch(() => {});
+    resumeInterrupted();
   }
 
   // ---------- boot ----------
@@ -844,21 +1152,23 @@ function createAppStore() {
     // Never let a default state silently replace a file we could not read or whose format we
     // do not own: keep a copy first, and do not save at all when that is impossible.
     let saved: any = null;
-    let problem: string | null = null;
+    let problem: "unreadable" | "unknown" | null = null;
+    let problemDetail = "";
     try {
       saved = await ipc.loadState();
     } catch (e) {
-      problem = `could not be read (${String(e)})`;
+      problem = "unreadable";
+      problemDetail = String(e);
     }
     const version = saved && typeof saved === "object" ? saved.version : undefined;
-    if (saved !== null && !problem && !(Number.isInteger(version) && version >= 1)) problem = "has an unknown format";
+    if (saved !== null && !problem && !(Number.isInteger(version) && version >= 1)) problem = "unknown";
     let migrate = false;
     if (problem) {
       const copy = await ipc.stateBackup("unreadable").catch(() => null);
-      if (copy) notify(`Saved app state ${problem}; a copy was kept at ${copy}. Starting fresh.`, undefined, 12000);
+      if (copy) notify(problem === "unreadable" ? t("Saved app state could not be read ({error}); a copy was kept at {path}. Starting fresh.", { error: problemDetail, path: copy }) : t("Saved app state has an unknown format; a copy was kept at {path}. Starting fresh.", { path: copy }), undefined, 12000);
       else {
         persistBlocked = true;
-        notify(`Saved app state ${problem} and could not be backed up; changes in this session will not be saved.`, undefined, 15000);
+        notify(problem === "unreadable" ? t("Saved app state could not be read ({error}) and could not be backed up; changes in this session will not be saved.", { error: problemDetail }) : t("Saved app state has an unknown format and could not be backed up; changes in this session will not be saved."), undefined, 15000);
       }
       saved = null;
     } else if (saved && version !== STATE_VERSION) {
@@ -866,14 +1176,15 @@ function createAppStore() {
       if (version > STATE_VERSION) {
         // Written by a newer Erka: use what we understand, never write it back in our format.
         persistBlocked = true;
-        notify("App state was written by a newer version of Erka; changes in this session will not be saved.", undefined, 12000);
+        notify(t("App state was written by a newer version of Erka; changes in this session will not be saved."), undefined, 12000);
       } else if (!copy) {
         persistBlocked = true;
-        notify("App state could not be backed up before updating its format; changes in this session will not be saved.", undefined, 12000);
+        notify(t("App state could not be backed up before updating its format; changes in this session will not be saved."), undefined, 12000);
       } else migrate = true;
     }
     if (saved) {
-      // v1 → v2 only added optional fields (worktree parent/branch, board status, keymap).
+      // v1 → v2 only added optional fields; v2 → v3 turned binary splits into n-ary ones.
+      for (const ws of Object.values<Workspace>(saved.workspaces ?? {})) for (const tab of ws.tabs ?? []) tab.root = migrateLayout(tab.root);
       setState(reconcile({ ...emptyState(), ...saved, version: STATE_VERSION, settings: { ...defaultSettings, ...saved.settings } }));
     }
     setLoaded(true);
@@ -917,8 +1228,11 @@ function createAppStore() {
   return {
     state, sessions, connected, overlay, setOverlay, loaded, toast, notify, lastSwitchMs,
     init, activeProject, workspace, activeTab, addProject, removeProject, renameProject, moveProject, switchProject,
-    addTab, selectTab, cycleTab, focusPane, placePane, newSession, revealSession, openFile, closePane,
-    replacePaneIn, resizeSplit, setRightPanel, showRightPanel, setSettings, zoomed, toggleZoom,
+    addTab, selectTab, cycleTab, focusPane, placePane, newSession, startSession, revealSession, openFile, closePane,
+    arrangeTab, launchGrid, saveLayout, deleteLayout, renameLayout, applyLayout, equalizeTab, dropPane, setBroadcast, renameTab,
+    splitPicker, moveTab, movePaneToTab, mergeTab,
+    resumeSession, resumeInterrupted, setChatResumer,
+    replacePaneIn, updatePane, resizeSplit, setRightPanel, showRightPanel, setSettings, zoomed, toggleZoom,
     topProjects, childrenOf, setProjectStatus, togglePin, approveSetup,
     projectInfo, refreshProjectInfo, recordRecent, setCollapsed, markUnread, renameSession, profileLaunch, setShortcut, setProfile,
     settingsSection, setSettingsSection, settingsItem, openSettings, paneLocation, isSessionVisible, refreshSessions, setSessions,

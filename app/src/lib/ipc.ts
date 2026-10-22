@@ -21,6 +21,8 @@ export interface CreateSession {
   chat_argv?: string[];
   /** First message for an agent (argument or typed once ready). */
   prompt?: string;
+  /** Runs on another machine over SSH (cwd is a path there). */
+  remote?: { dest: string; port?: number; config?: string; tmux: boolean };
 }
 export const createSession = (p: CreateSession) => daemon<SessionInfo>("session.create", p);
 
@@ -87,7 +89,7 @@ export const gitAbort = (root: string) => invoke<string>("git_abort", { root });
 export const gitBranchDelete = (root: string, branch: string, force = false) => invoke<void>("git_branch_delete", { root, branch, force });
 export const gitRefs = (root: string) => invoke<{ name: string; kind: "local" | "remote" | "tag" }[]>("git_refs", { root });
 export const gitContext = (root: string, kind: "staged" | "branch", base?: string, max?: number) => invoke<string>("git_context", { root, kind, base, max });
-export interface PullRequest { number: number; title: string; url: string; state: "OPEN" | "CLOSED" | "MERGED"; draft: boolean; base: string; checks: "passing" | "failing" | "pending" | "none" }
+export interface PullRequest { number: number; title: string; url: string; state: "OPEN" | "CLOSED" | "MERGED"; draft: boolean; base: string; checks: "passing" | "failing" | "pending" | "none"; provider?: "github" | "gitlab" }
 export const ghPrStatus = (root: string) => invoke<PullRequest | null>("gh_pr_status", { root });
 export const ghDefaultBranch = (root: string) => invoke<string | null>("gh_default_branch", { root });
 export const ghPrCreate = (root: string, title: string, body: string, base: string, draft: boolean) => invoke<string>("gh_pr_create", { root, title, body, base, draft });
@@ -96,16 +98,18 @@ export const worktreeMaterialize = (root: string, worktree: string, copy: string
 export const editorsList = () => invoke<{ id: string; label: string }[]>("editors_list");
 export const editorOpen = (editor: string, path: string) => invoke<void>("editor_open", { editor, path });
 /** One-shot agent answer (no terminal), e.g. a commit message. */
-export const agentRun = (kind: string, prompt: string, cwd: string) => daemon<{ text: string }>("agent.run", { kind, prompt, cwd }).then((r) => r.text);
+export const agentRun = (kind: string, prompt: string, cwd: string, env?: Record<string, string>, timeoutS?: number) =>
+  daemon<{ text: string }>("agent.run", { kind, prompt, cwd, env, timeout_s: timeoutS }).then((r) => r.text);
 
 /** `count`: also refresh prompt counts in the background (`agent-history-counted` when done). */
-export const agentHistoryList = (count = true) => invoke<HistoryItem[]>("agent_history_list", { count });
-export const usageFetch = () => invoke<UsageReport>("usage_fetch");
+export const agentHistoryList = (count = true, homes?: { claude: string[]; codex: string[] }) => invoke<HistoryItem[]>("agent_history_list", { count, homes });
+/** Usage of the given accounts (config homes; absent = the agents' default sign-in). */
+export const usageFetch = (claudeDir?: string, codexDir?: string) => invoke<UsageReport>("usage_fetch", { claudeDir, codexDir });
 export const memoryStats = (daemonPid: number | null) => invoke<MemoryStats>("memory_stats", { daemonPid });
-export const agentLatestSession = (kind: string, cwd: string) =>
-  invoke<{ id: string; path: string } | null>("agent_latest_session", { kind, cwd });
-export const claudeTranscript = (sessionId: string, cwd?: string) =>
-  invoke<string[]>("agent_claude_transcript", { sessionId, cwd });
+export const agentLatestSession = (kind: string, cwd: string, home?: string) =>
+  invoke<{ id: string; path: string } | null>("agent_latest_session", { kind, cwd, home });
+export const claudeTranscript = (sessionId: string, cwd?: string, home?: string) =>
+  invoke<string[]>("agent_claude_transcript", { sessionId, cwd, home });
 
 export function onEvent<T>(name: string, cb: (payload: T) => void): Promise<UnlistenFn> {
   return listen<T>(name, (e) => cb(e.payload));

@@ -223,12 +223,14 @@ impl DaemonClient {
 
     async fn request_with_id(&self, id: u64, method: &str, params: Value, pending: impl FnOnce(oneshot::Sender<Result<Value, String>>) -> Pending) -> Result<Value> {
         let (tx, rx) = oneshot::channel();
+        // A one-shot agent answer may take as long as its own timeout (daemon default 180 s).
+        let wait = if method == "agent.run" { params.get("timeout_s").and_then(Value::as_u64).unwrap_or(180).clamp(5, 900) + 15 } else { 30 };
         self.pending.lock().insert(id, pending(tx));
         if let Err(e) = self.send_frame(&Frame::json(&json!({"id": id, "method": method, "params": params}))) {
             self.pending.lock().remove(&id);
             return Err(e);
         }
-        match tokio::time::timeout(Duration::from_secs(30), rx).await {
+        match tokio::time::timeout(Duration::from_secs(wait), rx).await {
             Ok(Ok(Ok(v))) => Ok(v),
             Ok(Ok(Err(e))) => Err(anyhow!(e)),
             _ => {
@@ -262,13 +264,18 @@ impl DaemonClient {
     }
 }
 
+/// `erkad` next to our executable (or `ERKA_DAEMON_PATH`).
+pub fn daemon_exe() -> std::path::PathBuf {
+    std::env::var_os("ERKA_DAEMON_PATH").map(std::path::PathBuf::from).unwrap_or_else(|| {
+        let dir = std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.to_path_buf())).unwrap_or_default();
+        dir.join(if cfg!(windows) { "erkad.exe" } else { "erkad" })
+    })
+}
+
 /// Starts `erkad` next to our executable, fully detached so closing the app (or its console
 /// job on Windows) never takes the daemon — and every agent — down with it.
 fn spawn_daemon() -> Result<()> {
-    let exe = std::env::var_os("ERKA_DAEMON_PATH").map(std::path::PathBuf::from).unwrap_or_else(|| {
-        let dir = std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.to_path_buf())).unwrap_or_default();
-        dir.join(if cfg!(windows) { "erkad.exe" } else { "erkad" })
-    });
+    let exe = daemon_exe();
     if !exe.exists() {
         return Err(anyhow!("daemon binary not found at {}", exe.display()));
     }

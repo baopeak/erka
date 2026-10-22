@@ -1,6 +1,7 @@
 // Codex `app-server` adapter (JSON-RPC over stdio, no "jsonrpc" field on the wire).
 // Shapes follow `codex app-server generate-json-schema` (v2 protocol, codex-cli 0.158).
 import { type Adapter, type AdapterContext, textOf } from "./chat-model";
+import { t } from "../lib/i18n";
 
 /** `codex app-server` accepts `-c key=value` overrides; translate the TUI's `--model X`. */
 export function codexArgs(profile: string[] = []): string[] {
@@ -90,7 +91,7 @@ export function createCodexAdapter(ctx: AdapterContext): Adapter {
         ctx.upsert({ kind: "tool", id: item.id, name: "WebSearch", summary: item.query ?? "", status: done ? "done" : "running" });
         break;
       case "contextCompaction":
-        ctx.upsert({ kind: "system", id: item.id, text: "Context compacted", tone: "info" });
+        ctx.upsert({ kind: "system", id: item.id, text: t("Context compacted"), tone: "info" });
         break;
     }
   }
@@ -119,7 +120,7 @@ export function createCodexAdapter(ctx: AdapterContext): Adapter {
       // Responses to our requests
       if ("id" in m && ("result" in m || "error" in m) && !("method" in m)) {
         if (m.error) {
-          ctx.upsert({ kind: "system", id: `e-${String(m.id)}-${ctx.state.items.length}`, text: `Codex: ${m.error.message ?? JSON.stringify(m.error)}`, tone: "error" });
+          ctx.upsert({ kind: "system", id: `e-${String(m.id)}-${ctx.state.items.length}`, text: t("Codex: {error}", { error: String(m.error.message ?? JSON.stringify(m.error)) }), tone: "error" });
           if (String(m.id).startsWith("erka-turn-")) ctx.set("busy", false);
           if ((m.id === THREAD_ID || m.id === LIST_ID) && ctx.state.conversationId && !ctx.replaying()) {
             // Resume failed (thread gone): start fresh instead.
@@ -159,16 +160,16 @@ export function createCodexAdapter(ctx: AdapterContext): Adapter {
         if (m.method.endsWith("requestApproval") || m.method === "execCommandApproval" || m.method === "applyPatchApproval") {
           const what = p.command ? (Array.isArray(p.command) ? p.command.join(" ") : p.command) : p.reason ?? (p.fileChanges ? Object.keys(p.fileChanges).join(", ") : m.method);
           ctx.upsert({
-            kind: "permission", id, title: m.method.includes("fileChange") || m.method === "applyPatchApproval" ? "Apply file changes?" : "Run command?",
+            kind: "permission", id, title: m.method.includes("fileChange") || m.method === "applyPatchApproval" ? t("Apply file changes?") : t("Run command?"),
             detail: String(what ?? ""),
             options: [
-              { id: "accept", label: "Allow", tone: "allow" },
-              { id: "acceptForSession", label: "Allow for session", tone: "allow" },
-              { id: "decline", label: "Decline", tone: "deny" },
+              { id: "accept", label: t("Allow"), tone: "allow" },
+              { id: "acceptForSession", label: t("Allow for session"), tone: "allow" },
+              { id: "decline", label: t("Decline"), tone: "deny" },
             ],
           });
         } else if (m.method === "item/tool/requestUserInput") {
-          ctx.upsert({ kind: "system", id, text: "Codex asked for input that chat mode cannot answer yet; switch to terminal.", tone: "info" });
+          ctx.upsert({ kind: "system", id, text: t("Codex asked for input that chat mode cannot answer yet; switch to terminal."), tone: "info" });
         }
         return;
       }
@@ -181,7 +182,7 @@ export function createCodexAdapter(ctx: AdapterContext): Adapter {
           turnId = null;
           ctx.set("busy", false);
           for (const it of ctx.state.items) if ((it as any).streaming) ctx.patch(it.id, (i: any) => (i.streaming = false));
-          if (p.turn?.error) ctx.upsert({ kind: "system", id: `turn-err-${p.turn.id}`, text: String(p.turn.error.message ?? "Turn failed"), tone: "error" });
+          if (p.turn?.error) ctx.upsert({ kind: "system", id: `turn-err-${p.turn.id}`, text: String(p.turn.error.message ?? t("Turn failed")), tone: "error" });
           ctx.upsert({ kind: "result", id: `turn-${p.turn?.id ?? ctx.state.items.length}`, text: [p.turn?.status, p.turn?.durationMs ? `${(p.turn.durationMs / 1000).toFixed(1)}s` : null].filter(Boolean).join(" · ") });
           break;
         case "item/started":
@@ -205,7 +206,7 @@ export function createCodexAdapter(ctx: AdapterContext): Adapter {
           });
           break;
         case "error":
-          ctx.upsert({ kind: "system", id: `err-${ctx.state.items.length}`, text: String(p.error?.message ?? p.message ?? "Codex error"), tone: "error" });
+          ctx.upsert({ kind: "system", id: `err-${ctx.state.items.length}`, text: String(p.error?.message ?? p.message ?? t("Codex error")), tone: "error" });
           break;
       }
     },

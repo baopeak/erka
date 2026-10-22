@@ -21,7 +21,12 @@ const MAX_INDEX: usize = 300_000;
 #[derive(Default)]
 pub struct FileIndex {
     by_root: Mutex<HashMap<String, Arc<Vec<String>>>>,
+    /// When each remote project's list was fetched (no watcher there: it is refreshed after a
+    /// minute instead).
+    remote_at: Mutex<HashMap<String, std::time::Instant>>,
 }
+
+const REMOTE_INDEX_TTL: std::time::Duration = std::time::Duration::from_secs(60);
 
 impl FileIndex {
     pub fn invalidate(&self, root: &str) {
@@ -81,6 +86,11 @@ pub struct QuickOpenHit {
 #[tauri::command]
 pub async fn quick_open(index: tauri::State<'_, Arc<FileIndex>>, root: String, query: String, limit: Option<usize>) -> CmdResult<Vec<QuickOpenHit>> {
     let index = index.inner().clone();
+    if crate::remote::is_remote(&root) && !index.remote_at.lock().get(&root).is_some_and(|t| t.elapsed() < REMOTE_INDEX_TTL) {
+        let files = crate::remote::list_files(&root).await?;
+        index.by_root.lock().insert(root.clone(), Arc::new(files));
+        index.remote_at.lock().insert(root.clone(), std::time::Instant::now());
+    }
     tauri::async_runtime::spawn_blocking(move || {
         let files = index.get(&root);
         let limit = limit.unwrap_or(50);
@@ -136,6 +146,15 @@ pub struct SearchResult {
 
 #[tauri::command]
 pub async fn search_text(root: String, query: String, regex: bool, case_sensitive: bool, max_hits: Option<usize>, folder: Option<String>) -> CmdResult<SearchResult> {
+    if crate::remote::is_remote(&root) {
+        let (hits, truncated) = crate::remote::search_text(&root, &query, regex, case_sensitive, folder.as_deref(), max_hits.unwrap_or(2000)).await?;
+        let files = hits.iter().map(|h| h.path.as_str()).collect::<std::collections::HashSet<_>>().len();
+        return Ok(SearchResult {
+            hits: hits.into_iter().map(|h| TextHit { path: h.path, line: h.line as u32, column: h.column as u32, text: h.text }).collect(),
+            truncated,
+            files_searched: files,
+        });
+    }
     let base = guard(&root, "")?;
     // Find in folder: walk only that folder; hit paths stay relative to the project.
     let start = match folder.as_deref().map(str::trim).filter(|f| !f.is_empty()) {

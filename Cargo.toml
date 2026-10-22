@@ -1,6 +1,9 @@
 [workspace]
 resolver = "2"
-members = ["crates/erka-proto", "crates/erkad", "app/src-tauri"]
+members = ["crates/erka-proto", "crates/erkad", "crates/erka-stt", "app/src-tauri"]
+# The speech helper downloads and links a large native library: built on request
+# (`cargo build --release -p erka-stt`, scripts/build-release.sh), not by every `cargo build`.
+default-members = ["crates/erka-proto", "crates/erkad", "app/src-tauri"]
 
 [workspace.package]
 version = "0.1.0"

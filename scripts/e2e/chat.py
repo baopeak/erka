@@ -93,7 +93,8 @@ try:
         switch("switchToTerminal")
         d.wait("return !!document.querySelector('.pane .term-host .xterm')", 60)
         s = pane_session()
-        end = time.time() + 60
+        # Resuming re-renders the conversation; slow when the API is slow.
+        end = time.time() + 120
         text = ""
         while time.time() < end:
             text = daemon(d, "session.read", {"handle": s["handle"]})["text"]

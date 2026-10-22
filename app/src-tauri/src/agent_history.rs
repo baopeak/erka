@@ -24,10 +24,15 @@ fn claude_dir() -> PathBuf {
     std::env::var_os("CLAUDE_CONFIG_DIR").map(PathBuf::from).unwrap_or_else(|| home().join(".claude"))
 }
 
+/// An account's config home (`CLAUDE_CONFIG_DIR` / `CODEX_HOME`), else the default one.
+fn home_or(dir: Option<&str>, default: fn() -> PathBuf) -> PathBuf {
+    dir.filter(|d| !d.is_empty()).map(PathBuf::from).unwrap_or_else(default)
+}
+
 /// Claude Code names project dirs after the cwd with every non-alphanumeric char → '-'.
-fn claude_project_dir(cwd: &str) -> PathBuf {
+fn claude_project_dir(root: &Path, cwd: &str) -> PathBuf {
     let escaped: String = cwd.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
-    claude_dir().join("projects").join(escaped)
+    root.join("projects").join(escaped)
 }
 
 fn newest(files: impl Iterator<Item = PathBuf>) -> Option<PathBuf> {
@@ -54,13 +59,13 @@ pub struct AgentSessionRef {
 
 /// Most recent session of `kind` started in `cwd` (Claude / OMP; Codex uses `thread/list`).
 #[tauri::command]
-pub async fn agent_latest_session(kind: String, cwd: String) -> CmdResult<Option<AgentSessionRef>> {
-    crate::fs_ops::blocking(move || agent_latest_session_blocking(kind, cwd)).await
+pub async fn agent_latest_session(kind: String, cwd: String, home: Option<String>) -> CmdResult<Option<AgentSessionRef>> {
+    crate::fs_ops::blocking(move || agent_latest_session_blocking(kind, cwd, home)).await
 }
 
-fn agent_latest_session_blocking(kind: String, cwd: String) -> CmdResult<Option<AgentSessionRef>> {
+fn agent_latest_session_blocking(kind: String, cwd: String, account: Option<String>) -> CmdResult<Option<AgentSessionRef>> {
     match kind.as_str() {
-        "claude" => Ok(newest(jsonl_in(&claude_project_dir(&cwd))).map(|p| AgentSessionRef {
+        "claude" => Ok(newest(jsonl_in(&claude_project_dir(&home_or(account.as_deref(), claude_dir), &cwd))).map(|p| AgentSessionRef {
             id: p.file_stem().unwrap_or_default().to_string_lossy().into_owned(),
             path: p.to_string_lossy().into_owned(),
         })),
@@ -100,19 +105,20 @@ fn normalize_cwd(p: &str) -> String {
 
 /// Raw JSONL lines of a Claude Code transcript (tail, capped), for rendering chat history.
 #[tauri::command]
-pub async fn agent_claude_transcript(session_id: String, cwd: Option<String>) -> CmdResult<Vec<String>> {
-    crate::fs_ops::blocking(move || agent_claude_transcript_blocking(session_id, cwd)).await
+pub async fn agent_claude_transcript(session_id: String, cwd: Option<String>, home: Option<String>) -> CmdResult<Vec<String>> {
+    crate::fs_ops::blocking(move || agent_claude_transcript_blocking(session_id, cwd, home)).await
 }
 
-fn agent_claude_transcript_blocking(session_id: String, cwd: Option<String>) -> CmdResult<Vec<String>> {
+fn agent_claude_transcript_blocking(session_id: String, cwd: Option<String>, home: Option<String>) -> CmdResult<Vec<String>> {
     let file_name = format!("{session_id}.jsonl");
     if file_name.contains(['/', '\\']) {
         return Err("invalid session id".into());
     }
-    let direct = cwd.map(|c| claude_project_dir(&c).join(&file_name)).filter(|p| p.exists());
+    let root = home_or(home.as_deref(), claude_dir);
+    let direct = cwd.map(|c| claude_project_dir(&root, &c).join(&file_name)).filter(|p| p.exists());
     let path = match direct {
         Some(p) => p,
-        None => std::fs::read_dir(claude_dir().join("projects"))
+        None => std::fs::read_dir(root.join("projects"))
             .map_err(err)?
             .filter_map(|e| e.ok())
             .map(|d| d.path().join(&file_name))
@@ -152,6 +158,10 @@ pub struct HistoryItem {
     updated_at: u64,
     /// User prompts (Claude / OMP) or turns (Codex); `None` until the background count gets here.
     turns: Option<u32>,
+    /// Config home of the account the conversation belongs to (`None` = the agent's default):
+    /// resuming must run on the same account.
+    #[serde(default)]
+    home: Option<String>,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -239,25 +249,41 @@ fn is_zst(path: &Path) -> bool {
     path.extension().is_some_and(|e| e == "zst")
 }
 
-/// Every transcript file of every agent. Codex nests rollouts under `sessions/YYYY/MM/DD/`.
-fn transcript_files() -> Vec<(Agent, PathBuf)> {
+/// Extra account homes (beyond the agents' defaults) whose transcripts are listed too.
+#[derive(Deserialize, Default, Clone)]
+pub struct AccountHomes {
+    #[serde(default)]
+    claude: Vec<String>,
+    #[serde(default)]
+    codex: Vec<String>,
+}
+
+/// Every transcript file of every agent, with the account home it belongs to (`None` = the
+/// default). Codex nests rollouts under `sessions/YYYY/MM/DD/`.
+fn transcript_files(homes: &AccountHomes) -> Vec<(Agent, PathBuf, Option<String>)> {
     let mut out = Vec::new();
-    for d in dirs_in(&claude_dir().join("projects")) {
-        out.extend(jsonl_in(&d).map(|p| (Agent::Claude, p)));
+    let claude_roots = std::iter::once((claude_dir(), None)).chain(homes.claude.iter().map(|h| (PathBuf::from(h), Some(h.clone()))));
+    for (root, home) in claude_roots {
+        for d in dirs_in(&root.join("projects")) {
+            out.extend(jsonl_in(&d).map(|p| (Agent::Claude, p, home.clone())));
+        }
     }
-    let mut stack = vec![codex_dir().join("sessions")];
-    while let Some(d) = stack.pop() {
-        for e in std::fs::read_dir(&d).into_iter().flatten().filter_map(|e| e.ok()) {
-            let p = e.path();
-            if e.file_type().is_ok_and(|t| t.is_dir()) {
-                stack.push(p);
-            } else if p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.ends_with(".jsonl") || n.ends_with(".jsonl.zst")) {
-                out.push((Agent::Codex, p));
+    let codex_roots = std::iter::once((codex_dir(), None)).chain(homes.codex.iter().map(|h| (PathBuf::from(h), Some(h.clone()))));
+    for (root, home) in codex_roots {
+        let mut stack = vec![root.join("sessions")];
+        while let Some(d) = stack.pop() {
+            for e in std::fs::read_dir(&d).into_iter().flatten().filter_map(|e| e.ok()) {
+                let p = e.path();
+                if e.file_type().is_ok_and(|t| t.is_dir()) {
+                    stack.push(p);
+                } else if p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.ends_with(".jsonl") || n.ends_with(".jsonl.zst")) {
+                    out.push((Agent::Codex, p, home.clone()));
+                }
             }
         }
     }
     for d in dirs_in(&home().join(".omp/agent/sessions")) {
-        out.extend(jsonl_in(&d).map(|p| (Agent::Omp, p)));
+        out.extend(jsonl_in(&d).map(|p| (Agent::Omp, p, None)));
     }
     out
 }
@@ -413,7 +439,7 @@ fn parse_claude(path: &Path, len: u64) -> Option<HistoryItem> {
         }
     }
     let id = path.file_stem()?.to_string_lossy().into_owned();
-    (prompt.is_some() || title.is_some()).then_some(HistoryItem { agent: "claude".into(), id, cwd, folder: String::new(), title, first_prompt: prompt, updated_at: 0, turns: None })
+    (prompt.is_some() || title.is_some()).then_some(HistoryItem { agent: "claude".into(), id, cwd, folder: String::new(), title, first_prompt: prompt, updated_at: 0, turns: None, home: None })
 }
 
 /// First text block of a Codex user message that the user typed: Codex and IDEs inject
@@ -471,7 +497,7 @@ fn parse_codex(path: &Path) -> Option<HistoryItem> {
             break;
         }
     }
-    (!id.is_empty()).then_some(HistoryItem { agent: "codex".into(), id, cwd, folder: String::new(), title: None, first_prompt: prompt, updated_at: 0, turns: None })
+    (!id.is_empty()).then_some(HistoryItem { agent: "codex".into(), id, cwd, folder: String::new(), title: None, first_prompt: prompt, updated_at: 0, turns: None, home: None })
 }
 
 fn parse_omp(path: &Path) -> Option<HistoryItem> {
@@ -493,17 +519,19 @@ fn parse_omp(path: &Path) -> Option<HistoryItem> {
             break;
         }
     }
-    (!id.is_empty()).then_some(HistoryItem { agent: "omp".into(), id, cwd, folder: String::new(), title, first_prompt: prompt, updated_at: 0, turns: None })
+    (!id.is_empty()).then_some(HistoryItem { agent: "omp".into(), id, cwd, folder: String::new(), title, first_prompt: prompt, updated_at: 0, turns: None, home: None })
 }
 
 /// Codex keeps thread names in a separate append-only index (later lines win).
-fn codex_titles() -> HashMap<String, String> {
+fn codex_titles(homes: &AccountHomes) -> HashMap<String, String> {
     let mut out = HashMap::new();
-    let Ok(text) = std::fs::read_to_string(codex_dir().join("session_index.jsonl")) else { return out };
-    for line in text.lines() {
-        let Ok(v) = serde_json::from_str::<Value>(line) else { continue };
-        if let (Some(id), Some(name)) = (v["id"].as_str(), v["thread_name"].as_str().and_then(clean_text)) {
-            out.insert(id.to_string(), name);
+    for root in std::iter::once(codex_dir()).chain(homes.codex.iter().map(PathBuf::from)) {
+        let Ok(text) = std::fs::read_to_string(root.join("session_index.jsonl")) else { continue };
+        for line in text.lines() {
+            let Ok(v) = serde_json::from_str::<Value>(line) else { continue };
+            if let (Some(id), Some(name)) = (v["id"].as_str(), v["thread_name"].as_str().and_then(clean_text)) {
+                out.insert(id.to_string(), name);
+            }
         }
     }
     out
@@ -586,11 +614,15 @@ fn spawn_counting(app: AppHandle, mut files: Vec<(Agent, PathBuf, u64, u64)>) {
 }
 
 /// The list (newest first) and the files whose prompt counts are out of date.
-fn scan_history() -> (Vec<HistoryItem>, Vec<(Agent, PathBuf, u64, u64)>) {
-    let files: Vec<(Agent, PathBuf, SystemTime, u64)> = transcript_files()
+fn scan_history(homes: &AccountHomes) -> (Vec<HistoryItem>, Vec<(Agent, PathBuf, u64, u64)>) {
+    let mut account_of: HashMap<PathBuf, String> = HashMap::new();
+    let files: Vec<(Agent, PathBuf, SystemTime, u64)> = transcript_files(homes)
         .into_iter()
-        .filter_map(|(a, p)| {
+        .filter_map(|(a, p, home)| {
             let m = std::fs::metadata(&p).ok()?;
+            if let Some(h) = home {
+                account_of.insert(p.clone(), h);
+            }
             Some((a, p, m.modified().ok()?, m.len()))
         })
         .collect();
@@ -642,7 +674,7 @@ fn scan_history() -> (Vec<HistoryItem>, Vec<(Agent, PathBuf, u64, u64)>) {
     turns.retain(|p, _| live.contains(p));
     let changed = changed || before != (meta.len(), turns.len());
 
-    let titles = codex_titles();
+    let titles = codex_titles(homes);
     let mut to_count = Vec::new();
     let mut items: Vec<HistoryItem> = Vec::new();
     for (agent, path, mtime, len) in &files {
@@ -657,6 +689,7 @@ fn scan_history() -> (Vec<HistoryItem>, Vec<(Agent, PathBuf, u64, u64)>) {
         if item.agent == "codex" {
             item.title = titles.get(&item.id).cloned();
         }
+        item.home = account_of.get(path).cloned();
         items.push(item);
     }
     drop(cache);
@@ -673,10 +706,11 @@ fn scan_history() -> (Vec<HistoryItem>, Vec<(Agent, PathBuf, u64, u64)>) {
 /// and `agent-history-counted` is emitted when they are ready (the UI then re-lists without
 /// `count`, so an agent writing its transcript cannot cause a loop).
 #[tauri::command]
-pub async fn agent_history_list(app: AppHandle, count: Option<bool>) -> CmdResult<Vec<HistoryItem>> {
-    let (items, to_count) = tauri::async_runtime::spawn_blocking(|| {
+pub async fn agent_history_list(app: AppHandle, count: Option<bool>, homes: Option<AccountHomes>) -> CmdResult<Vec<HistoryItem>> {
+    let homes = homes.unwrap_or_default();
+    let (items, to_count) = tauri::async_runtime::spawn_blocking(move || {
         let _one_at_a_time = SCANNING.lock();
-        scan_history()
+        scan_history(&homes)
     })
     .await
     .map_err(err)?;
@@ -703,14 +737,14 @@ mod tests {
     #[ignore]
     fn scan_real_transcripts() {
         let t = std::time::Instant::now();
-        let (cold, to_count) = scan_history();
+        let (cold, to_count) = scan_history(&AccountHomes::default());
         let cold_ms = t.elapsed().as_millis();
         let t = std::time::Instant::now();
-        let (warm, _) = scan_history();
+        let (warm, _) = scan_history(&AccountHomes::default());
         let warm_ms = t.elapsed().as_millis();
         for agent in [Agent::Claude, Agent::Codex, Agent::Omp] {
             let t = std::time::Instant::now();
-            let files: Vec<_> = transcript_files().into_iter().filter(|f| f.0 == agent).collect();
+            let files: Vec<_> = transcript_files(&AccountHomes::default()).into_iter().filter(|f| f.0 == agent).map(|f| (f.0, f.1)).collect();
             let found = files.iter().filter(|(_, p)| match agent {
                 Agent::Claude => parse_claude(p, std::fs::metadata(p).map_or(0, |m| m.len())),
                 Agent::Codex => parse_codex(p),
@@ -818,7 +852,7 @@ mod tests {
 
     #[test]
     fn escapes_like_claude() {
-        let p = claude_project_dir("C:\\Windows\\System32");
+        let p = claude_project_dir(&claude_dir(), "C:\\Windows\\System32");
         assert!(p.ends_with("C--Windows-System32"));
     }
 }

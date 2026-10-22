@@ -1,4 +1,5 @@
 import { For, Match, Show, Switch, createEffect, createMemo, createSignal, on, onCleanup, onMount } from "solid-js";
+import { MicButton } from "./voice";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -9,6 +10,7 @@ import type { ChatItem } from "../chat/chat-model";
 import type { Project } from "../lib/types";
 import { Icon } from "./icons";
 import { kindInfo } from "../lib/agents";
+import { t } from "../lib/i18n";
 
 const RENDER_WINDOW = 300;
 
@@ -61,7 +63,7 @@ function ToolCard(props: { item: Extract<ChatItem, { kind: "tool" }> }) {
 
 export function ChatPane(props: { sessionId: string; project: Project; focused: boolean }) {
   return (
-    <Show when={store.sessions[props.sessionId] ? props.sessionId : null} keyed fallback={<div class="empty">Waiting for session…</div>}>
+    <Show when={store.sessions[props.sessionId] ? props.sessionId : null} keyed fallback={<div class="empty">{t("Waiting for session…")}</div>}>
       {(id) => <ChatBody sessionId={id} project={props.project} focused={props.focused} />}
     </Show>
   );
@@ -115,11 +117,11 @@ function ChatBody(props: { sessionId: string; project: Project; focused: boolean
       <div class="chat-scroll" ref={scroller} onScroll={(e) => (stick = e.currentTarget.scrollHeight - e.currentTarget.scrollTop - e.currentTarget.clientHeight < 40)}>
         <div class="chat-inner">
           <Show when={!showAll() && ctrl.state.items.length > RENDER_WINDOW}>
-            <button class="btn" style={{ "align-self": "center" }} onClick={() => setShowAll(true)}>Show {ctrl.state.items.length - RENDER_WINDOW} earlier items</button>
+            <button class="btn" style={{ "align-self": "center" }} onClick={() => setShowAll(true)}>{t("Show {n} earlier items", { n: ctrl.state.items.length - RENDER_WINDOW })}</button>
           </Show>
           <Show when={ctrl.state.ready && ctrl.state.items.length === 0}>
             <div class="muted" style={{ "text-align": "center" }}>
-              {meta().label} chat · {props.project.name}. Ask anything — tools, diffs and approvals appear inline.
+              {t("{agent} chat · {project}. Ask anything — tools, diffs and approvals appear inline.", { agent: meta().label, project: props.project.name })}
             </div>
           </Show>
           <For each={items()}>
@@ -165,7 +167,7 @@ function ChatBody(props: { sessionId: string; project: Project; focused: boolean
             )}
           </For>
           <Show when={ctrl.state.busy}>
-            <div class="typing"><span class="dot working" /> {ctrl.state.status === "requesting" ? "Thinking…" : "Working…"}</div>
+            <div class="typing"><span class="dot working" /> {ctrl.state.status === "requesting" ? t("Thinking…") : t("Working…")}</div>
           </Show>
         </div>
       </div>
@@ -174,7 +176,7 @@ function ChatBody(props: { sessionId: string; project: Project; focused: boolean
           <textarea
             ref={textarea}
             rows={2}
-            placeholder={ctrl.state.exited ? "Agent exited — switch to terminal to resume" : `Message ${meta().label}…  (Enter to send, Shift+Enter for newline, Esc to interrupt)`}
+            placeholder={ctrl.state.exited ? t("Agent exited — switch to terminal to resume") : t("Message {agent}…  (Enter to send, Shift+Enter for newline, Esc to interrupt)", { agent: meta().label })}
             value={draft()}
             disabled={ctrl.state.exited}
             onInput={(e) => {
@@ -196,13 +198,19 @@ function ChatBody(props: { sessionId: string; project: Project; focused: boolean
           <div class="composer-row">
             <span>{meta().label}{ctrl.state.model ? ` · ${ctrl.state.model}` : ""}</span>
             <Show when={ctrl.state.conversationId && ctrl.state.conversationId !== "latest"}>
-              <span title="Agent conversation id">· {ctrl.state.conversationId!.slice(0, 8)}</span>
+              <span title={t("Agent conversation id")}>· {ctrl.state.conversationId!.slice(0, 8)}</span>
             </Show>
             <span class="spacer" />
-            <Show when={ctrl.state.busy}>
-              <button class="btn" style={{ height: "26px" }} onClick={() => ctrl.interrupt()}><Icon name="stop" size={12} /> Stop</button>
+            <Show when={session() && !session()!.alive}>
+              <button class="btn" style={{ height: "26px" }} title={t("Start the agent again, continuing this conversation")} onClick={() => void store.resumeSession(props.sessionId)}>
+                <Icon name="restart" size={12} /> {t("Resume")}
+              </button>
             </Show>
-            <button class="btn primary" style={{ height: "26px" }} disabled={!draft().trim() || ctrl.state.exited} onClick={send}>Send {isMac ? "↩" : "⏎"}</button>
+            <Show when={ctrl.state.busy}>
+              <button class="btn" style={{ height: "26px" }} onClick={() => ctrl.interrupt()}><Icon name="stop" size={12} /> {t("Stop")}</button>
+            </Show>
+            <Show when={!ctrl.state.exited}><MicButton field={() => textarea} /></Show>
+            <button class="btn primary" style={{ height: "26px" }} disabled={!draft().trim() || ctrl.state.exited} onClick={send}>{t("Send {key}", { key: isMac ? "↩" : "⏎" })}</button>
           </div>
         </div>
       </div>

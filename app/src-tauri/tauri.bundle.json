@@ -1,5 +1,5 @@
 {
   "bundle": {
-    "externalBin": ["binaries/erkad"]
+    "externalBin": ["binaries/erkad", "binaries/erka-stt"]
   }
 }

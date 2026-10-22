@@ -57,6 +57,7 @@ struct Inner {
     last_activity: u64,
     /// `last_activity` as of the last broadcast; output alone re-broadcasts at most every 30 s.
     broadcast_activity: u64,
+    interrupted: bool,
 }
 
 pub struct ChatSession {
@@ -89,6 +90,7 @@ impl ChatSession {
                 working_since: None,
                 last_activity: 0,
                 broadcast_activity: 0,
+                interrupted: false,
             }),
         })
     }
@@ -126,6 +128,7 @@ impl ChatSession {
             g.pid = pid;
             g.alive = true;
             g.exit_code = None;
+            g.interrupted = false;
             g.activity = Activity { alive: true, ..Default::default() };
             g.last_status = Status::Idle;
         }
@@ -298,7 +301,15 @@ impl ChatSession {
             seq: g.seq,
             chat: true,
             last_activity: g.last_activity,
+            interrupted: g.interrupted,
         }
+    }
+
+    /// Restored (without a process) after the daemon stopped while this chat ran.
+    pub fn mark_interrupted(&self, last_activity: u64) {
+        let mut g = self.inner.lock();
+        g.interrupted = true;
+        g.last_activity = last_activity;
     }
 
     pub fn info(&self) -> SessionInfo {

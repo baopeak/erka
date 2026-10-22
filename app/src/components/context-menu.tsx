@@ -1,5 +1,6 @@
 // App-wide context menu: one instance rendered by <App>, opened from anywhere.
-import { For, Show, createSignal, onCleanup, onMount } from "solid-js";
+import { For, Show, createEffect, createSignal, onCleanup, onMount } from "solid-js";
+import { setCovering } from "../lib/overlays";
 
 export type MenuItem = { label: string; run: () => void; danger?: boolean; hint?: string } | null;
 
@@ -12,6 +13,7 @@ export function openContextMenu(e: MouseEvent, items: MenuItem[]) {
 }
 
 export function ContextMenuHost() {
+  createEffect(() => setCovering("context-menu", !!menu()));
   onMount(() => {
     const close = () => setMenu(null);
     // Capture phase: a focused terminal would otherwise swallow Escape and pass it to the agent.

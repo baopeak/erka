@@ -28,7 +28,7 @@ def new_session(pid, kind, where="tab"):
 
 
 def set_window(w, h):
-    d._req("POST", d.s("/window/rect"), {"width": w, "height": h})
+    d.set_window_size(w, h)
     time.sleep(0.8)
 
 

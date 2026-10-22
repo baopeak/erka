@@ -59,6 +59,23 @@ pub struct SessionSpec {
     pub model: Option<String>,
     #[serde(default)]
     pub created_at: u64,
+    /// Runs on another machine over SSH (`cwd` is a path there).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote: Option<RemoteSpec>,
+}
+
+/// Where a remote session runs: an ssh destination (`user@host` or a `~/.ssh/config` alias).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct RemoteSpec {
+    pub dest: String,
+    #[serde(default)]
+    pub port: Option<u16>,
+    /// `ssh -F` config file.
+    #[serde(default)]
+    pub config: Option<String>,
+    /// Run inside the host's tmux (when installed), so the program outlives the connection.
+    #[serde(default)]
+    pub tmux: bool,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -79,6 +96,8 @@ pub struct SessionInfo {
     pub chat: bool,
     /// Wall-clock ms of the last output or input (0 = never). Not a broadcast trigger.
     pub last_activity: u64,
+    /// Was running when the daemon stopped (reboot, update, crash) and has not been restarted.
+    pub interrupted: bool,
 }
 
 /// One queued write to a client socket. `credit` is decremented once written.
@@ -165,6 +184,7 @@ struct Inner {
     /// prompt argument, automations, hand-offs).
     pending_prompt: Option<PendingPrompt>,
     last_output: Option<Instant>,
+    interrupted: bool,
 }
 
 struct PendingPrompt {
@@ -217,6 +237,7 @@ impl Session {
                 broadcast_activity: 0,
                 pending_prompt: None,
                 last_output: None,
+                interrupted: false,
             }),
         })
     }
@@ -259,6 +280,7 @@ impl Session {
             }
             g.generation += 1;
             g.exit_code = None;
+            g.interrupted = false;
             g.activity = Activity { alive: true, ..Default::default() };
             g.last_status = Status::Idle;
             g.pty = Some(Pty { ctl: ctl_tx.clone(), killer, tree, pid });
@@ -514,6 +536,13 @@ impl Session {
         }
     }
 
+    /// Restored after the daemon stopped while this session ran.
+    pub fn mark_interrupted(&self, last_activity: u64) {
+        let mut g = self.inner.lock();
+        g.interrupted = true;
+        g.last_activity = last_activity;
+    }
+
     pub fn info(&self) -> SessionInfo {
         let g = self.inner.lock();
         self.info_locked(&g, g.last_status)
@@ -535,6 +564,7 @@ impl Session {
             seq: g.seq,
             chat: false,
             last_activity: g.last_activity,
+            interrupted: g.interrupted,
         }
     }
 

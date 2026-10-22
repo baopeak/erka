@@ -32,6 +32,9 @@ pub struct Automation {
     pub project_id: Option<String>,
     #[serde(default)]
     pub args: Vec<String>,
+    /// Environment of its sessions (the agent profile's variables and account home).
+    #[serde(default)]
+    pub env: std::collections::BTreeMap<String, String>,
     pub every: Every,
     /// `HH:MM` local time (hourly: only the minute counts).
     #[serde(default = "nine")]
@@ -194,6 +197,7 @@ mod tests {
             cwd: ".".into(),
             project_id: None,
             args: vec![],
+            env: Default::default(),
             every,
             time: time.into(),
             weekday,

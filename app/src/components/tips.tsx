@@ -4,6 +4,7 @@ import { Show, createSignal, onCleanup, onMount } from "solid-js";
 import { store } from "../lib/store";
 import { chordOf, commands } from "../lib/commands";
 import { chordLabel } from "../lib/platform";
+import { t, msg } from "../lib/i18n";
 
 interface Tip {
   id: string;
@@ -19,10 +20,10 @@ const key = (id: string) => {
 };
 
 const TIPS: Tip[] = [
-  { id: "search", target: ".search-btn", title: "Search everything", text: () => `${key("palette")} finds sessions, projects, files, commands and settings. Start with @ # > or / to narrow it down.` },
-  { id: "dashboard", target: "[data-tip=dashboard]", title: "Agent dashboard", text: () => `${key("dashboard")} shows every agent across projects, and which ones need you.` },
-  { id: "chat", target: ".session-row", title: "Terminal or chat", text: () => "Right-click an agent session → Continue in chat view. The conversation carries over, and you can switch back any time." },
-  { id: "history", target: ".panel-tabs", title: "Past conversations", text: () => "The Sessions tab lists earlier Claude, Codex and OMP conversations of this folder; resume any of them." },
+  { id: "search", target: ".search-btn", title: msg("Search everything"), text: () => t("{chord} finds sessions, projects, files, commands and settings. Start with @ # > or / to narrow it down.", { chord: key("palette") }) },
+  { id: "dashboard", target: "[data-tip=dashboard]", title: msg("Agent dashboard"), text: () => t("{chord} shows every agent across projects, and which ones need you.", { chord: key("dashboard") }) },
+  { id: "chat", target: ".session-row", title: msg("Terminal or chat"), text: () => t("Right-click an agent session → Continue in chat view. The conversation carries over, and you can switch back any time.") },
+  { id: "history", target: ".panel-tabs", title: msg("Past conversations"), text: () => t("The Sessions tab lists earlier Claude, Codex and OMP conversations of this folder; resume any of them.") },
 ];
 
 const SHOW_AFTER_MS = 4000;
@@ -31,8 +32,8 @@ export function Tips() {
   const [tip, setTip] = createSignal<Tip | null>(null);
   const [pos, setPos] = createSignal({ left: 0, top: 0 });
 
-  const place = (t: Tip) => {
-    const el = document.querySelector(t.target);
+  const place = (tp: Tip) => {
+    const el = document.querySelector(tp.target);
     if (!el) return false;
     const r = el.getBoundingClientRect();
     const width = 280;
@@ -46,14 +47,14 @@ export function Tips() {
   const timer = window.setTimeout(() => {
     const s = store.state.settings;
     if (!s.tips || store.overlay() !== null) return;
-    const next = TIPS.find((t) => !s.tipsSeen.includes(t.id) && place(t));
+    const next = TIPS.find((tp) => !s.tipsSeen.includes(tp.id) && place(tp));
     if (next) setTip(next);
   }, SHOW_AFTER_MS);
   onCleanup(() => clearTimeout(timer));
 
   const dismiss = () => {
-    const t = tip();
-    if (t) store.setSettings({ tipsSeen: [...store.state.settings.tipsSeen, t.id] });
+    const cur = tip();
+    if (cur) store.setSettings({ tipsSeen: [...store.state.settings.tipsSeen, cur.id] });
     setTip(null);
   };
   const onResize = () => tip() && !place(tip()!) && setTip(null);
@@ -62,14 +63,14 @@ export function Tips() {
 
   return (
     <Show when={tip() && store.state.settings.tips && store.overlay() === null ? tip() : null}>
-      {(t) => (
-        <div class="tip" data-tip-id={t().id} style={{ left: `${pos().left}px`, top: `${pos().top}px` }}>
-          <div class="tip-title">{t().title}</div>
-          <div class="tip-text">{t().text()}</div>
+      {(cur) => (
+        <div class="tip" data-tip-id={cur().id} style={{ left: `${pos().left}px`, top: `${pos().top}px` }}>
+          <div class="tip-title">{t(cur().title)}</div>
+          <div class="tip-text">{cur().text()}</div>
           <div class="tip-actions">
-            <button class="btn mini" onClick={() => { store.setSettings({ tips: false }); setTip(null); }}>Turn off tips</button>
+            <button class="btn mini" onClick={() => { store.setSettings({ tips: false }); setTip(null); }}>{t("Turn off tips")}</button>
             <span style={{ flex: 1 }} />
-            <button class="btn mini primary" onClick={dismiss}>Got it</button>
+            <button class="btn mini primary" onClick={dismiss}>{t("Got it")}</button>
           </div>
         </div>
       )}

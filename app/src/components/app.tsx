@@ -1,4 +1,5 @@
 import { Match, Show, Switch, createEffect, onMount } from "solid-js";
+import { errorText } from "../lib/i18n";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { store } from "../lib/store";
 import { peekView } from "../lib/terminal-host";
@@ -18,7 +19,24 @@ import { NewSessionMenu } from "./new-session-menu";
 import { Welcome } from "./welcome";
 import { ContextMenuHost } from "./context-menu";
 import { FloatingTerminal } from "./floating-terminal";
+import { LayoutMenuHost } from "./layout-menu";
+import { RunsPage } from "./runs-page";
+import { RemoteDialog } from "./remote-dialog";
+import { HostsPage } from "./hosts-page";
+import { initSshHosts } from "../lib/ssh-hosts";
+import { MobileApprovals } from "./settings/mobile-settings";
+import { daemon as daemonCall } from "../lib/ipc";
+import { loadSshConfigPath, remoteConfigure } from "../lib/remote";
+import { initRuns } from "../lib/runs";
+import { setCovering } from "../lib/overlays";
+import { setLinkOpener } from "../lib/terminal-host";
+import { isLocalUrl, openBrowser } from "../lib/browser";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { daemonPalette, findTerminalTheme } from "../lib/terminal-themes";
+import { loadPlugins, syncPluginAgents } from "../lib/plugins";
+import { initVoice } from "../lib/voice";
+import { applyLocale } from "../lib/i18n";
+import { VoicePill } from "./voice";
 
 /** Tells the daemon which palette to answer terminal colour queries with. */
 function syncDaemonTheme() {
@@ -30,6 +48,17 @@ function syncDaemonTheme() {
 
 export function App() {
   createEffect(syncDaemonTheme);
+  createEffect(() => applyLocale(store.state.settings.language));
+  // Plugin agents go to the daemon on every connection (it may have restarted without them).
+  createEffect(() => store.connected() && void syncPluginAgents(true));
+  // Phones show project names (the daemon only knows ids).
+  createEffect(() => {
+    const names = Object.fromEntries(store.state.projects.map((p) => [p.id, p.name]));
+    if (store.connected()) void daemonCall("mobile.set_projects", { projects: names }).catch(() => {});
+  });
+  // Remote projects' ssh calls use the configured SSH config file.
+  createEffect(() => void remoteConfigure(store.state.settings.sshConfig?.trim() || null).catch(() => {}));
+  createEffect(() => setCovering("floating-terminal", !!(store.state.settings.floatingTerminal && store.state.floating?.open)));
   createEffect(() => {
     const mode = store.state.settings.keepAwake ?? "off";
     if (store.connected()) void daemon("daemon.set_awake", { mode }).catch(() => {});
@@ -56,6 +85,13 @@ export function App() {
     else root.style.removeProperty("--terminal-bg");
   });
   onMount(() => {
+    initRuns();
+    void loadSshConfigPath().catch(() => {});
+    void initSshHosts();
+    void loadPlugins();
+    initVoice();
+    // Dev-server links from terminals open next to the terminal.
+    setLinkOpener((uri) => (store.state.settings.localhostInBrowser !== false && isLocalUrl(uri) && store.activeProject() ? openBrowser(uri, "right") : void openUrl(uri)));
     // Files dropped from Explorer/Finder onto a terminal paste their (quoted) paths.
     void getCurrentWebview().onDragDropEvent((event) => {
       if (event.payload.type !== "drop") return;
@@ -84,6 +120,7 @@ export function App() {
             {(project) => <RightPanel project={project} />}
           </Show>
         </div>
+        <VoicePill />
         <StatusBar />
       </div>
       <Switch>
@@ -91,6 +128,9 @@ export function App() {
         <Match when={store.overlay() === "settings"}><SettingsPage /></Match>
         <Match when={store.overlay() === "newsession"}><NewSessionMenu /></Match>
         <Match when={store.overlay() === "board"}><Board /></Match>
+        <Match when={store.overlay() === "runs"}><RunsPage /></Match>
+        <Match when={store.overlay() === "remote"}><RemoteDialog /></Match>
+        <Match when={store.overlay() === "hosts"}><HostsPage /></Match>
         <Match when={store.overlay() === "worktree"}><WorktreeDialog /></Match>
         <Match when={["palette", "quickopen", "jump"].includes(store.overlay() ?? "") && store.overlay()} keyed>
           {(o) => <Palette scope={o === "quickopen" ? "files" : o === "jump" ? "sessions" : "all"} />}
@@ -100,11 +140,13 @@ export function App() {
         <FloatingTerminal />
       </Show>
       <ContextMenuHost />
+      <LayoutMenuHost />
+      <MobileApprovals />
       <Tips />
       <Show when={store.toast()}>
         {(t) => (
           <div class="toast">
-            <span>{t().text}</span>
+            <span>{errorText(t().text)}</span>
             <Show when={t().action}>
               {(a) => <button class="btn" style={{ height: "24px", "margin-left": "10px" }} onClick={() => a().run()}>{a().label}</button>}
             </Show>

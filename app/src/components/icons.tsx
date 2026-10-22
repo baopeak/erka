@@ -5,6 +5,7 @@ import { kindInfo } from "../lib/agents";
 // Factories, not elements: a Solid JSX element is a real DOM node and can live in one place only.
 const paths: Record<string, () => JSX.Element> = {
   plus: () => <path d="M8 3v10M3 8h10" />,
+  mic: () => <><rect x="6" y="2" width="4" height="7.5" rx="2" /><path d="M3.8 7.5a4.2 4.2 0 0 0 8.4 0M8 11.7V14M5.8 14h4.4" /></>,
   close: () => <path d="M4 4l8 8M12 4l-8 8" />,
   terminal: () => <><path d="M3 4.5l3.5 3.5L3 11.5" /><path d="M8.5 12h4.5" /></>,
   files: () => <><path d="M3 2.5h6l3 3v8H3z" /><path d="M9 2.5v3h3" /></>,
@@ -51,6 +52,12 @@ const paths: Record<string, () => JSX.Element> = {
   external: () => <><path d="M9 3h4v4M13 3L7.5 8.5" /><path d="M11 9.5V13H3V5h3.5" /></>,
   float: () => <><rect x="2.5" y="3" width="11" height="10" rx="1.5" /><rect x="7.5" y="8" width="5" height="4" rx="1" /></>,
   clock: () => <><circle cx="8" cy="8" r="5.5" /><path d="M8 5v3.2l2 1.3" /></>,
+  grid: () => <><rect x="2.5" y="3" width="11" height="10" rx="1.5" /><path d="M8 3v10M2.5 8h11" /></>,
+  globe: () => <><circle cx="8" cy="8" r="5.5" /><path d="M2.5 8h11M8 2.5c1.7 1.8 2.5 3.6 2.5 5.5S9.7 11.7 8 13.5M8 2.5C6.3 4.3 5.5 6.1 5.5 8s.8 3.7 2.5 5.5" /></>,
+  target: () => <><circle cx="8" cy="8" r="5" /><circle cx="8" cy="8" r="1.5" /><path d="M8 1.5v2.5M8 12v2.5M1.5 8H4M12 8h2.5" /></>,
+  camera: () => <><path d="M2.5 5.5h2.5L6.2 4h3.6L11 5.5h2.5v7h-11z" /><circle cx="8" cy="8.8" r="2.2" /></>,
+  code: () => <path d="M6 4.5L2.5 8 6 11.5M10 4.5L13.5 8 10 11.5" />,
+  server: () => <><rect x="2.5" y="2.5" width="11" height="4.5" rx="1" /><rect x="2.5" y="9" width="11" height="4.5" rx="1" /><path d="M5 4.75h.01M5 11.25h.01" /></>,
 };
 
 export function Icon(props: { name: keyof typeof paths | string; size?: number }) {

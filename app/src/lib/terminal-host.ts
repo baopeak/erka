@@ -9,7 +9,8 @@
 // - At most MAX_PARKED parked views are kept; older ones are disposed and rebuilt from the
 //   daemon's snapshot when shown again.
 // - The daemon owns the truth. Background sessions cost the UI nothing.
-import { Terminal } from "@xterm/xterm";
+import { Terminal, type IMarker } from "@xterm/xterm";
+import { createSignal } from "solid-js";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
@@ -37,6 +38,12 @@ export const setAppShortcutMatcher = (fn: (e: KeyboardEvent, fromTerminal: boole
 /** True while a palette/dialog is open: keys must not reach the terminal underneath. */
 let overlayOpen: () => boolean = () => false;
 export const setOverlayCheck = (fn: () => boolean) => (overlayOpen = fn);
+/** Opens a Ctrl/Cmd-clicked link (the app routes local dev-server URLs to a browser pane). */
+let openLink: (uri: string) => void = (uri) => void openUrl(uri);
+export const setLinkOpener = (fn: (uri: string) => void) => (openLink = fn);
+/** Other sessions that receive what is typed into a session (a tab with broadcast input on). */
+let inputFanout: (sessionId: string) => number[] = () => [];
+export const setInputFanout = (fn: (sessionId: string) => number[]) => (inputFanout = fn);
 
 export class TermView {
   readonly el = document.createElement("div");
@@ -60,6 +67,12 @@ export class TermView {
   private resizeObs: ResizeObserver | null = null;
   private resizeTimer = 0;
   focused = false;
+  /** Lines where the user pressed Enter (prompts sent to a shell or an agent), oldest first. */
+  private marks: IMarker[] = [];
+  /** Scrolled away from the bottom, and how many lines arrived since (for "jump to bottom"). */
+  private readonly scrollState = createSignal({ away: false, newLines: 0 });
+  readonly scrolledAway = this.scrollState[0];
+  private awayBase = 0;
 
   constructor(readonly sessionId: string, private settings: Settings) {
     this.el.className = "term-host";
@@ -87,12 +100,60 @@ export class TermView {
     this.term.unicode.activeVersion = "11";
     // Links open only on Ctrl/Cmd+click: terminal text never triggers actions implicitly.
     this.term.loadAddon(new WebLinksAddon((e, uri) => {
-      if (isMac ? e.metaKey : e.ctrlKey) void openUrl(uri);
+      if (isMac ? e.metaKey : e.ctrlKey) openLink(uri);
     }));
     this.term.onData((d) => this.input(d));
     this.term.onBinary((d) => this.input(d, true));
     this.term.attachCustomKeyEventHandler((e) => this.onKey(e));
     this.term.textarea?.addEventListener("focus", () => (this.focused = true));
+    this.term.onScroll(() => this.updateScroll());
+    this.term.onWriteParsed(() => this.scrollState[0]().away && this.updateScroll());
+  }
+
+  private updateScroll() {
+    const b = this.term.buffer.active;
+    const away = b.viewportY < b.baseY;
+    const was = this.scrollState[0]();
+    if (away && !was.away) this.awayBase = b.baseY;
+    const newLines = away ? Math.max(0, b.baseY - this.awayBase) : 0;
+    if (away !== was.away || newLines !== was.newLines) this.scrollState[1]({ away, newLines });
+  }
+
+  scrollToBottom() {
+    this.term.scrollToBottom();
+    this.updateScroll();
+  }
+
+  /** Scrolls to the previous (-1) or next (1) line where a prompt was sent; past the last one,
+   *  back to the bottom. */
+  jumpPrompt(dir: -1 | 1) {
+    this.marks = this.marks.filter((m) => !m.isDisposed && m.line >= 0);
+    const b = this.term.buffer.active;
+    // A long command wraps over several rows: jump to its first one.
+    const starts = this.marks.map((m) => {
+      let y = m.line;
+      while (y > 0 && b.getLine(y)?.isWrapped) y--;
+      return y;
+    });
+    // A jump leaves the prompt one row below the top: that row is the current position.
+    const here = b.viewportY + 1;
+    const target = dir < 0 ? [...starts].reverse().find((y) => y < here) : starts.find((y) => y > here);
+    if (target != null) this.term.scrollToLine(Math.max(0, target - 1));
+    else if (dir > 0) this.term.scrollToBottom();
+    this.updateScroll();
+  }
+
+  /** Remembers the cursor line when the user submits a line (not in a full-screen program,
+   *  whose screen has no history to jump through). */
+  private markPrompt() {
+    if (this.term.buffer.active.type !== "normal") return;
+    const last = this.marks[this.marks.length - 1];
+    const line = this.term.buffer.active.baseY + this.term.buffer.active.cursorY;
+    if (last && !last.isDisposed && last.line === line) return;
+    const m = this.term.registerMarker(0);
+    if (!m) return;
+    this.marks.push(m);
+    if (this.marks.length > 1000) this.marks.shift()?.dispose();
   }
 
   private input(data: string, binary = false) {
@@ -101,6 +162,11 @@ export class TermView {
     // never the user's keystrokes.
     if (this.suppressReplies > 0 && isTerminalReply(data)) return;
     void sendInput(this.handle, data, binary);
+    // Keystrokes and pastes only: a terminal's own replies belong to that terminal.
+    if (!isTerminalReply(data)) {
+      if (data === "\r") this.markPrompt();
+      for (const h of inputFanout(this.sessionId)) void sendInput(h, data, binary);
+    }
   }
 
   write(data: Uint8Array | string) {
@@ -207,6 +273,11 @@ export class TermView {
     this.webgl = null;
   }
 
+  /** Window shown again: a context the GPU dropped meanwhile comes back. */
+  restoreWebgl() {
+    if (this.visible) this.enableWebgl();
+  }
+
   fitNow() {
     if (!this.visible) return;
     const dims = this.fit.proposeDimensions();
@@ -220,6 +291,11 @@ export class TermView {
 
   /** Subscribes to the daemon session; replays only what this buffer is missing. */
   attach(handle: number): Promise<void> {
+    // Window hidden: subscribe once it is shown again (see the visibilitychange listener).
+    if (document.hidden) {
+      waitingForShow.set(this, handle);
+      return Promise.resolve();
+    }
     const gen = ++this.attachGen;
     this.attached = true;
     const run = this.op.then(() => this.doAttach(handle, gen));
@@ -361,6 +437,31 @@ export function disposeView(sessionId: string) {
   const i = parked.indexOf(sessionId);
   if (i >= 0) parked.splice(i, 1);
 }
+
+// A hidden window (minimized or covered) gets its timers throttled to as little as once a
+// minute, and xterm parses incoming output on timers: streams that keep arriving pile up and
+// the window takes seconds to catch up when shown. So on-screen views unsubscribe while the
+// window is hidden, like parked ones, and replay only what they missed when it is shown.
+const waitingForShow = new Map<TermView, number>();
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) {
+    for (const v of views.values()) {
+      if (!v.visible || !v.attached || v.handle == null) continue;
+      waitingForShow.set(v, v.handle);
+      void v.detach();
+    }
+    return;
+  }
+  const waiting = [...waitingForShow];
+  waitingForShow.clear();
+  for (const [v, handle] of waiting) {
+    // Disposed or parked meanwhile: its pane re-attaches it when shown.
+    if (views.get(v.sessionId) !== v || !v.visible || v.attached) continue;
+    // The newest handle asked for (a daemon reconnect while hidden asks again).
+    void v.attach(handle);
+  }
+  for (const v of views.values()) v.restoreWebgl();
+});
 
 /** Daemon reconnected: handles may have changed, buffers must be rebuilt from snapshots. */
 export function resetStreams() {

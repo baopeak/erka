@@ -10,27 +10,33 @@ and the UI renders only what is on screen.
 ```
 Erka (Tauri app)                          erkad (session daemon, one per user)
 ├─ WebView: SolidJS UI, xterm.js, CM6     ├─ Session × N  (PTY + VT state + ring buffer)
-├─ Rust core: daemon client, fs, git,     ├─ ChatSession × N (agent stdio JSON relay)
-│  search, file watcher, transcript       ├─ status ticker (250 ms) + persistence (30 s)
-│  history, usage, memory meter           │
-└─ local socket ◄──────────────────────►  └─ local socket server
-                                          erkad hook  ◄── agent hooks (Claude/Codex)
+├─ child webviews (browser panes)         ├─ ChatSession × N (agent stdio JSON relay)
+├─ Rust core: daemon client, fs, git,     ├─ status ticker (250 ms) + persistence (30 s)
+│  search, file watcher, transcript       ├─ runs engine, automations
+│  history, usage, accounts, plugins,     ├─ phone server (opt-in, HTTP/WS on the LAN)
+│  integrations, remote (ssh), voice      │
+├─ local socket ◄──────────────────────►  └─ local socket server
+└─ stdin/stdout ◄──► erka-stt (speech)    erkad hook  ◄── agent hooks (Claude/Codex)
 ```
 
 | Process | Lifetime | Owns |
 |---|---|---|
 | `Erka` | while the window is open | layout, settings (`app-state.json`), views |
 | `erkad` | until stopped explicitly (or logoff) | PTYs, agent processes, terminal state, `sessions.json`, snapshots |
+| `erka-stt` | while dictation is used (exits after 10 idle minutes) | the loaded speech model, the microphone stream |
 | agent CLIs | per session | — |
 
-`app-state.json` carries a format `version` (currently 2). A file with an older version, an
+`app-state.json` carries a format `version` (currently 3: n-ary pane splits). A file with an older version, an
 unknown format or one that cannot be read is first copied to
 `app-state.<label>-<time>.bak.json`; if that copy fails, or the file comes from a newer Erka,
 the app runs without saving rather than overwrite it.
 
-Closing or crashing the app never stops a session. If `erkad` itself stops, sessions are
-restored as *exited* with their last screen and can be restarted (agents resume their
-conversation with `--resume` / `resume <id>`).
+Closing or crashing the app never stops a session. If `erkad` itself stops, sessions that
+were running are restored *interrupted* with their last screen; the app resumes them when they
+are shown, all at once, or on request (Settings → Agents). Agents resume their conversation
+(`--resume <id>` / `resume <id>`; a Claude id that was never saved to a transcript is not
+resumed, and the id is recovered from transcripts when hooks never reported it); shells
+restart below their old output.
 
 Data: `%LOCALAPPDATA%\Erka` (Windows), `~/Library/Application Support/Erka` (macOS).
 `ERKA_DATA_DIR` and `ERKA_ENDPOINT` override both (used by the dev scripts and tests).
@@ -49,10 +55,10 @@ Frames (`crates/erka-proto`): `u32 LE length | u8 kind | payload`
 | 2 Output | daemon → app | `u32 handle \| u64 seq \| bytes` (`seq` = stream offset after the bytes) |
 | 3 Input | app → daemon | `u32 handle \| bytes` |
 
-RPC methods: `daemon.info|set_theme|shutdown`, `session.list|create|attach|detach|input|resize|focus|kill|close|restart|update|read|set_unread`, `chat.close_stdin`, `hook.report`.
+RPC methods: `daemon.info|set_theme|set_awake|shutdown`, `session.list|create|attach|detach|input|resize|focus|kill|close|restart|update|read|set_unread`, `chat.close_stdin`, `hook.report`, `agent.presets|run|set_custom`, `meta.list|get|set`, `automation.list|save|delete|run`, `run.list|get|create|approve|retry|task_done|task_skip|cancel|delete|report`, `mobile.status|enable|disable|pair_start|approve|revoke|set_write|set_projects`.
 `daemon.info` reports an `api` feature level (`erka_proto::API_LEVEL`); an app built for a
 higher level offers to restart an older daemon still running from a previous version.
-Events: `session.updated` (coalesced, 250 ms), `session.closed`, `session.resync`, `session.clipboard`.
+Events: `session.updated` (coalesced, 250 ms), `session.closed`, `session.resync`, `session.clipboard`, `meta.updated`, `automation.ran`, `run.updated`, `mobile.pair_request`.
 
 ## Session threading (daemon)
 
@@ -72,7 +78,8 @@ interactive view is attached; an attached xterm answers itself. The daemon answe
 queries with the palette of the app's current theme (`daemon.set_theme`).
 
 Windows: each session runs in its own Job Object (kill-on-close, owned by the daemon) so a
-kill reaches the whole process tree; a modern `conpty.dll`/`OpenConsole.exe` is sideloaded
+kill reaches the whole process tree; the daemon (started by the app in a new process group,
+which Windows marks as ignoring Ctrl+C) clears that mark at start so sessions still get Ctrl+C; a modern `conpty.dll`/`OpenConsole.exe` is sideloaded
 (see `third_party/conpty`). macOS: process groups (`killpg`) and a login shell (`$SHELL -l -c
 exec …`) so agents see the user's PATH.
 
@@ -179,6 +186,22 @@ repository by the file's hash.
   so colour-query answers match the chosen terminal theme.
 - **CLI** (`cli.rs`): `erkad terminal list|read|send|wait` and `erkad worktree get|set` over
   the same RPCs.
+
+## Features beyond sessions
+
+| Area | Where | How |
+|---|---|---|
+| Layouts | `app/src/lib/layout.ts` | A tab is a tree of n-ary splits (`children`, `sizes`) with pane leaves; grids are built from `{mode: rows\|cols, counts}`; saved layouts are templates (tree shape + session kind per leaf). Version-2 binary trees migrate on load. |
+| Accounts | `app/src-tauri/src/accounts.rs`, `lib/accounts.ts` | One config home per account under `<data>/accounts/<agent>/<id>`, passed as `CLAUDE_CONFIG_DIR` / `CODEX_HOME` to every launch (terminal, chat, automations, runs, one-shot AI actions); history and usage read each home. |
+| Orchestration | `crates/erkad/src/runs.rs` | A run is a task DAG (cycle-checked) persisted in `runs.json`. `Runs::step` starts ready tasks (deps done, approval given) as ordinary sessions, optionally in a new worktree; tasks end on `erkad run report`, session exit, or idle after working (default 300 s). |
+| Integrations | `app/src-tauri/src/integrations.rs` | Linear GraphQL, Jira REST (Cloud v3 `search/jql`, Server v2), GitLab REST v4. Tokens live in the OS keyring (`keyring`, service `Erka (<endpoint>)`) and never reach the webview. |
+| Browser panes | `app/src-tauri/src/browser.rs`, `browser_picker.js` | Tauri child webviews positioned over the pane (hidden while an overlay covers them). Design mode injects a picker; picks travel through a cancelled navigation to a sentinel URL, are redacted and size-capped, and the element screenshot uses the WebView2 DevTools protocol (end-to-end tests also send trusted page input through it, `browser_test_input`, dev / e2e builds only). |
+| Remote (SSH) | `app/src-tauri/src/remote.rs`, `agents.rs` `build_remote_launch` | The system OpenSSH client (on Windows `System32\OpenSSH`, never a Git Bash one from PATH): sessions run `ssh -t host` with a login shell, inside `tmux new-session -A` when available; files, search and git run as remote commands with quoted arguments. Commands never prompt: secrets come from askpass, anything else fails. |
+| SSH hosts | `app/src-tauri/src/ssh_hosts.rs`, `crates/erkad/src/askpass.rs`, `app/src/components/hosts-page.tsx` | Saved hosts and forward rules in `<data>/ssh/hosts.json`, rendered into `<data>/ssh/config` (one `Host` per saved host, then `Match all` + `Include` of the user's config) that every Erka `ssh` / `scp` reads with `-F`. Passwords and key passphrases live in the OS keyring (service `Erka (<endpoint>)`); ssh gets them through `SSH_ASKPASS=erkad` + `SSH_ASKPASS_REQUIRE=force` + `ERKA_ASKPASS=<host id>` — `erkad` answers password / passphrase prompts and declines host-key questions, which the page settles with `ssh-keyscan` fingerprints first. Connecting to a host opens a remote project on it. Port forwards are `ssh -N` children of the app (stopped with it; auto-start rules restart on launch); transfers are `scp -r -p` (SFTP). Keys, agent and known hosts go through `ssh-keygen` / `ssh-add` and the known_hosts file. `ERKA_SSH_DIR` replaces `~/.ssh` for the tests. |
+| Phone server | `crates/erkad/src/mobile.rs`, `crates/erkad/mobile/` | axum on a chosen address (default port 4817), optional rustls (ring). Pairing: a one-time code shown as a QR (2 min) and approved in the app; device tokens are stored as SHA-256 and compared in constant time; Origin checks, CSP, rate limits; revoking closes the device's sockets. |
+| Plugins | `app/src-tauri/src/plugins.rs`, `lib/plugins.ts` | Declarative manifests (see [plugins.md](plugins.md)); approval bound to the manifest SHA-256; agents are sent to the daemon (`agent.set_custom`, kept in `custom-agents.json`). |
+| Voice | `crates/erka-stt`, `app/src-tauri/src/voice.rs`, `lib/voice.ts` | A separate helper process: sherpa-onnx (static, offline) with a Vietnamese zipformer or Whisper; `cpal` microphone capture mixed to mono; JSON lines over stdin/stdout; models downloaded on request and verified by pinned SHA-256. Kept out of the app and daemon so the native engine can never take them down. |
+| Language | `app/src/lib/i18n.ts`, `app/src/locales/vi/*.json` | `t("English text")` looks the text up in the Vietnamese dictionaries (English is the key and the fallback); reactive on the language setting; dates through `Intl`. `pnpm i18n:check` reports missing translations. |
 
 ## Measured (Windows 10, see `plans/reports/`)
 

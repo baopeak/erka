@@ -1,7 +1,8 @@
 // Terminal, Appearance and Notifications sections.
+import { t } from "../../lib/i18n";
 import { For } from "solid-js";
 import { store } from "../../lib/store";
-import { TERMINAL_THEMES } from "../../lib/terminal-themes";
+import { terminalThemes } from "../../lib/terminal-themes";
 import { applySettings, Choice, SettingRow, Toggle } from "./setting-row";
 
 const s = () => store.state.settings;
@@ -14,31 +15,34 @@ export function TerminalSettings() {
       </SettingRow>
       <SettingRow id="font-size">
         <div class="inline-fields">
-          <input class="text-input" type="number" min="8" max="28" value={s().fontSize} title="Font size" onChange={(e) => applySettings({ fontSize: +e.currentTarget.value || 13 })} />
-          <input class="text-input" type="number" step="0.05" min="1" max="2" value={s().lineHeight} title="Line height" onChange={(e) => applySettings({ lineHeight: +e.currentTarget.value || 1.2 })} />
+          <input class="text-input" type="number" min="8" max="28" value={s().fontSize} title={t("Font size")} onChange={(e) => applySettings({ fontSize: +e.currentTarget.value || 13 })} />
+          <input class="text-input" type="number" step="0.05" min="1" max="2" value={s().lineHeight} title={t("Line height")} onChange={(e) => applySettings({ lineHeight: +e.currentTarget.value || 1.2 })} />
         </div>
       </SettingRow>
       <SettingRow id="scrollback">
         <input class="text-input" type="number" min="500" max="100000" step="500" value={s().scrollback} onChange={(e) => applySettings({ scrollback: +e.currentTarget.value || 5000 })} />
       </SettingRow>
       <SettingRow id="renderer">
-        <Choice value={s().webgl ? "gpu" : "dom"} options={[["gpu", "WebGL (GPU)"], ["dom", "DOM"]]} onChange={(v) => applySettings({ webgl: v === "gpu" })} />
+        <Choice value={s().webgl ? "gpu" : "dom"} options={[["gpu", t("WebGL (GPU)")], ["dom", t("DOM")]]} onChange={(v) => applySettings({ webgl: v === "gpu" })} />
       </SettingRow>
       <SettingRow id="cursor-blink">
         <Toggle on={s().cursorBlink} onChange={(on) => applySettings({ cursorBlink: on })} />
       </SettingRow>
       <SettingRow id="shell">
-        <input class="text-input" placeholder="(system default)" value={s().shellArgs.join(" ")}
+        <input class="text-input" placeholder={t("(system default)")} value={s().shellArgs.join(" ")}
           onChange={(e) => applySettings({ shellArgs: e.currentTarget.value.trim() ? e.currentTarget.value.trim().split(/\s+/) : [] })} />
       </SettingRow>
       <SettingRow id="terminal-theme">
         <select class="text-input" value={s().terminalTheme ?? "default"} onChange={(e) => applySettings({ terminalTheme: e.currentTarget.value })}>
-          <option value="default">Default (follows the app theme)</option>
-          <For each={TERMINAL_THEMES}>{(t) => <option value={t.id}>{t.label}</option>}</For>
+          <option value="default">{t("Default (follows the app theme)")}</option>
+          <For each={terminalThemes()}>{(th) => <option value={th.id}>{th.label}</option>}</For>
         </select>
       </SettingRow>
       <SettingRow id="floating-terminal">
         <Toggle on={s().floatingTerminal} onChange={(on) => { store.setSettings({ floatingTerminal: on }); if (!on) store.toggleFloating(false); }} />
+      </SettingRow>
+      <SettingRow id="localhost-browser">
+        <Toggle on={s().localhostInBrowser !== false} onChange={(on) => store.setSettings({ localhostInBrowser: on })} />
       </SettingRow>
     </>
   );
@@ -47,11 +51,15 @@ export function TerminalSettings() {
 export function AppearanceSettings() {
   return (
     <>
+      <SettingRow id="language">
+        {/* Each language is named in itself. */}
+        <Choice value={s().language ?? "system"} options={[["system", t("System")], ["en", "English"], ["vi", "Tiếng Việt"]]} onChange={(v) => store.setSettings({ language: v })} />
+      </SettingRow>
       <SettingRow id="theme">
-        <Choice value={s().theme} options={[["dark", "Dark"], ["light", "Light"]]} onChange={(v) => applySettings({ theme: v })} />
+        <Choice value={s().theme} options={[["dark", t("Dark")], ["light", t("Light")]]} onChange={(v) => applySettings({ theme: v })} />
       </SettingRow>
       <SettingRow id="density">
-        <Choice value={s().density} options={[["comfortable", "Comfortable"], ["compact", "Compact"]]} onChange={(v) => store.setSettings({ density: v })} />
+        <Choice value={s().density} options={[["comfortable", t("Comfortable")], ["compact", t("Compact")]]} onChange={(v) => store.setSettings({ density: v })} />
       </SettingRow>
       <SettingRow id="ui-scale">
         <Choice value={s().uiScale} options={[[0.9, "90%"], [1, "100%"], [1.1, "110%"], [1.2, "120%"]]} onChange={(v) => store.setSettings({ uiScale: v })} />
@@ -78,7 +86,7 @@ export function NotificationSettings() {
       <SettingRow id="tips">
         <div class="inline-fields">
           <Toggle on={s().tips} onChange={(on) => store.setSettings({ tips: on })} />
-          <button class="btn" disabled={!s().tipsSeen.length} onClick={() => store.setSettings({ tips: true, tipsSeen: [] })}>Show tips again</button>
+          <button class="btn" disabled={!s().tipsSeen.length} onClick={() => store.setSettings({ tips: true, tipsSeen: [] })}>{t("Show tips again")}</button>
         </div>
       </SettingRow>
     </>

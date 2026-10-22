@@ -16,6 +16,9 @@ pub fn err<E: std::fmt::Display>(e: E) -> String {
 
 /// Lexically normalises `path` and requires it to stay inside `root`.
 pub fn guard(root: &str, path: &str) -> CmdResult<PathBuf> {
+    if crate::remote::is_remote(root) {
+        return crate::remote::guard(root, path);
+    }
     let root = normalize(Path::new(root));
     let full = normalize(&root.join(path));
     if !full.starts_with(&root) {
@@ -95,6 +98,9 @@ pub async fn blocking<T: Send + 'static>(f: impl FnOnce() -> CmdResult<T> + Send
 /// Whether `path` is an existing folder (no listing, so a large folder costs nothing).
 #[tauri::command]
 pub async fn fs_is_dir(path: String) -> CmdResult<bool> {
+    if crate::remote::is_remote(&path) {
+        return Ok(crate::remote::parse_root(&path).is_some());
+    }
     crate::fs_ops::blocking(move || Ok(fs_is_dir_blocking(path))).await
 }
 
@@ -106,6 +112,9 @@ fn fs_is_dir_blocking(path: String) -> bool {
 /// comparing paths that may be spelled differently; the input when it does not exist.
 #[tauri::command]
 pub async fn fs_canonical(path: String) -> CmdResult<String> {
+    if crate::remote::is_remote(&path) {
+        return Ok(path);
+    }
     crate::fs_ops::blocking(move || Ok(fs_canonical_blocking(path))).await
 }
 
@@ -122,6 +131,14 @@ fn fs_canonical_blocking(path: String) -> String {
 /// Async + blocking pool: listing a huge folder must never stall the UI thread.
 #[tauri::command]
 pub async fn fs_list_dir(root: String, path: String) -> CmdResult<Vec<DirEntry>> {
+    if crate::remote::is_remote(&root) {
+        let base = path.trim_matches(['/', '\\']).to_string();
+        return Ok(crate::remote::list_dir(&root, &path)
+            .await?
+            .into_iter()
+            .map(|(name, is_dir, is_symlink, size)| DirEntry { path: if base.is_empty() { name.clone() } else { format!("{base}/{name}") }, name, is_dir, is_symlink, size, ignored: false })
+            .collect());
+    }
     tauri::async_runtime::spawn_blocking(move || list_dir(&root, &path)).await.map_err(err)?
 }
 
@@ -180,6 +197,11 @@ fn mtime_of(meta: &std::fs::Metadata) -> u64 {
 /// Reads up to `max_bytes`. `as_base64` is for image viewers.
 #[tauri::command]
 pub async fn fs_read_file(root: String, path: String, max_bytes: Option<u64>, as_base64: Option<bool>) -> CmdResult<FileContent> {
+    if crate::remote::is_remote(&root) {
+        let limit = max_bytes.unwrap_or(8 << 20);
+        let (buf, size, mtime_s) = crate::remote::read_file(&root, &path, limit).await?;
+        return Ok(file_content(buf, size, mtime_s * 1000, size > limit, as_base64.unwrap_or(false)));
+    }
     crate::fs_ops::blocking(move || fs_read_file_blocking(root, path, max_bytes, as_base64)).await
 }
 
@@ -190,16 +212,13 @@ fn fs_read_file_blocking(root: String, path: String, max_bytes: Option<u64>, as_
     let limit = max_bytes.unwrap_or(8 << 20);
     let mut buf = Vec::with_capacity(meta.len().min(limit) as usize);
     std::fs::File::open(&full).map_err(err)?.take(limit).read_to_end(&mut buf).map_err(err)?;
-    let truncated = meta.len() > limit;
-    if as_base64.unwrap_or(false) {
-        return Ok(FileContent {
-            text: None,
-            base64: Some(base64::engine::general_purpose::STANDARD.encode(&buf)),
-            size: meta.len(),
-            mtime: mtime_of(&meta),
-            truncated,
-            binary: true,
-        });
+    Ok(file_content(buf, meta.len(), mtime_of(&meta), meta.len() > limit, as_base64.unwrap_or(false)))
+}
+
+/// A file's bytes as the viewers want them: base64 (images), or text unless binary.
+fn file_content(buf: Vec<u8>, size: u64, mtime: u64, truncated: bool, as_base64: bool) -> FileContent {
+    if as_base64 {
+        return FileContent { text: None, base64: Some(base64::engine::general_purpose::STANDARD.encode(&buf)), size, mtime, truncated, binary: true };
     }
     let sniff = &buf[..buf.len().min(8192)];
     let binary = sniff.contains(&0);
@@ -211,7 +230,7 @@ fn fs_read_file_blocking(root: String, path: String, max_bytes: Option<u64>, as_
             Err(e) => String::from_utf8_lossy(e.as_bytes()).into_owned(),
         })
     };
-    Ok(FileContent { text, base64: None, size: meta.len(), mtime: mtime_of(&meta), truncated, binary })
+    FileContent { text, base64: None, size, mtime, truncated, binary }
 }
 
 #[derive(Serialize)]
@@ -224,6 +243,12 @@ pub struct WriteResult {
 
 #[tauri::command]
 pub async fn fs_write_file(root: String, path: String, content: String, expected_mtime: Option<u64>, force: Option<bool>) -> CmdResult<WriteResult> {
+    if crate::remote::is_remote(&root) {
+        // Remote mtimes are whole seconds (the viewer keeps milliseconds).
+        let expected = if force.unwrap_or(false) { None } else { expected_mtime.map(|m| m / 1000) };
+        let (ok, mtime_s) = crate::remote::write_file(&root, &path, content.into_bytes(), expected).await?;
+        return Ok(WriteResult { ok, conflict: !ok, mtime: mtime_s * 1000 });
+    }
     crate::fs_ops::blocking(move || fs_write_file_blocking(root, path, content, expected_mtime, force)).await
 }
 
@@ -254,6 +279,9 @@ fn fs_write_file_blocking(root: String, path: String, content: String, expected_
 
 #[tauri::command]
 pub async fn fs_create(root: String, path: String, dir: bool) -> CmdResult<()> {
+    if crate::remote::is_remote(&root) {
+        return crate::remote::create(&root, &path, dir).await;
+    }
     crate::fs_ops::blocking(move || fs_create_blocking(root, path, dir)).await
 }
 
@@ -274,6 +302,9 @@ fn fs_create_blocking(root: String, path: String, dir: bool) -> CmdResult<()> {
 
 #[tauri::command]
 pub async fn fs_rename(root: String, from: String, to: String) -> CmdResult<()> {
+    if crate::remote::is_remote(&root) {
+        return crate::remote::rename(&root, &from, &to).await;
+    }
     crate::fs_ops::blocking(move || fs_rename_blocking(root, from, to)).await
 }
 
@@ -288,6 +319,9 @@ fn fs_rename_blocking(root: String, from: String, to: String) -> CmdResult<()> {
 /// Moves to the OS trash (recoverable) rather than deleting.
 #[tauri::command]
 pub async fn fs_delete(root: String, path: String) -> CmdResult<()> {
+    if crate::remote::is_remote(&root) {
+        return crate::remote::delete(&root, &path).await;
+    }
     crate::fs_ops::blocking(move || fs_delete_blocking(root, path)).await
 }
 
@@ -302,6 +336,9 @@ fn fs_delete_blocking(root: String, path: String) -> CmdResult<()> {
 /// Shows the item in Explorer / Finder.
 #[tauri::command]
 pub async fn fs_reveal(root: String, path: String) -> CmdResult<()> {
+    if crate::remote::is_remote(&root) {
+        return Err("files of a remote project are on the remote host".into());
+    }
     crate::fs_ops::blocking(move || fs_reveal_blocking(root, path)).await
 }
 

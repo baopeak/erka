@@ -67,13 +67,13 @@ pub const PRESETS: &[Preset] = &[
     Preset { resume_latest: &["--continue"], prompt: PromptMode::Flag("--prompt"), ..preset("opencode", "OpenCode", "opencode") },
     Preset { yolo: &["--yolo"], resume_latest: &["--continue"], prompt: PromptMode::Flag("-i"), ..preset("copilot", "GitHub Copilot", "copilot") },
     Preset { yolo: &["--permission-mode", "bypassPermissions"], prompt: PromptMode::Argv, ..preset("grok", "Grok", "grok") },
-    Preset { yolo: &["--approval-mode", "yolo"], ..preset("qwen", "Qwen Code", "qwen") },
+    Preset { yolo: &["--approval-mode", "yolo"], resume_latest: &["--continue"], ..preset("qwen", "Qwen Code", "qwen") },
     Preset { yolo: &["--auto", "high"], prompt: PromptMode::Argv, ..preset("droid", "Droid", "droid") },
     Preset { yolo: &["--yes-always"], resume_latest: &["--restore-chat-history"], ..preset("aider", "Aider", "aider") },
     Preset { yolo: &["--dangerously-allow-all"], ..preset("amp", "Amp", "amp") },
-    preset("goose", "Goose", "goose"),
-    Preset { yolo: &["--yolo"], ..preset("kimi", "Kimi", "kimi") },
-    Preset { yolo: &["--yolo"], ..preset("crush", "Crush", "crush") },
+    Preset { launch: &["session"], resume_latest: &["-r"], ..preset("goose", "Goose", "goose") },
+    Preset { yolo: &["--yolo"], resume_latest: &["-C"], ..preset("kimi", "Kimi", "kimi") },
+    Preset { yolo: &["--yolo"], resume_latest: &["-C"], ..preset("crush", "Crush", "crush") },
     Preset { yolo: &["--auto-approve", "true"], ..preset("cline", "Cline", "cline") },
     Preset { launch: &["chat", "--tui"], yolo: &["--trust-all-tools"], ..preset("kiro", "Kiro", "kiro-cli") },
     Preset { yolo: &["--allow", "*"], ..preset("continue", "Continue", "cn") },
@@ -81,27 +81,81 @@ pub const PRESETS: &[Preset] = &[
     preset("auggie", "Auggie", "auggie"),
     Preset { yolo: &["--dangerously-skip-permissions"], prompt: PromptMode::Argv, ..preset("codebuddy", "CodeBuddy", "codebuddy") },
     Preset { yolo: &["--agent", "auto-approve"], ..preset("vibe", "Mistral Vibe", "vibe") },
-    Preset { prompt: PromptMode::Argv, ..preset("pi", "Pi", "pi") },
+    Preset { resume_latest: &["--continue"], prompt: PromptMode::Argv, ..preset("pi", "Pi", "pi") },
 ];
 
 pub fn preset_for(kind: &str) -> Option<&'static Preset> {
-    PRESETS.iter().find(|p| p.id == kind)
+    PRESETS.iter().find(|p| p.id == kind).or_else(|| CUSTOM.read().iter().copied().find(|p| p.id == kind))
+}
+
+/// Agents added by plugins (`agent.set_custom`), kept with the built-in presets so launching,
+/// resuming and the installed check treat them the same. Each set leaks a few small strings —
+/// it happens when plugins change, not per session.
+static CUSTOM: parking_lot::RwLock<Vec<&'static Preset>> = parking_lot::RwLock::new(Vec::new());
+
+/// A plugin's agent, as the app sends it.
+#[derive(serde::Deserialize, serde::Serialize, Clone, Debug, PartialEq)]
+pub struct AgentDef {
+    pub id: String,
+    pub label: String,
+    pub bin: String,
+    #[serde(default)]
+    pub launch: Vec<String>,
+    #[serde(default)]
+    pub yolo: Vec<String>,
+    #[serde(default)]
+    pub resume_latest: Vec<String>,
+    /// "argv" | "typed" | "flag:<flag>"
+    #[serde(default)]
+    pub prompt: String,
+}
+
+fn leak(s: &str) -> &'static str {
+    Box::leak(s.to_string().into_boxed_str())
+}
+
+fn leak_all(v: &[String]) -> &'static [&'static str] {
+    Box::leak(v.iter().map(|s| leak(s)).collect::<Vec<_>>().into_boxed_slice())
+}
+
+/// Replaces the plugin agents. Ids must be new (not a built-in) and plain.
+pub fn set_custom(defs: &[AgentDef]) -> Result<()> {
+    let mut out = Vec::new();
+    for d in defs {
+        anyhow::ensure!(!d.id.is_empty() && d.id.len() <= 48 && d.id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'), "invalid agent id {:?}", d.id);
+        anyhow::ensure!(!PRESETS.iter().any(|p| p.id == d.id) && !matches!(d.id.as_str(), "shell" | "custom"), "agent id {} is taken", d.id);
+        anyhow::ensure!(!d.bin.trim().is_empty() && !d.bin.starts_with('-'), "agent {} needs a program", d.id);
+        let prompt = match d.prompt.as_str() {
+            "argv" => PromptMode::Argv,
+            p if p.starts_with("flag:") && p.len() > 5 => PromptMode::Flag(leak(&p[5..])),
+            _ => PromptMode::Typed,
+        };
+        out.push(&*Box::leak(Box::new(Preset { id: leak(&d.id), label: leak(&d.label), bin: leak(&d.bin), launch: leak_all(&d.launch), yolo: leak_all(&d.yolo), resume_latest: leak_all(&d.resume_latest), prompt })));
+    }
+    *CUSTOM.write() = out;
+    Ok(())
+}
+
+/// All presets, built-in then plugin ones.
+pub fn all_presets() -> Vec<&'static Preset> {
+    PRESETS.iter().chain(CUSTOM.read().iter().copied()).collect()
 }
 
 /// Which preset agents are installed (on PATH; through the login shell on Unix).
 pub fn installed_presets() -> Vec<&'static str> {
     #[cfg(windows)]
     {
-        PRESETS.iter().filter(|p| which(p.bin).is_some()).map(|p| p.id).collect()
+        all_presets().into_iter().filter(|p| which(p.bin).is_some()).map(|p| p.id).collect()
     }
     #[cfg(unix)]
     {
-        let bins: Vec<&str> = PRESETS.iter().map(|p| p.bin).collect();
+        let presets = all_presets();
+        let bins: Vec<&str> = presets.iter().map(|p| p.bin).filter(|b| b.chars().all(|c| c.is_ascii_alphanumeric() || "-_./".contains(c))).collect();
         let script = format!("for b in {}; do command -v \"$b\" >/dev/null 2>&1 && echo \"$b\"; done", bins.join(" "));
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
         let found = std::process::Command::new(shell).args(["-l", "-c", &script]).output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
         let found: Vec<&str> = found.lines().collect();
-        PRESETS.iter().filter(|p| found.contains(&p.bin)).map(|p| p.id).collect()
+        presets.into_iter().filter(|p| found.contains(&p.bin)).map(|p| p.id).collect()
     }
 }
 
@@ -117,6 +171,100 @@ pub fn default_shell() -> Vec<String> {
     } else {
         vec![std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into()), "-l".into()]
     }
+}
+
+/// Whether Claude Code has saved conversation `id`: a `<id>.jsonl` under `projects/` of the
+/// session's config home (`CLAUDE_CONFIG_DIR` from its environment, else the default).
+pub fn claude_conversation_saved(id: &str, env: &std::collections::BTreeMap<String, String>) -> bool {
+    if id.is_empty() || id.contains(['/', '\\', '.']) {
+        return false;
+    }
+    let home = env
+        .get("CLAUDE_CONFIG_DIR")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("CLAUDE_CONFIG_DIR").map(PathBuf::from))
+        .or_else(|| dirs::home_dir().map(|h| h.join(".claude")));
+    let Some(projects) = home.map(|h| h.join("projects")) else { return false };
+    let file = format!("{id}.jsonl");
+    std::fs::read_dir(projects).into_iter().flatten().filter_map(|e| e.ok()).any(|d| d.path().join(&file).is_file())
+}
+
+/// POSIX shell single quoting.
+fn sh_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', r"'\''"))
+}
+
+/// A session on another machine: `ssh -t` running the program there in the remote folder,
+/// through the user's login shell (so PATH has their tools), inside tmux when asked and
+/// available (`tmux new-session -A` re-attaches when that session still runs). Agents get no
+/// hook settings (hooks would call a local executable) and report status by output only.
+pub fn build_remote_launch(kind: &str, user_args: &[String], resume: Resume, prompt: Option<&str>, remote: &crate::session::RemoteSpec, cwd: &str, session_id: &str) -> Result<Launch> {
+    anyhow::ensure!(!remote.dest.is_empty() && !remote.dest.starts_with('-'), "invalid ssh destination");
+    let startup = || prompt.filter(|t| !t.trim().is_empty()).map(|t| TypedPrompt { text: t.to_string(), paste: false });
+    let mut typed_prompt = None;
+    let program: Option<Vec<String>> = match kind {
+        "shell" => (!user_args.is_empty()).then(|| user_args.to_vec()),
+        "custom" => {
+            anyhow::ensure!(!user_args.is_empty(), "custom session needs a command");
+            Some(user_args.to_vec())
+        }
+        other => {
+            let p = preset_for(other).ok_or_else(|| anyhow::anyhow!("unknown session kind {other}"))?;
+            let mut argv: Vec<String> = std::iter::once(p.bin).chain(p.launch.iter().copied()).map(str::to_string).collect();
+            match resume {
+                Resume::Id(id) if other == "codex" => argv.extend(["resume".to_string(), id.to_string()]),
+                Resume::Id(id) => argv.extend(["--resume".to_string(), id.to_string()]),
+                Resume::Latest => argv.extend(p.resume_latest.iter().map(|a| a.to_string())),
+                Resume::None => {}
+            }
+            argv.extend(user_args.iter().cloned());
+            if let Some(text) = prompt.filter(|t| !t.trim().is_empty() && resume == Resume::None) {
+                match p.prompt {
+                    PromptMode::Argv if text.len() <= 8000 && !text.starts_with('-') => argv.push(text.to_string()),
+                    PromptMode::Flag(flag) if text.len() <= 8000 => argv.extend([flag.to_string(), text.to_string()]),
+                    _ => typed_prompt = Some(TypedPrompt { text: text.to_string(), paste: true }),
+                }
+            }
+            Some(argv)
+        }
+    };
+    if matches!(kind, "shell" | "custom") {
+        typed_prompt = startup();
+    }
+    let run = match &program {
+        Some(argv) => argv.iter().map(|a| sh_quote(a)).collect::<Vec<_>>().join(" "),
+        None => r#""${SHELL:-/bin/sh}" -l"#.to_string(),
+    };
+    let dir = sh_quote(cwd);
+    let direct = format!("cd {dir} && exec {run}");
+    let body = if remote.tmux {
+        let name: String = format!("erka-{}", session_id.chars().filter(|c| c.is_ascii_alphanumeric()).take(12).collect::<String>());
+        format!("if command -v tmux >/dev/null 2>&1; then exec tmux new-session -A -s {} -c {dir} {}; else {direct}; fi", sh_quote(&name), sh_quote(&run))
+    } else {
+        direct
+    };
+    let mut argv = vec![system_ssh(), "-t".into()];
+    if let Some(c) = remote.config.as_deref().filter(|c| !c.is_empty()) {
+        argv.extend(["-F".to_string(), c.to_string()]);
+    }
+    if let Some(port) = remote.port {
+        argv.extend(["-p".to_string(), port.to_string()]);
+    }
+    argv.extend(["-o", "ServerAliveInterval=30", "-o", "ServerAliveCountMax=4"].map(str::to_string));
+    argv.extend([remote.dest.clone(), "--".into(), format!(r#"exec "${{SHELL:-/bin/sh}}" -lc {}"#, sh_quote(&body))]);
+    Ok(Launch { argv: wrap_for_platform(argv)?, typed_prompt })
+}
+
+/// Windows' own OpenSSH client when present (as the app uses): one from Git Bash earlier on PATH
+/// cannot reach the Windows ssh-agent service, so agent forwarding would silently not work.
+fn system_ssh() -> String {
+    if cfg!(windows) {
+        let p = std::path::PathBuf::from(std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into())).join("System32").join("OpenSSH").join("ssh.exe");
+        if p.is_file() {
+            return p.to_string_lossy().into_owned();
+        }
+    }
+    "ssh".into()
 }
 
 /// What to resume when (re)starting an agent.
@@ -381,5 +529,85 @@ mod tests {
     #[test]
     fn default_shell_is_not_empty() {
         assert!(!default_shell().is_empty());
+    }
+}
+
+#[cfg(test)]
+mod conversation_tests {
+    use super::*;
+
+    #[test]
+    fn claude_conversation_saved_looks_in_the_sessions_config_home() {
+        let home = std::env::temp_dir().join(format!("erka-claude-home-{}", std::process::id()));
+        std::fs::create_dir_all(home.join("projects").join("C--some-project")).unwrap();
+        std::fs::write(home.join("projects").join("C--some-project").join("abc-123.jsonl"), "{}\n").unwrap();
+        let env: std::collections::BTreeMap<String, String> = [("CLAUDE_CONFIG_DIR".to_string(), home.to_string_lossy().into_owned())].into();
+        assert!(claude_conversation_saved("abc-123", &env));
+        assert!(!claude_conversation_saved("never-saved", &env));
+        assert!(!claude_conversation_saved("../abc-123", &env));
+        std::fs::remove_dir_all(&home).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod remote_tests {
+    use super::*;
+    use crate::session::RemoteSpec;
+
+    fn remote(tmux: bool) -> RemoteSpec {
+        RemoteSpec { dest: "me@box".into(), port: Some(2222), config: None, tmux }
+    }
+
+    #[test]
+    fn remote_shell_and_agent_commands() {
+        let l = build_remote_launch("shell", &[], Resume::None, None, &remote(false), "/srv/my app", "abc").unwrap();
+        let j = l.argv.join(" ");
+        assert!(j.contains("-t") && j.contains("-p 2222") && j.contains("me@box --"), "{j}");
+        assert!(j.ends_with(r#"exec "${SHELL:-/bin/sh}" -lc 'cd '\''/srv/my app'\'' && exec "${SHELL:-/bin/sh}" -l'"#), "{j}");
+        let l = build_remote_launch("claude", &["--model".into(), "haiku".into()], Resume::Latest, None, &remote(false), "/srv/x", "abc").unwrap();
+        let j = l.argv.join(" ");
+        assert!(j.contains("exec '\\''claude'\\'' '\\''--continue'\\'' '\\''--model'\\'' '\\''haiku'\\''"), "{j}");
+        assert!(!j.contains("--settings"), "no local hook settings on a remote host: {j}");
+    }
+
+    #[test]
+    fn remote_tmux_reattaches_by_session() {
+        let l = build_remote_launch("claude", &[], Resume::None, Some("fix it"), &remote(true), "/srv/x", "1234-5678-abcd").unwrap();
+        let j = l.argv.join(" ");
+        assert!(j.contains("tmux new-session -A -s"), "{j}");
+        assert!(j.contains("erka-12345678abcd"), "{j}");
+        assert!(j.contains("command -v tmux"), "{j}");
+        assert!(j.contains("fix it"), "{j}");
+    }
+
+    #[test]
+    fn remote_rejects_option_like_destinations() {
+        let r = RemoteSpec { dest: "-oProxyCommand=calc".into(), ..Default::default() };
+        assert!(build_remote_launch("shell", &[], Resume::None, None, &r, "/", "a").is_err());
+    }
+}
+
+#[cfg(test)]
+mod custom_tests {
+    use super::*;
+
+    #[test]
+    fn plugin_agents_launch_and_resume_like_presets() {
+        // A program that exists everywhere (Windows resolves the binary on PATH at launch).
+        let bin = if cfg!(windows) { "cmd" } else { "sh" };
+        let def = AgentDef { id: "acme-bot".into(), label: "Acme Bot".into(), bin: bin.into(), launch: vec!["chat".into()], yolo: vec!["--yes".into()], resume_latest: vec!["--continue".into()], prompt: "flag:--ask".into() };
+        set_custom(&[def.clone()]).unwrap();
+        let p = preset_for("acme-bot").unwrap();
+        assert_eq!((p.bin, p.launch, p.resume_latest), (bin, &["chat"][..], &["--continue"][..]));
+        let dir = std::env::temp_dir();
+        let l = build_launch("acme-bot", &[], Resume::None, Some("do it"), Path::new("erkad"), &dir).unwrap();
+        let j = l.argv.join(" ");
+        assert!(j.contains("chat --ask do it"), "{j}");
+        let l = build_launch("acme-bot", &[], Resume::Latest, None, Path::new("erkad"), &dir).unwrap();
+        assert!(l.argv.join(" ").contains("chat --continue"));
+        assert!(set_custom(&[AgentDef { id: "claude".into(), ..def.clone() }]).is_err(), "built-in ids are taken");
+        assert!(set_custom(&[AgentDef { id: "a b".into(), ..def }]).is_err());
+        set_custom(&[]).unwrap();
+        assert!(preset_for("acme-bot").is_none());
     }
 }

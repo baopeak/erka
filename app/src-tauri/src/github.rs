@@ -60,11 +60,27 @@ fn checks_state(rollup: Option<&Value>) -> &'static str {
     if pending { "pending" } else { "passing" }
 }
 
+/// For a remote project (no local checkout for `gh` to look at): the GitHub repository of its
+/// `origin` (`owner/name`) and its current branch, so `gh` can be pointed at them (`-R`).
+async fn remote_repo(root: &str) -> CmdResult<Option<(String, String)>> {
+    let Some(r) = crate::remote::parse_root(root) else { return Ok(None) };
+    let out = crate::remote::exec_ok(&r, &format!("cd {} && git remote get-url origin && git rev-parse --abbrev-ref HEAD", crate::remote::q(&r.path))).await?;
+    let mut lines = out.lines();
+    let (Some(url), Some(branch)) = (lines.next(), lines.next()) else { return Ok(None) };
+    Ok(crate::integrations::parse_remote(url).filter(|(host, _)| host == "github.com").map(|(_, slug)| (slug, branch.trim().to_string())))
+}
+
 /// The pull request for the checked-out branch; `None` when there is none (or no GitHub remote).
 #[tauri::command]
 pub async fn gh_pr_status(root: String) -> CmdResult<Option<PullRequest>> {
     let dir = guard(&root, "")?;
-    let (ok, out, err) = gh(&dir, &["pr", "view", "--json", "number,title,url,state,isDraft,baseRefName,statusCheckRollup"]).await?;
+    const FIELDS: &str = "number,title,url,state,isDraft,baseRefName,statusCheckRollup";
+    let (ok, out, err) = if crate::remote::is_remote(&root) {
+        let Some((slug, branch)) = remote_repo(&root).await? else { return Ok(None) };
+        gh(Path::new("."), &["pr", "view", &branch, "-R", &slug, "--json", FIELDS]).await?
+    } else {
+        gh(&dir, &["pr", "view", "--json", FIELDS]).await?
+    };
     if !ok {
         // "no pull requests found" / not a GitHub repo: not an error for a status chip.
         if err.contains("no pull requests found") || err.contains("not a git repository") || err.contains("none of the git remotes") || err.contains("no git remotes") {
@@ -88,7 +104,12 @@ pub async fn gh_pr_status(root: String) -> CmdResult<Option<PullRequest>> {
 #[tauri::command]
 pub async fn gh_default_branch(root: String) -> CmdResult<Option<String>> {
     let dir = guard(&root, "")?;
-    let (ok, out, _) = gh(&dir, &["repo", "view", "--json", "defaultBranchRef", "-q", ".defaultBranchRef.name"]).await?;
+    let (ok, out, _) = if crate::remote::is_remote(&root) {
+        let Some((slug, _)) = remote_repo(&root).await? else { return Ok(None) };
+        gh(Path::new("."), &["repo", "view", &slug, "--json", "defaultBranchRef", "-q", ".defaultBranchRef.name"]).await?
+    } else {
+        gh(&dir, &["repo", "view", "--json", "defaultBranchRef", "-q", ".defaultBranchRef.name"]).await?
+    };
     Ok(ok.then(|| out.trim().to_string()).filter(|b| !b.is_empty()))
 }
 
@@ -109,7 +130,11 @@ pub async fn gh_pr_create(root: String, title: String, body: String, base: Strin
     if draft {
         args.push("--draft");
     }
-    let (ok, out, err) = gh(&dir, &args).await?;
+    let remote = if crate::remote::is_remote(&root) { remote_repo(&root).await?.ok_or("this remote project's origin is not on GitHub")? } else { Default::default() };
+    if crate::remote::is_remote(&root) {
+        args.extend(["-R", remote.0.as_str(), "--head", remote.1.as_str()]);
+    }
+    let (ok, out, err) = gh(if crate::remote::is_remote(&root) { Path::new(".") } else { &dir }, &args).await?;
     if !ok {
         return Err(err);
     }

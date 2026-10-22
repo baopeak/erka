@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="8 8 104 104" role="img" aria-label="Kelpie">
+<title>Kelpie</title>
+<rect x="8" y="8" width="104" height="104" rx="26" fill="#141823"/>
+<g transform="translate(-2 9) scale(0.62)">
+<path d="M64 70 L58 22 Q58 16 64 20 L92 52 Z" fill="#E8743B"/>
+<path d="M68 62 L64 32 L86 52 Z" fill="#FFC9A8"/>
+<path d="M136 70 L142 22 Q142 16 136 20 L108 52 Z" fill="#E8743B"/>
+<path d="M132 62 L136 32 L114 52 Z" fill="#FFC9A8"/>
+<ellipse cx="100" cy="90" rx="42" ry="36" fill="#E8743B"/>
+<ellipse cx="84" cy="74" rx="6" ry="3.5" fill="#F6A971"/>
+<ellipse cx="116" cy="74" rx="6" ry="3.5" fill="#F6A971"/>
+<ellipse cx="100" cy="106" rx="22" ry="14" fill="#FFF1E2"/>
+<ellipse cx="74" cy="100" rx="7" ry="4" fill="#FF6F8E" opacity="0.4"/>
+<ellipse cx="126" cy="100" rx="7" ry="4" fill="#FF6F8E" opacity="0.4"/>
+<ellipse cx="84" cy="88" rx="6" ry="7" fill="#141823"/>
+<ellipse cx="116" cy="88" rx="6" ry="7" fill="#141823"/>
+<circle cx="86" cy="85.5" r="2.2" fill="#FFFFFF"/>
+<circle cx="118" cy="85.5" r="2.2" fill="#FFFFFF"/>
+<path d="M94 99 Q100 95 106 99 Q103 105 100 105 Q97 105 94 99 Z" fill="#141823"/>
+<path d="M100 105 V109 M100 109 Q95 114 90 111 M100 109 Q105 114 110 111" fill="none" stroke="#141823" stroke-width="2.5" stroke-linecap="round"/>
+</g>
+<path d="M8 80 H112 V86 A26 26 0 0 1 86 112 H34 A26 26 0 0 1 8 86 Z" fill="#2A3142"/>
+<path d="M26 92 L33 97 L26 102" fill="none" stroke="#E8743B" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="37" y="100" width="11" height="3.5" rx="1.75" fill="#18A999"/>
+<g transform="translate(-2 9) scale(0.62)">
+<ellipse cx="72" cy="120" rx="13" ry="8" fill="#F6A971"/>
+<ellipse cx="128" cy="120" rx="13" ry="8" fill="#F6A971"/>
+</g>
+</svg>

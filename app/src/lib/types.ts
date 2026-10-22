@@ -27,6 +27,10 @@ export interface SessionInfo {
   chat: boolean;
   /** Wall-clock ms of the last output/input (0 = never). */
   last_activity: number;
+  /** Was running when the daemon stopped (reboot, update, crash); not restarted since. */
+  interrupted: boolean;
+  /** Runs on another machine over SSH. */
+  remote?: { dest: string; port?: number; config?: string; tmux: boolean } | null;
 }
 
 export type WorkStatus = "todo" | "progress" | "review" | "done";
@@ -42,6 +46,8 @@ export interface Project {
   /** Workspace board column (default todo) and pin. */
   status?: WorkStatus;
   pinned?: boolean;
+  /** A folder on another machine, reached over SSH (`path` is then its `ssh://` root). */
+  remote?: { dest: string; port?: number; path: string; tmux: boolean; agents?: string[] };
 }
 
 export interface Worktree {
@@ -53,7 +59,7 @@ export interface Worktree {
   prunable: boolean;
 }
 
-export type PaneKind = "terminal" | "chat" | "file" | "diff" | "empty";
+export type PaneKind = "terminal" | "chat" | "file" | "diff" | "browser" | "empty";
 
 export interface Pane {
   id: string;
@@ -64,6 +70,8 @@ export interface Pane {
   path?: string;
   staged?: boolean;
   line?: number;
+  /** Browser panes: the page shown. */
+  url?: string;
 }
 
 export interface LeafNode {
@@ -77,20 +85,36 @@ export interface SplitNode {
   id: string;
   /** row = side by side, col = stacked */
   dir: "row" | "col";
-  ratio: number;
-  a: LayoutNode;
-  b: LayoutNode;
+  /** Two or more, never a split of the same direction (see lib/layout.ts). */
+  children: LayoutNode[];
+  /** Share of each child, summing to 1. */
+  sizes: number[];
 }
 
 export type LayoutNode = LeafNode | SplitNode;
+
+/** A saved layout: its shape and what each pane runs (null = an empty pane). */
+export type LayoutTemplate =
+  | { type: "leaf"; kind: SessionKind | null }
+  | { type: "split"; dir: "row" | "col"; sizes: number[]; children: LayoutTemplate[] };
+
+export interface SavedLayout {
+  id: string;
+  name: string;
+  template: LayoutTemplate;
+}
 
 export interface Tab {
   id: string;
   root: LayoutNode;
   focus: string; // pane id
+  /** Keystrokes typed in one terminal of this tab go to all of its terminals. */
+  broadcast?: boolean;
+  /** Tab label set by the user (otherwise the focused pane's title). */
+  name?: string;
 }
 
-export type RightPanel = "files" | "git" | "search" | "history" | null;
+export type RightPanel = "files" | "git" | "search" | "history" | "issues" | null;
 
 export interface Workspace {
   tabs: Tab[];
@@ -155,6 +179,34 @@ export interface Settings {
   aiAgent: "claude" | "codex";
   /** Global floating terminal (not tied to a project). */
   floatingTerminal: boolean;
+  /** Layouts saved from a tab, offered in the layout menu and the launcher. */
+  layouts: SavedLayout[];
+  /** After the session daemon restarts (reboot, update, crash): resume sessions when they are
+   *  shown, all at once, or leave them stopped until you restart them. */
+  resumeSessions: "shown" | "all" | "off";
+  /** Extra Claude Code / Codex sign-ins (lib/accounts.ts). */
+  accounts: AgentAccount[];
+  /** Account new sessions use, by agent; absent = the agent's default sign-in. */
+  activeAccounts: Partial<Record<"claude" | "codex", string>>;
+  /** `ssh -F` file for remote projects (empty: ssh's default, ~/.ssh/config). */
+  sshConfig: string;
+  /** Interface language (lib/i18n.ts); "system" follows the OS. */
+  language: "system" | "en" | "vi";
+  /** Voice dictation (lib/voice.ts): speech model id, Whisper language ("auto" detects), microphone (null: the default). */
+  voice: { model: string | null; language: string; device: string | null };
+  /** Ctrl/Cmd+click on a localhost link in a terminal opens it in a browser pane. */
+  localhostInBrowser: boolean;
+  /** Issue trackers and GitLab (tokens are in the OS credential store, not here). */
+  integrations: { linear: boolean; jira: { url: string; email: string } | null; gitlabHosts: string[] };
+}
+
+/** A Claude Code or Codex sign-in kept in its own config home. */
+export interface AgentAccount {
+  id: string;
+  agent: "claude" | "codex";
+  label: string;
+  /** `CLAUDE_CONFIG_DIR` / `CODEX_HOME` for its sessions. */
+  dir: string;
 }
 
 export interface QuickCommand {
@@ -180,6 +232,8 @@ export interface HistoryItem {
   updated_at: number;
   /** null until the background count reaches this transcript. */
   turns: number | null;
+  /** Config home of the account it belongs to (null = the agent's default). */
+  home: string | null;
 }
 
 export interface UsageWindow {
@@ -247,6 +301,8 @@ export interface Automation {
   cwd: string;
   project_id: string | null;
   args: string[];
+  /** Session environment, incl. the account home (CLAUDE_CONFIG_DIR / CODEX_HOME). */
+  env?: Record<string, string>;
   every: "hourly" | "daily" | "weekdays" | "weekly";
   /** HH:MM local time (hourly: the minute). */
   time: string;
@@ -267,8 +323,9 @@ export interface RecentItem {
 }
 
 export interface AppState {
-  /** 2: projects may be worktrees (parentId/branch) with a board status. */
-  version: 2;
+  /** 2: projects may be worktrees (parentId/branch) with a board status.
+   *  3: splits have any number of children (`children` / `sizes`). */
+  version: 3;
   projects: Project[];
   activeProject: string | null;
   workspaces: Record<string, Workspace>;

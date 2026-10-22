@@ -2,6 +2,7 @@
 // hidden when it does not match the page search) and small controls.
 import { For, Show, createSignal, onMount, type JSX } from "solid-js";
 import { store } from "../../lib/store";
+import { t } from "../../lib/i18n";
 import { allViews } from "../../lib/terminal-host";
 import { catalogEntry, entryMatches } from "../../lib/settings-catalog";
 import type { Settings } from "../../lib/types";
@@ -26,8 +27,8 @@ export function SettingRow(props: { id: string; wide?: boolean; match?: (query: 
     <Show when={visible()}>
       <div ref={el} class={`setting-row${props.wide ? " wide" : ""}${target() ? " target" : ""}`} data-setting={props.id}>
         <div class="setting-text">
-          <div class="setting-label">{entry.label}</div>
-          <div class="setting-desc">{entry.description}</div>
+          <div class="setting-label">{t(entry.label)}</div>
+          <div class="setting-desc">{t(entry.description)}</div>
         </div>
         <div class="setting-control">{props.children}</div>
       </div>

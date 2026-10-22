@@ -1,0 +1,780 @@
+// Hosts page (Termius-style): saved SSH hosts with groups and tags, one-click terminals and
+// agents on a host, its files (upload / download), keys, known hosts and port forwards.
+import { For, Show, createMemo, createResource, createSignal, onCleanup, onMount } from "solid-js";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { store } from "../lib/store";
+import * as ipc from "../lib/ipc";
+import { kindInfo } from "../lib/agents";
+import type { HostCheck } from "../lib/remote";
+import {
+  CLAUDE_INSTALL, agentAdd, agentList, checkHost, connectHost, deleteKey, forwardStart, forwardStatus, forwardStop, generateKey, hasSecret, hostAddress, hostById, hostKeys,
+  hostProject, importKey, importSshConfig, installKey, isHostKeyError, knownHosts, listKeys, loadVault, newForward, newHost, removeForward, removeHost, removeKnownHosts, runOnHosts,
+  saveForward, saveHost, saveVault, setSecret, transfer, trustHost, vault, type HostKeys, type SshForward, type SshHost,
+} from "../lib/ssh-hosts";
+import { Icon } from "./icons";
+import { t, errorText } from "../lib/i18n";
+import { relTimeShort } from "../lib/platform";
+import type { DirEntry } from "../lib/types";
+
+type Tab = "hosts" | "keys" | "known" | "forwards";
+const [tab, setTab] = createSignal<Tab>("hosts");
+const [selected, setSelected] = createSignal<string | null>(null);
+
+export function openHosts(which: Tab = "hosts", hostId?: string) {
+  setTab(which);
+  if (hostId) setSelected(hostId);
+  store.setOverlay("hosts");
+}
+
+const errText = (e: unknown) => errorText(String(e));
+
+type Ask = { label: string; value: string; secret?: boolean; ok: (v: string) => void };
+
+/** One-line question shown in place (no blocking browser prompt). */
+function AskRow(props: { ask: Ask; onClose: () => void }) {
+  const [v, setV] = createSignal(props.ask.value);
+  let input!: HTMLInputElement;
+  onMount(() => input.focus());
+  const ok = () => {
+    props.onClose();
+    props.ask.ok(v());
+  };
+  return (
+    <div class="inline-fields ask-row">
+      <span class="muted-inline">{props.ask.label}</span>
+      <input ref={input} class="text-input" data-field="ask" style={{ flex: 1, width: "auto" }} type={props.ask.secret ? "password" : "text"} autocomplete="off" value={v()}
+        onInput={(e) => setV(e.currentTarget.value)} onKeyDown={(e) => { if (e.key === "Enter") ok(); if (e.key === "Escape") { e.preventDefault(); props.onClose(); } }} />
+      <button class="btn primary" data-action="ask-ok" onClick={ok}>{t("OK")}</button>
+      <button class="btn" onClick={props.onClose}>{t("Cancel")}</button>
+    </div>
+  );
+}
+
+export function HostsPage() {
+  let el!: HTMLDivElement;
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key === "Escape" && !e.defaultPrevented && document.activeElement?.closest(".hosts-page")) store.setOverlay(null);
+  };
+  onMount(() => {
+    window.addEventListener("keydown", onKey);
+    el.focus();
+    // The vault may have changed since the app started (another window, a script).
+    void loadVault().catch(() => {});
+  });
+  onCleanup(() => window.removeEventListener("keydown", onKey));
+  const tabs: [Tab, string][] = [["hosts", t("Hosts")], ["keys", t("Keychain")], ["known", t("Known hosts")], ["forwards", t("Port forwarding")]];
+  return (
+    <div class="runs-page hosts-page" ref={el} tabIndex={-1}>
+      <div class="board-head">
+        <button class="settings-back" onClick={() => store.setOverlay(null)} title={t("Back (Esc)")}><Icon name="back" size={14} /></button>
+        <h2>{t("SSH hosts")}</h2>
+        <div class="seg hosts-tabs">
+          <For each={tabs}>{([id, label]) => <button class={tab() === id ? "on" : ""} data-tab={id} onClick={() => setTab(id)}>{label}</button>}</For>
+        </div>
+        <span style={{ flex: 1 }} />
+      </div>
+      <Show when={tab() === "hosts"}><HostsTab /></Show>
+      <Show when={tab() === "keys"}><div class="hosts-single"><KeysTab /></div></Show>
+      <Show when={tab() === "known"}><div class="hosts-single"><KnownHostsTab /></div></Show>
+      <Show when={tab() === "forwards"}><div class="hosts-single"><ForwardsTab /></div></Show>
+    </div>
+  );
+}
+
+// ---------- hosts ----------
+
+function HostsTab() {
+  const [query, setQuery] = createSignal("");
+  const [editing, setEditing] = createSignal<SshHost | null>(null);
+  const [picked, setPicked] = createSignal<string[]>([]);
+  const [runText, setRunText] = createSignal("");
+  const [error, setError] = createSignal<string | null>(null);
+  const matches = (h: SshHost) => {
+    const q = query().trim().toLowerCase();
+    return !q || [h.label, h.alias, h.hostname, h.user, h.group, ...h.tags].some((x) => x.toLowerCase().includes(q));
+  };
+  /** Hosts by group ("" last), recently used first inside a group. */
+  const groups = createMemo(() => {
+    const map = new Map<string, SshHost[]>();
+    for (const h of vault().hosts.filter(matches)) map.set(h.group, [...(map.get(h.group) ?? []), h]);
+    return [...map.entries()].sort((a, b) => (a[0] === "" ? 1 : b[0] === "" ? -1 : a[0].localeCompare(b[0]))).map(([g, hs]) => [g, hs.sort((a, b) => b.lastConnected - a.lastConnected || a.label.localeCompare(b.label))] as const);
+  });
+  const current = () => hostById(selected() ?? "") ?? vault().hosts[0];
+  const importConfig = async () => {
+    setError(null);
+    try {
+      const found = (await importSshConfig()).filter((h) => !vault().hosts.some((x) => x.alias === h.alias));
+      if (!found.length) return store.notify(t("No new hosts in the SSH config"));
+      await saveVault({ ...vault(), hosts: [...vault().hosts, ...found] });
+      store.notify(found.length === 1 ? t("Imported {n} host", { n: 1 }) : t("Imported {n} hosts", { n: found.length }));
+    } catch (e) {
+      setError(errText(e));
+    }
+  };
+  const runPicked = async () => {
+    const hosts = picked().map(hostById).filter((h): h is SshHost => !!h);
+    if (!hosts.length || !runText().trim()) return;
+    store.setOverlay(null);
+    const failed = await runOnHosts(hosts, runText().trim());
+    if (failed.length) store.notify(t("Could not connect to {list}", { list: failed.join(", ") }));
+  };
+  return (
+    <div class="runs-body">
+      <div class="runs-list hosts-list">
+        <div class="inline-fields">
+          <input class="text-input" placeholder={t("Search hosts")} value={query()} onInput={(e) => setQuery(e.currentTarget.value)} />
+        </div>
+        <div class="inline-fields">
+          <button class="btn primary" data-action="new-host" onClick={() => setEditing(newHost())}><Icon name="plus" size={13} /> {t("New host")}</button>
+          <button class="btn" title={t("Add the hosts of your SSH config")} onClick={() => void importConfig()}>{t("Import")}</button>
+        </div>
+        <Show when={error()}><div class="form-note error">{error()}</div></Show>
+        <For each={groups()} fallback={<div class="muted">{t("No saved hosts yet.")}</div>}>
+          {([group, hosts]) => (
+            <>
+              <div class="section-label">{group || t("Ungrouped")}</div>
+              <For each={hosts}>
+                {(h) => (
+                  <div class={`runs-item host-item${current()?.id === h.id && !editing() ? " on" : ""}`} data-host={h.alias} onClick={() => { setSelected(h.id); setEditing(null); }}>
+                    <div class="host-item-top">
+                      <input type="checkbox" title={t("Select for running a command")} checked={picked().includes(h.id)} onClick={(e) => e.stopPropagation()}
+                        onChange={(e) => setPicked(e.currentTarget.checked ? [...picked(), h.id] : picked().filter((x) => x !== h.id))} />
+                      <span class="host-dot" style={{ background: h.color || "var(--text-faint)" }} />
+                      <span class="runs-item-name">{h.label}</span>
+                    </div>
+                    <div class="run-task-meta"><span class="mono">{hostAddress(h)}</span><For each={h.tags}>{(tag) => <span class="chip">{tag}</span>}</For></div>
+                  </div>
+                )}
+              </For>
+            </>
+          )}
+        </For>
+        <Show when={picked().length}>
+          <div class="hosts-run">
+            <div class="form-note">{t("Run a command on {n} selected host(s), one terminal each", { n: picked().length })}</div>
+            <input class="text-input mono" placeholder="uptime" value={runText()} onInput={(e) => setRunText(e.currentTarget.value)} onKeyDown={(e) => e.key === "Enter" && void runPicked()} /> {/* i18n-ignore */}
+            <div class="inline-fields">
+              <button class="btn primary" disabled={!runText().trim()} onClick={() => void runPicked()}>{t("Run")}</button>
+              <button class="btn" onClick={() => setPicked([])}>{t("Clear selection")}</button>
+            </div>
+          </div>
+        </Show>
+      </div>
+      <div class="runs-main">
+        <Show when={!editing()} fallback={<HostEditor host={editing()!} onDone={(id) => { setEditing(null); if (id) setSelected(id); }} />}>
+          {/* Keyed by id: saving the host (e.g. its last connection time) must not reset the view. */}
+          <Show when={current()?.id} keyed fallback={
+            <div class="empty"><div class="welcome">
+              <h1>{t("SSH hosts")}</h1>
+              <div style={{ color: "var(--text-dim)" }}>{t("Save your servers once, then open a terminal or start Claude Code on any of them in one click. Sessions run in tmux on the server, so they survive dropped connections.")}</div>
+              <div class="actions"><button class="btn primary" onClick={() => setEditing(newHost())}>{t("New host")}</button><button class="btn" onClick={() => void importConfig()}>{t("Import from SSH config")}</button></div>
+            </div></div>
+          }>
+            {(id) => <HostDetail host={hostById(id) ?? current()!} onEdit={() => { const h = hostById(id)!; setEditing({ ...h, env: { ...h.env }, tags: [...h.tags] }); }} />}
+          </Show>
+        </Show>
+      </div>
+    </div>
+  );
+}
+
+function HostDetail(props: { host: SshHost; onEdit: () => void }) {
+  const h = () => props.host;
+  const [check, setCheck] = createSignal<HostCheck | null>(null);
+  const [busy, setBusy] = createSignal<string | null>(null);
+  const [error, setError] = createSignal<string | null>(null);
+  const [trust, setTrust] = createSignal(false);
+  const [files, setFiles] = createSignal(false);
+  /** Runs `fn`; a host-key failure opens the fingerprint check instead of an error. */
+  const guarded = async (label: string, fn: () => Promise<unknown>) => {
+    setBusy(label);
+    setError(null);
+    try {
+      await fn();
+    } catch (e) {
+      if (isHostKeyError(e)) setTrust(true);
+      else setError(errText(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+  const probe = () => guarded("check", async () => setCheck(await checkHost(h())));
+  const open = (kind: string, prompt?: string) =>
+    guarded(kind, async () => {
+      const c = check() ?? (await checkHost(h()));
+      setCheck(c);
+      store.setOverlay(null);
+      await connectHost(h(), kind, { check: c, prompt });
+    });
+  const asProject = () => guarded("project", async () => {
+    const id = await hostProject(h(), check() ?? undefined);
+    store.setOverlay(null);
+    store.switchProject(id);
+  });
+  const remove = async () => {
+    if (!confirm(t("Remove the host {name}? Its saved password and port forwards are removed too.", { name: h().label }))) return;
+    await removeHost(h().id).catch((e) => setError(errText(e)));
+    setSelected(null);
+  };
+  const agents = () => (check()?.agents ?? []).map((bin) => bin);
+  const hasClaude = () => agents().includes("claude");
+  return (
+    <div class="run-detail host-detail" data-host-detail={h().alias}>
+      <div class="run-detail-head">
+        <div style={{ flex: 1, "min-width": 0 }}>
+          <h3><span class="host-dot" style={{ background: h().color || "var(--text-faint)" }} />{h().label}</h3>
+          <div class="run-objective mono">{hostAddress(h())}{h().jump ? ` ${t("via")} ${h().jump}` : ""} · {t("alias")} <b>{h().alias}</b></div>
+          <div class="run-task-meta">
+            <span>{h().auth === "password" ? t("Password login") : h().identityFile ? t("Key {file}", { file: h().identityFile.split(/[\\/]/).pop() ?? "" }) : t("Key or agent")}</span>
+            <Show when={h().lastConnected}><span>{t("connected {when}", { when: relTimeShort(h().lastConnected) })}</span></Show>
+            <For each={h().tags}>{(tag) => <span class="chip">{tag}</span>}</For>
+          </div>
+        </div>
+        <button class="btn" onClick={props.onEdit}>{t("Edit")}</button>
+        <button class="btn" onClick={() => void remove()}>{t("Remove")}</button>
+      </div>
+      <div class="host-actions">
+        <button class="btn primary" data-action="terminal" disabled={!!busy()} onClick={() => void open("shell")}><Icon name="terminal" size={13} /> {t("Terminal")}</button>
+        <button class="btn primary" data-action="claude" disabled={!!busy() || (!!check() && !hasClaude())} title={check() && !hasClaude() ? t("Claude Code is not installed on this host") : ""} onClick={() => void open("claude")}>
+          <Icon name="sparkle" size={13} /> {t("Claude Code here")}
+        </button>
+        <For each={agents().filter((a) => a !== "claude")}>
+          {(a) => <button class="btn" disabled={!!busy()} onClick={() => void open(a)}>{kindInfo(a).label}</button>}
+        </For>
+        <button class={`btn${files() ? " active" : ""}`} data-action="files" onClick={() => setFiles(!files())}><Icon name="files" size={13} /> {t("Files")}</button>
+        <button class="btn" disabled={!!busy()} onClick={() => void asProject()}><Icon name="folder" size={13} /> {t("Open as project")}</button>
+        <button class="btn" data-action="check" disabled={!!busy()} onClick={() => void probe()}><Icon name="refresh" size={13} /> {busy() === "check" ? t("Connecting…") : t("Check connection")}</button>
+      </div>
+      <Show when={busy() && busy() !== "check"}><div class="form-note">{t("Connecting…")}</div></Show>
+      <Show when={error()}><div class="form-note error" data-host-error>{error()}</div></Show>
+      <Show when={trust()}><TrustPanel alias={h().alias} onDone={(ok) => { setTrust(false); if (ok) void probe(); }} /></Show>
+      <Show when={check()}>
+        {(c) => (
+          <div class="remote-check" data-host-check>
+            <span><Icon name="check" size={12} /> {c().os}</span>
+            <span class={c().git ? "ok" : "warn"}>{c().git ? t("git ✓") : t("git missing")}</span>
+            <span class={c().tmux ? "ok" : "muted-inline"}>{c().tmux ? t("tmux ✓") : t("tmux not installed")}</span>
+            <span>{agents().length ? t("agents: {list}", { list: agents().map((k) => kindInfo(k).label).join(", ") }) : t("no agent CLIs found on its PATH")}</span>
+            <Show when={!hasClaude()}>
+              <button class="btn" title={CLAUDE_INSTALL} onClick={() => void open("shell", CLAUDE_INSTALL)}>{t("Install Claude Code")}</button>
+            </Show>
+          </div>
+        )}
+      </Show>
+      <Show when={!check() && !error() && !trust()}><div class="form-note">{t("Terminals and agents start in {folder}, inside tmux when the host has it.", { folder: h().folder || t("the login folder") })}</div></Show>
+      <Show when={files()}><FileBrowser host={h()} onHostKey={() => setTrust(true)} /></Show>
+      <HostForwards host={h()} />
+      <Show when={h().notes.trim()}><div class="host-notes">{h().notes}</div></Show>
+    </div>
+  );
+}
+
+/** Fingerprints of a host ssh does not know (or whose key changed), to compare and trust. */
+function TrustPanel(props: { alias: string; onDone: (trusted: boolean) => void }) {
+  const [keys] = createResource(() => props.alias, (a) => hostKeys(a).catch((e) => ({ error: errText(e) }) as unknown as HostKeys & { error: string }));
+  const [error, setError] = createSignal<string | null>(null);
+  const k = () => keys() as (HostKeys & { error?: string }) | undefined;
+  const accept = async () => {
+    const r = k();
+    if (!r?.keys) return;
+    try {
+      if (r.known && !r.matches) {
+        const stale = (await knownHosts()).filter((x) => x.hosts.split(",").includes(r.name)).map((x) => x.line);
+        if (stale.length) await removeKnownHosts(stale);
+      }
+      await trustHost(r.keys.map((x) => x.line));
+      props.onDone(true);
+    } catch (e) {
+      setError(errText(e));
+    }
+  };
+  return (
+    <div class={`trust-panel${k()?.known && !k()?.matches ? " changed" : ""}`} data-trust>
+      <Show when={k()} fallback={<div class="form-note">{t("Reading the host's keys…")}</div>}>
+        {(r) => (
+          <Show when={!r().error} fallback={<div class="form-note error">{r().error}</div>}>
+            <div class="trust-title">
+              {r().known && !r().matches
+                ? t("WARNING: the host key of {name} changed. This happens after a reinstall — or when someone intercepts the connection. Trust the new key only if you expected the change.", { name: r().name })
+                : t("Erka has not connected to {name} before. Check that a fingerprint matches what the server's owner gave you:", { name: r().name })}
+            </div>
+            <For each={r().keys}>{(key) => <div class="mono trust-fp"><span class="muted-inline">{key.kind}</span> {key.fingerprint}</div>}</For>
+            <div class="inline-fields">
+              <button class="btn primary" data-action="trust" onClick={() => void accept()}>{r().known && !r().matches ? t("Replace the key and connect") : t("Trust and connect")}</button>
+              <button class="btn" onClick={() => props.onDone(false)}>{t("Cancel")}</button>
+            </div>
+          </Show>
+        )}
+      </Show>
+      <Show when={error()}><div class="form-note error">{error()}</div></Show>
+    </div>
+  );
+}
+
+function HostEditor(props: { host: SshHost; onDone: (id?: string) => void }) {
+  const [h, setH] = createSignal<SshHost>(props.host);
+  const [password, setPassword] = createSignal("");
+  const [hasPassword] = createResource(() => props.host.id, (id) => (id ? hasSecret("password", id).catch(() => false) : Promise.resolve(false)));
+  const [keys] = createResource(() => listKeys().catch(() => []));
+  const [error, setError] = createSignal<string | null>(null);
+  const set = <K extends keyof SshHost>(k: K, v: SshHost[K]) => setH({ ...h(), [k]: v });
+  const envText = () => Object.entries(h().env).map(([k, v]) => `${k}=${v}`).join("\n");
+  const save = async () => {
+    setError(null);
+    try {
+      const saved = await saveHost(h());
+      if (h().auth === "password" && password()) await setSecret("password", saved.id, password());
+      if (h().auth !== "password" && props.host.auth === "password") await setSecret("password", saved.id, "");
+      props.onDone(saved.id);
+    } catch (e) {
+      setError(errText(e));
+    }
+  };
+  const browseKey = async () => {
+    const f = await openDialog({ multiple: false, directory: false, title: t("Choose a private key") });
+    if (typeof f === "string") set("identityFile", f);
+  };
+  const others = () => vault().hosts.filter((x) => x.id !== h().id);
+  return (
+    <div class="run-detail host-editor">
+      <h3>{props.host.id ? t("Edit host") : t("New host")}</h3>
+      <div class="form-row"><label>{t("Name")}</label><input class="text-input" data-field="label" value={h().label} placeholder={t("Production API")} onInput={(e) => set("label", e.currentTarget.value)} /></div>
+      <div class="form-row"><label>{t("Address")}</label>
+        <div class="inline-fields">
+          <input class="text-input mono" data-field="user" style={{ width: "130px" }} placeholder={t("user")} value={h().user} onInput={(e) => set("user", e.currentTarget.value)} />
+          <span>@</span>
+          <input class="text-input mono" data-field="hostname" style={{ flex: 1, width: "auto" }} placeholder="203.0.113.10" value={h().hostname} onInput={(e) => set("hostname", e.currentTarget.value)} />
+          <span>:</span>
+          <input class="text-input mono" data-field="port" style={{ width: "70px" }} placeholder="22" value={h().port ?? ""} onInput={(e) => set("port", Number(e.currentTarget.value) || null)} />
+        </div>
+      </div>
+      <div class="form-row"><label>{t("Login")}</label>
+        <div class="seg" style={{ width: "260px" }}>
+          <button class={h().auth === "key" ? "on" : ""} onClick={() => set("auth", "key")}>{t("Key or agent")}</button>
+          <button class={h().auth === "password" ? "on" : ""} data-auth="password" onClick={() => set("auth", "password")}>{t("Password")}</button>
+        </div>
+      </div>
+      <Show when={h().auth === "password"}>
+        <div class="form-row"><label>{t("Password")}</label>
+          <div>
+            <input class="text-input" type="password" data-field="password" autocomplete="off" placeholder={hasPassword() ? t("Saved — type to replace") : ""} value={password()} onInput={(e) => setPassword(e.currentTarget.value)} />
+            <div class="form-note">{t("Kept in the system credential store, never in Erka's files.")}</div>
+          </div>
+        </div>
+      </Show>
+      <div class="form-row"><label>{t("Key file")}</label>
+        <div class="inline-fields">
+          <select class="text-input" style={{ flex: 1, width: "auto" }} value={h().identityFile} onChange={(e) => set("identityFile", e.currentTarget.value)}>
+            <option value="">{t("Default keys and the agent")}</option>
+            <For each={keys() ?? []}>{(k) => <option value={k.path}>{k.name} ({k.kind.replace("ssh-", "")})</option>}</For>
+            <Show when={h().identityFile && !(keys() ?? []).some((k) => k.path === h().identityFile)}><option value={h().identityFile}>{h().identityFile}</option></Show>
+          </select>
+          <button class="btn" onClick={() => void browseKey()}>{t("Browse…")}</button>
+        </div>
+      </div>
+      <div class="form-row"><label>{t("Jump host")}</label>
+        <input class="text-input mono" list="erka-jump-hosts" placeholder={t("none (another saved host's alias, or user@host)")} value={h().jump} onInput={(e) => set("jump", e.currentTarget.value)} />
+        <datalist id="erka-jump-hosts"><For each={others()}>{(x) => <option value={x.alias}>{x.label}</option>}</For></datalist>
+      </div>
+      <div class="form-row"><label>{t("Group")}</label><input class="text-input" list="erka-host-groups" value={h().group} placeholder={t("e.g. Production")} onInput={(e) => set("group", e.currentTarget.value)} />
+        <datalist id="erka-host-groups"><For each={[...new Set(vault().hosts.map((x) => x.group).filter(Boolean))]}>{(g) => <option value={g} />}</For></datalist>
+      </div>
+      <div class="form-row"><label>{t("Tags")}</label><input class="text-input" value={h().tags.join(", ")} placeholder="gpu, staging" onInput={(e) => set("tags", e.currentTarget.value.split(",").map((s) => s.trim()).filter(Boolean))} /></div> {/* i18n-ignore */}
+      <div class="form-row"><label>{t("Start folder")}</label><input class="text-input mono" value={h().folder} placeholder={t("the login folder")} onInput={(e) => set("folder", e.currentTarget.value)} /></div>
+      <div class="form-row"><label>{t("Startup command")}</label><input class="text-input mono" value={h().startup} placeholder="cd ~/app && git status" onInput={(e) => set("startup", e.currentTarget.value)} /></div> {/* i18n-ignore */}
+      <div class="form-row"><label>{t("Environment")}</label><textarea class="text-input mono" rows={2} style={{ height: "auto" }} placeholder={"LANG=C.UTF-8" /* i18n-ignore */} value={envText()}
+        onInput={(e) => set("env", Object.fromEntries(e.currentTarget.value.split("\n").map((l) => l.split("=")).filter((p) => p[0]?.trim() && p.length > 1).map(([k, ...v]) => [k.trim(), v.join("=")])))} /></div>
+      <div class="form-row"><label>{t("Options")}</label>
+        <div class="inline-fields" style={{ "flex-wrap": "wrap" }}>
+          <label class="check-label"><input type="checkbox" checked={h().tmux} onChange={(e) => set("tmux", e.currentTarget.checked)} /> {t("Keep sessions in tmux")}</label>
+          <label class="check-label"><input type="checkbox" checked={h().forwardAgent} onChange={(e) => set("forwardAgent", e.currentTarget.checked)} /> {t("Forward the SSH agent")}</label>
+          <label class="check-label">{t("Keepalive (s)")} <input class="text-input" style={{ width: "60px" }} value={h().keepalive} onInput={(e) => set("keepalive", Number(e.currentTarget.value) || 0)} /></label>
+        </div>
+      </div>
+      <div class="form-row"><label>{t("Colour")}</label>
+        <div class="inline-fields">
+          <For each={["", "#5b8def", "#3fb950", "#d29922", "#f85149", "#a371f7", "#39c5cf"]}>
+            {(c) => <button class={`host-swatch${h().color === c ? " on" : ""}`} style={{ background: c || "var(--bg-elev-2)" }} title={c || t("None")} onClick={() => set("color", c)} />}
+          </For>
+        </div>
+      </div>
+      <div class="form-row"><label>{t("SSH alias")}</label><input class="text-input mono" value={h().alias} placeholder={t("from the name")} onInput={(e) => set("alias", e.currentTarget.value)} /></div>
+      <div class="form-row"><label>{t("Notes")}</label><textarea class="text-input" rows={3} style={{ height: "auto" }} value={h().notes} onInput={(e) => set("notes", e.currentTarget.value)} /></div>
+      <Show when={error()}><div class="form-note error">{error()}</div></Show>
+      <div class="inline-fields">
+        <button class="btn primary" data-action="save-host" disabled={!h().hostname.trim()} onClick={() => void save()}>{t("Save")}</button>
+        <button class="btn" onClick={() => props.onDone()}>{t("Cancel")}</button>
+      </div>
+    </div>
+  );
+}
+
+// ---------- files on a host ----------
+
+function FileBrowser(props: { host: SshHost; onHostKey: () => void }) {
+  const root = () => `ssh://${props.host.alias}/`;
+  const [path, setPath] = createSignal(props.host.folder.trim() || "~");
+  const [entries, setEntries] = createSignal<DirEntry[] | null>(null);
+  const [picked, setPicked] = createSignal<string[]>([]);
+  const [busy, setBusy] = createSignal<string | null>(null);
+  const [error, setError] = createSignal<string | null>(null);
+  const [ask, setAsk] = createSignal<Ask | null>(null);
+  let box!: HTMLDivElement;
+  const rel = (p: string) => p.replace(/^\/+/, "");
+  const join = (name: string) => `${path().replace(/\/+$/, "")}/${name}`;
+  const load = async (p: string) => {
+    setError(null);
+    try {
+      // `~`: the login folder, from the host check.
+      const abs = p === "~" ? (await checkHost(props.host)).home : p;
+      setEntries(await ipc.listDir(root(), rel(abs)));
+      setPath(abs || "/");
+      setPicked([]);
+    } catch (e) {
+      if (isHostKeyError(e)) props.onHostKey();
+      setError(errText(e));
+    }
+  };
+  onMount(() => void load(path()));
+  const run = async (label: string, fn: () => Promise<unknown>) => {
+    setBusy(label);
+    setError(null);
+    try {
+      await fn();
+      await load(path());
+    } catch (e) {
+      setError(errText(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+  const upload = (dirs: boolean) => run("upload", async () => {
+    const f = await openDialog({ multiple: true, directory: dirs, title: dirs ? t("Upload folders") : t("Upload files") });
+    const list = Array.isArray(f) ? f : typeof f === "string" ? [f] : [];
+    if (list.length) await transfer(props.host.alias, true, list, path());
+  });
+  const download = () => run("download", async () => {
+    const dest = await openDialog({ directory: true, title: t("Download to folder") });
+    if (typeof dest === "string") {
+      await transfer(props.host.alias, false, picked().map(join), dest);
+      store.notify(t("Downloaded to {path}", { path: dest }));
+    }
+  });
+  const mkdir = () => setAsk({ label: t("New folder name"), value: "", ok: (v) => v.trim() && void run("mkdir", () => ipc.createEntry(root(), rel(join(v.trim())), true)) });
+  const rename = () => {
+    const from = picked()[0];
+    if (from) setAsk({ label: t("Rename {name} to", { name: from }), value: from, ok: (v) => v.trim() && v.trim() !== from && void run("rename", () => ipc.renameEntry(root(), rel(join(from)), rel(join(v.trim())))) });
+  };
+  const remove = () => {
+    if (!picked().length || !confirm(t("Delete {n} item(s) on {host}? There is no trash on the host.", { n: picked().length, host: props.host.label }))) return;
+    void run("delete", async () => { for (const n of picked()) await ipc.deleteEntry(root(), rel(join(n))); });
+  };
+  // Files dropped from Explorer / Finder onto the list upload into the current folder.
+  onMount(() => {
+    const un = getCurrentWebview().onDragDropEvent((event) => {
+      if (event.payload.type !== "drop") return;
+      const { x, y } = event.payload.position;
+      const ratio = window.devicePixelRatio || 1;
+      const hit = document.elementFromPoint(x / ratio, y / ratio);
+      const paths = event.payload.paths;
+      if (hit && box.contains(hit) && paths.length) void run("upload", () => transfer(props.host.alias, true, paths, path()));
+    });
+    onCleanup(() => void un.then((f) => f()));
+  });
+  const fmt = (n: number) => (n < 1024 ? `${n} B` : n < 1 << 20 ? `${(n / 1024).toFixed(1)} KB` : n < 1 << 30 ? `${(n / (1 << 20)).toFixed(1)} MB` : `${(n / (1 << 30)).toFixed(1)} GB`);
+  return (
+    <div class="sftp" ref={box} data-sftp>
+      <div class="inline-fields">
+        <button class="icon-btn" title={t("Parent folder")} onClick={() => void load(path().replace(/\/[^/]*\/?$/, "") || "/")}><Icon name="up" size={14} /></button>
+        <input class="text-input mono" style={{ flex: 1, width: "auto" }} value={path()} onKeyDown={(e) => e.key === "Enter" && void load(e.currentTarget.value.trim() || "/")} />
+        <button class="icon-btn" title={t("Refresh")} onClick={() => void load(path())}><Icon name="refresh" size={14} /></button>
+      </div>
+      <div class="inline-fields" style={{ "flex-wrap": "wrap" }}>
+        <button class="btn" data-action="upload" disabled={!!busy()} onClick={() => void upload(false)}><Icon name="up" size={13} /> {t("Upload files")}</button>
+        <button class="btn" disabled={!!busy()} onClick={() => void upload(true)}>{t("Upload folder")}</button>
+        <button class="btn" data-action="download" disabled={!!busy() || !picked().length} onClick={() => void download()}><Icon name="down" size={13} /> {t("Download")}</button>
+        <button class="btn" disabled={!!busy()} onClick={mkdir}>{t("New folder")}</button>
+        <button class="btn" disabled={!!busy() || picked().length !== 1} onClick={rename}>{t("Rename")}</button>
+        <button class="btn" disabled={!!busy() || !picked().length} onClick={remove}>{t("Delete")}</button>
+        <Show when={busy()}><span class="muted-inline">{busy() === "upload" ? t("Uploading…") : busy() === "download" ? t("Downloading…") : t("Working…")}</span></Show>
+      </div>
+      <Show when={ask()} keyed>{(a) => <AskRow ask={a} onClose={() => setAsk(null)} />}</Show>
+      <Show when={error()}><div class="form-note error">{error()}</div></Show>
+      <div class="sftp-list">
+        <Show when={entries()} fallback={<div class="muted">{t("Loading…")}</div>}>
+          <For each={entries()} fallback={<div class="muted">{t("Empty folder. Drop files here to upload them.")}</div>}>
+            {(e) => (
+              <div class={`sftp-row${picked().includes(e.name) ? " on" : ""}`} data-entry={e.name}
+                onClick={(ev) => setPicked(ev.ctrlKey || ev.metaKey ? (picked().includes(e.name) ? picked().filter((x) => x !== e.name) : [...picked(), e.name]) : [e.name])}
+                onDblClick={() => e.is_dir && void load(join(e.name))}>
+                <Icon name={e.is_dir ? "folder" : "files"} size={13} />
+                <span class="sftp-name">{e.name}</span>
+                <span class="muted-inline">{e.is_dir ? "" : fmt(e.size)}</span>
+              </div>
+            )}
+          </For>
+        </Show>
+      </div>
+      <div class="form-note">{t("Double-click a folder to open it; Ctrl+click selects several. Drop files from your computer here to upload them.")}</div>
+    </div>
+  );
+}
+
+// ---------- port forwards ----------
+
+const [states, setStates] = createSignal<Record<string, { running: boolean; error: string }>>({});
+const refreshStates = () => forwardStatus().then(setStates).catch(() => {});
+
+function ForwardRow(props: { f: SshForward; onEdit?: () => void }) {
+  const [error, setError] = createSignal<string | null>(null);
+  const [busy, setBusy] = createSignal(false);
+  const st = () => states()[props.f.id];
+  const host = () => hostById(props.f.hostId);
+  const toggle = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      if (st()?.running) await forwardStop(props.f.id);
+      else await forwardStart(props.f.id);
+    } catch (e) {
+      setError(errText(e));
+    } finally {
+      setBusy(false);
+      void refreshStates();
+    }
+  };
+  const describe = () => {
+    const f = props.f;
+    const bind = `${f.bindAddress || "localhost"}:${f.bindPort}`;
+    if (f.kind === "dynamic") return t("SOCKS proxy on {bind}", { bind });
+    if (f.kind === "remote") return t("{host} port {bind} → {dest} here", { host: host()?.label ?? "?", bind, dest: `${f.destHost}:${f.destPort}` });
+    return t("{bind} here → {dest} from {host}", { bind, dest: `${f.destHost}:${f.destPort}`, host: host()?.label ?? "?" });
+  };
+  return (
+    <div class="forward-row" data-forward={props.f.id}>
+      <span class={`fw-state ${st()?.running ? "on" : st()?.error ? "err" : ""}`} />
+      <div style={{ flex: 1, "min-width": 0 }}>
+        <div>{props.f.label || describe()}</div>
+        <div class="muted-inline" style={{ "font-size": "11.5px" }}>{props.f.label ? describe() : ""}{props.f.autoStart ? ` · ${t("starts with Erka")}` : ""}</div>
+        <Show when={error() || (!st()?.running && st()?.error)}><div class="form-note error">{error() || st()?.error}</div></Show>
+      </div>
+      <button class={`btn${st()?.running ? "" : " primary"}`} data-action="toggle-forward" disabled={busy()} onClick={() => void toggle()}>{st()?.running ? t("Stop") : t("Start")}</button>
+      <Show when={props.onEdit}><button class="btn" onClick={props.onEdit}>{t("Edit")}</button></Show>
+    </div>
+  );
+}
+
+function ForwardEditor(props: { f: SshForward; onDone: () => void }) {
+  const [f, setF] = createSignal<SshForward>(props.f);
+  const [error, setError] = createSignal<string | null>(null);
+  const set = <K extends keyof SshForward>(k: K, v: SshForward[K]) => setF({ ...f(), [k]: v });
+  const save = async () => {
+    try {
+      await saveForward(f());
+      props.onDone();
+    } catch (e) {
+      setError(errText(e));
+    }
+  };
+  const del = async () => {
+    await removeForward(f().id).catch((e) => setError(errText(e)));
+    props.onDone();
+  };
+  return (
+    <div class="forward-editor">
+      <div class="form-row"><label>{t("Host")}</label>
+        <select class="text-input" value={f().hostId} onChange={(e) => set("hostId", e.currentTarget.value)}>
+          <For each={vault().hosts}>{(h) => <option value={h.id}>{h.label}</option>}</For>
+        </select>
+      </div>
+      <div class="form-row"><label>{t("Type")}</label>
+        <div class="seg" style={{ width: "360px" }}>
+          <button class={f().kind === "local" ? "on" : ""} onClick={() => set("kind", "local")}>{t("Local (-L)")}</button>
+          <button class={f().kind === "remote" ? "on" : ""} onClick={() => set("kind", "remote")}>{t("Remote (-R)")}</button>
+          <button class={f().kind === "dynamic" ? "on" : ""} onClick={() => set("kind", "dynamic")}>{t("SOCKS (-D)")}</button>
+        </div>
+      </div>
+      <div class="form-row"><label>{f().kind === "remote" ? t("Listen on the host") : t("Listen here")}</label>
+        <div class="inline-fields">
+          <input class="text-input mono" placeholder="localhost" value={f().bindAddress} onInput={(e) => set("bindAddress", e.currentTarget.value)} /> {/* i18n-ignore */}
+          <span>:</span>
+          <input class="text-input mono" data-field="bind-port" style={{ width: "80px" }} placeholder="8080" value={f().bindPort || ""} onInput={(e) => set("bindPort", Number(e.currentTarget.value) || 0)} />
+        </div>
+      </div>
+      <Show when={f().kind !== "dynamic"}>
+        <div class="form-row"><label>{f().kind === "remote" ? t("Send to (from here)") : t("Destination (from the host)")}</label>
+          <div class="inline-fields">
+            <input class="text-input mono" data-field="dest-host" value={f().destHost} onInput={(e) => set("destHost", e.currentTarget.value)} />
+            <span>:</span>
+            <input class="text-input mono" data-field="dest-port" style={{ width: "80px" }} placeholder="80" value={f().destPort || ""} onInput={(e) => set("destPort", Number(e.currentTarget.value) || 0)} />
+          </div>
+        </div>
+      </Show>
+      <div class="form-row"><label>{t("Name (optional)")}</label><input class="text-input" value={f().label} onInput={(e) => set("label", e.currentTarget.value)} /></div>
+      <div class="form-row"><label /><label class="check-label"><input type="checkbox" checked={f().autoStart} onChange={(e) => set("autoStart", e.currentTarget.checked)} /> {t("Start when Erka opens")}</label></div>
+      <Show when={error()}><div class="form-note error">{error()}</div></Show>
+      <div class="inline-fields">
+        <button class="btn primary" data-action="save-forward" disabled={!f().hostId || !f().bindPort} onClick={() => void save()}>{t("Save")}</button>
+        <button class="btn" onClick={props.onDone}>{t("Cancel")}</button>
+        <Show when={f().id}><button class="btn" onClick={() => void del()}>{t("Delete")}</button></Show>
+      </div>
+    </div>
+  );
+}
+
+function usePolling() {
+  void refreshStates();
+  const timer = setInterval(() => void refreshStates(), 2000);
+  onCleanup(() => clearInterval(timer));
+}
+
+function HostForwards(props: { host: SshHost }) {
+  usePolling();
+  const [editing, setEditing] = createSignal<SshForward | null>(null);
+  const mine = () => vault().forwards.filter((f) => f.hostId === props.host.id);
+  return (
+    <div class="host-forwards">
+      <div class="section-label">{t("Port forwarding")}<span class="spacer" /><button class="btn" data-action="new-forward" onClick={() => setEditing(newForward(props.host.id))}><Icon name="plus" size={12} /> {t("Add")}</button></div>
+      <Show when={editing()} keyed>{(f) => <ForwardEditor f={f} onDone={() => setEditing(null)} />}</Show>
+      <For each={mine()} fallback={<div class="muted-inline" style={{ "font-size": "12px" }}>{t("No port forwards for this host.")}</div>}>{(f) => <ForwardRow f={f} onEdit={() => setEditing({ ...f })} />}</For>
+    </div>
+  );
+}
+
+function ForwardsTab() {
+  usePolling();
+  const [editing, setEditing] = createSignal<SshForward | null>(null);
+  return (
+    <div class="hosts-section">
+      <div class="inline-fields">
+        <div class="form-note" style={{ flex: 1 }}>{t("Forwards run while Erka is open; the ones marked to start with Erka come back when it opens.")}</div>
+        <button class="btn primary" disabled={!vault().hosts.length} onClick={() => setEditing(newForward(vault().hosts[0]?.id ?? ""))}><Icon name="plus" size={13} /> {t("New forward")}</button>
+      </div>
+      <Show when={editing()} keyed>{(f) => <ForwardEditor f={f} onDone={() => setEditing(null)} />}</Show>
+      <For each={vault().forwards} fallback={<div class="muted">{t("No port forwards yet.")}</div>}>{(f) => <ForwardRow f={f} onEdit={() => setEditing({ ...f })} />}</For>
+    </div>
+  );
+}
+
+// ---------- keys ----------
+
+function KeysTab() {
+  const [keys, { refetch }] = createResource(() => listKeys().catch(() => []));
+  const [agent, { refetch: refetchAgent }] = createResource(() => agentList().catch((e) => ({ running: false, keys: [], error: String(e) })));
+  const [gen, setGen] = createSignal<{ name: string; kind: string; passphrase: string; comment: string; save: boolean } | null>(null);
+  const [error, setError] = createSignal<string | null>(null);
+  const [installFor, setInstallFor] = createSignal<string | null>(null);
+  const [ask, setAsk] = createSignal<Ask | null>(null);
+  const act = async (fn: () => Promise<unknown>, done?: string) => {
+    setError(null);
+    try {
+      await fn();
+      if (done) store.notify(done);
+      void refetch();
+      void refetchAgent();
+    } catch (e) {
+      setError(errText(e));
+    }
+  };
+  const doImport = async () => {
+    const f = await openDialog({ multiple: false, directory: false, title: t("Choose a private key") });
+    if (typeof f !== "string") return;
+    setAsk({
+      label: t("Name for the key in ~/.ssh"), value: f.split(/[\\/]/).pop() ?? "imported_key",
+      ok: (name) => name.trim() && setAsk({ label: t("Passphrase (leave empty if it has none)"), value: "", secret: true, ok: (pass) => void act(() => importKey(f, name.trim(), pass), t("Key imported")) }),
+    });
+  };
+  const savePassphrase = (path: string) =>
+    setAsk({ label: t("Passphrase of this key (kept in the system credential store; empty forgets it)"), value: "", secret: true, ok: (p) => void act(() => setSecret("passphrase", path, p), p ? t("Passphrase saved") : t("Passphrase forgotten")) });
+  return (
+    <div class="hosts-section">
+      <div class="inline-fields">
+        <button class="btn primary" data-action="generate-key" onClick={() => setGen({ name: "id_ed25519_erka", kind: "ed25519", passphrase: "", comment: "", save: true })}><Icon name="plus" size={13} /> {t("Generate key")}</button>
+        <button class="btn" onClick={() => void doImport()}>{t("Import key…")}</button>
+        <span style={{ flex: 1 }} />
+        <span class="muted-inline">{agent()?.running ? t("SSH agent: {n} key(s) loaded", { n: agent()!.keys.length }) : t("SSH agent not running")}</span>
+      </div>
+      <Show when={ask()} keyed>{(a) => <AskRow ask={a} onClose={() => setAsk(null)} />}</Show>
+      <Show when={gen()}>
+        {(g) => (
+          <div class="forward-editor">
+            <div class="form-row"><label>{t("File name")}</label><input class="text-input mono" data-field="key-name" value={g().name} onInput={(e) => setGen({ ...g(), name: e.currentTarget.value })} /></div>
+            <div class="form-row"><label>{t("Type")}</label>
+              <div class="seg" style={{ width: "260px" }}>
+                <For each={[["ed25519", "Ed25519"], ["rsa", "RSA 4096"], ["ecdsa", "ECDSA"]]}>{([k, l]) => <button class={g().kind === k ? "on" : ""} onClick={() => setGen({ ...g(), kind: k })}>{l}</button>}</For>
+              </div>
+            </div>
+            <div class="form-row"><label>{t("Passphrase")}</label><input class="text-input" type="password" autocomplete="off" value={g().passphrase} placeholder={t("optional")} onInput={(e) => setGen({ ...g(), passphrase: e.currentTarget.value })} /></div>
+            <div class="form-row"><label>{t("Comment")}</label><input class="text-input" value={g().comment} placeholder={t("e.g. you@laptop")} onInput={(e) => setGen({ ...g(), comment: e.currentTarget.value })} /></div>
+            <div class="form-row"><label /><label class="check-label"><input type="checkbox" checked={g().save} onChange={(e) => setGen({ ...g(), save: e.currentTarget.checked })} /> {t("Save the passphrase so Erka can unlock the key")}</label></div>
+            <div class="inline-fields">
+              <button class="btn primary" data-action="create-key" onClick={() => void act(async () => { await generateKey(g().name.trim(), g().kind, g().passphrase, g().comment, g().save); setGen(null); }, t("Key created"))}>{t("Create")}</button>
+              <button class="btn" onClick={() => setGen(null)}>{t("Cancel")}</button>
+            </div>
+          </div>
+        )}
+      </Show>
+      <Show when={error()}><div class="form-note error">{error()}</div></Show>
+      <For each={keys() ?? []} fallback={<div class="muted">{t("No keys in ~/.ssh yet.")}</div>}>
+        {(k) => (
+          <div class="key-row" data-key={k.name}>
+            <Icon name="target" size={16} />
+            <div style={{ flex: 1, "min-width": 0 }}>
+              <div><b>{k.name}</b> <span class="muted-inline">{k.kind.replace("ssh-", "")} {k.bits ? `· ${k.bits}` : ""} {k.comment ? `· ${k.comment}` : ""}</span></div>
+              <div class="mono muted-inline" style={{ "font-size": "11.5px" }}>{k.fingerprint}</div>
+              <div class="muted-inline" style={{ "font-size": "11.5px" }}>{k.encrypted ? (k.passphraseSaved ? t("passphrase saved") : t("protected by a passphrase")) : t("no passphrase")}</div>
+            </div>
+            <button class="btn" onClick={() => void writeText(k.public).then(() => store.notify(t("Public key copied")))}>{t("Copy public key")}</button>
+            <button class="btn" disabled={!vault().hosts.length} onClick={() => setInstallFor(installFor() === k.path ? null : k.path)}>{t("Install on host…")}</button>
+            <Show when={k.encrypted}><button class="btn" onClick={() => savePassphrase(k.path)}>{t("Passphrase…")}</button></Show>
+            <button class="btn" onClick={() => void act(() => agentAdd(k.path), t("Added to the SSH agent"))}>{t("Add to agent")}</button>
+            <button class="btn" onClick={() => confirm(t("Move {name} and {name}.pub to the trash?", { name: k.name })) && void act(() => deleteKey(k.path))}>{t("Delete")}</button>
+            <Show when={installFor() === k.path}>
+              <div class="key-install">
+                <For each={vault().hosts}>{(h) => <button class="btn" onClick={() => void act(() => installKey(h.alias, k.path), t("Key installed on {host}", { host: h.label }))}>{h.label}</button>}</For>
+              </div>
+            </Show>
+          </div>
+        )}
+      </For>
+      <Show when={agent() && !agent()!.running && agent()!.error}><div class="form-note">{t("The SSH agent is not running. On Windows, start the \"OpenSSH Authentication Agent\" service to use it.")}</div></Show>
+    </div>
+  );
+}
+
+// ---------- known hosts ----------
+
+function KnownHostsTab() {
+  const [list, { refetch }] = createResource(() => knownHosts().catch(() => []));
+  const [query, setQuery] = createSignal("");
+  const [error, setError] = createSignal<string | null>(null);
+  const shown = () => (list() ?? []).filter((k) => !query().trim() || k.hosts.toLowerCase().includes(query().trim().toLowerCase()) || k.fingerprint.includes(query().trim()));
+  const remove = async (line: number, name: string) => {
+    if (!confirm(t("Forget the key of {name}? ssh asks to trust it again on the next connection.", { name }))) return;
+    try {
+      await removeKnownHosts([line]);
+      void refetch();
+    } catch (e) {
+      setError(errText(e));
+    }
+  };
+  return (
+    <div class="hosts-section">
+      <input class="text-input" placeholder={t("Search known hosts")} value={query()} onInput={(e) => setQuery(e.currentTarget.value)} />
+      <Show when={error()}><div class="form-note error">{error()}</div></Show>
+      <For each={shown()} fallback={<div class="muted">{t("No known hosts.")}</div>}>
+        {(k) => (
+          <div class="key-row" data-known={k.line}>
+            <div style={{ flex: 1, "min-width": 0 }}>
+              <div class="mono">{k.hashed ? t("(hashed host name)") : k.hosts} <Show when={k.marker}><span class="chip">{k.marker}</span></Show></div>
+              <div class="mono muted-inline" style={{ "font-size": "11.5px" }}>{k.kind} {k.fingerprint}</div>
+            </div>
+            <button class="btn" onClick={() => void remove(k.line, k.hashed ? k.fingerprint : k.hosts)}>{t("Forget")}</button>
+          </div>
+        )}
+      </For>
+    </div>
+  );
+}

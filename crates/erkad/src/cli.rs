@@ -7,6 +7,7 @@
 //!   erkad terminal wait <session> [--timeout-ms N]      until it stops working
 //!   erkad worktree get [--path P] [--json]
 //!   erkad worktree set [--path P] [--comment TEXT] [--status todo|progress|review|done]
+//!   erkad run create|list|show|approve|retry|done|skip|cancel|delete|report|wait …  (see `run`)
 //!
 //! `<session>` is a handle number, a session id (or its prefix) or a session name.
 
@@ -184,6 +185,121 @@ pub async fn worktree(args: &[String]) -> Result<()> {
             }
         }
         _ => bail!("usage: erkad worktree get|set …"),
+    }
+    Ok(())
+}
+
+/// `erkad run …`: orchestration runs (see runs.rs).
+///
+///   erkad run create <file.json | ->           a run: {name, objective, cwd, tasks: [...]}
+///   erkad run list [--json]
+///   erkad run show <run> [--json]
+///   erkad run approve|retry|done|skip <run> <task>
+///   erkad run cancel|delete <run>
+///   erkad run report done|failed [summary…]  from inside a task's agent session
+///   erkad run wait <run> [--timeout-ms N]      until the run has finished
+pub async fn run(args: &[String]) -> Result<()> {
+    let mut args = args.to_vec();
+    let json_out = take_flag(&mut args, "--json");
+    let timeout = take_opt(&mut args, "--timeout-ms").map(|n| n.parse::<u64>()).transpose()?.unwrap_or(3_600_000);
+    let sub = if args.is_empty() { String::new() } else { args.remove(0) };
+    let mut c = Client::connect().await?;
+    let arg = |i: usize, what: &str| args.get(i).cloned().ok_or_else(|| anyhow!("missing {what} (see `erkad run` usage)"));
+    let print_run = |r: &Value| {
+        println!("{}  {}  [{}]", &str_of(r, "id")[..8.min(str_of(r, "id").len())], str_of(r, "name"), str_of(r, "status"));
+        for t in r["tasks"].as_array().into_iter().flatten() {
+            let deps = t["deps"].as_array().map(|d| d.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(",")).unwrap_or_default();
+            println!(
+                "  {:<12} {:<16} {:<8} {}{}",
+                str_of(t, "id"),
+                str_of(t, "status"),
+                str_of(t, "kind"),
+                str_of(t, "title"),
+                if deps.is_empty() { String::new() } else { format!("  (after {deps})") }
+            );
+            if let Some(s) = t["summary"].as_str().or(t["error"].as_str()) {
+                println!("               {}", s.lines().next().unwrap_or(""));
+            }
+        }
+    };
+    match sub.as_str() {
+        "create" => {
+            let src = arg(0, "a run file")?;
+            let text = if src == "-" {
+                let mut s = String::new();
+                std::io::Read::read_to_string(&mut std::io::stdin(), &mut s)?;
+                s
+            } else {
+                std::fs::read_to_string(&src)?
+            };
+            let mut spec: Value = serde_json::from_str(&text).map_err(|e| anyhow!("run file is not valid JSON: {e}"))?;
+            if spec.get("cwd").and_then(Value::as_str).is_none_or(str::is_empty) {
+                spec["cwd"] = json!(std::env::current_dir()?.to_string_lossy());
+            }
+            let r = c.call("run.create", spec).await?;
+            if json_out {
+                println!("{}", serde_json::to_string_pretty(&r)?);
+            } else {
+                print_run(&r);
+            }
+        }
+        "list" => {
+            let list = c.call("run.list", json!({})).await?;
+            if json_out {
+                println!("{}", serde_json::to_string_pretty(&list)?);
+                return Ok(());
+            }
+            for r in list.as_array().into_iter().flatten() {
+                let tasks = r["tasks"].as_array().map_or(0, Vec::len);
+                let done = r["tasks"].as_array().map_or(0, |t| t.iter().filter(|t| t["status"] == "done").count());
+                println!("{}  {:<10} {done}/{tasks}  {}", &str_of(r, "id")[..8.min(str_of(r, "id").len())], str_of(r, "status"), str_of(r, "name"));
+            }
+        }
+        "show" => {
+            let r = c.call("run.get", json!({"id": arg(0, "a run id")?})).await?;
+            if json_out {
+                println!("{}", serde_json::to_string_pretty(&r)?);
+            } else {
+                print_run(&r);
+            }
+        }
+        "approve" | "retry" | "done" | "skip" => {
+            let method = match sub.as_str() {
+                "done" => "run.task_done",
+                "skip" => "run.task_skip",
+                s => if s == "approve" { "run.approve" } else { "run.retry" },
+            };
+            let r = c.call(method, json!({"id": arg(0, "a run id")?, "task": arg(1, "a task id")?})).await?;
+            print_run(&r);
+        }
+        "cancel" | "delete" => {
+            c.call(&format!("run.{sub}"), json!({"id": arg(0, "a run id")?})).await?;
+        }
+        "report" => {
+            let status = arg(0, "done or failed")?;
+            anyhow::ensure!(status == "done" || status == "failed", "usage: erkad run report done|failed [summary…]");
+            let session = std::env::var("ERKA_SESSION_ID").map_err(|_| anyhow!("run this from inside the task's agent session (ERKA_SESSION_ID is not set)"))?;
+            let summary = args[1..].join(" ");
+            let r = c.call("run.report", json!({"session_id": session, "status": status, "summary": summary})).await?;
+            println!("reported {status} for task {} of run {}", str_of(&r, "task"), &str_of(&r, "run")[..8.min(str_of(&r, "run").len())]);
+        }
+        "wait" => {
+            let id = arg(0, "a run id")?;
+            let started = Instant::now();
+            loop {
+                let r = c.call("run.get", json!({"id": id})).await?;
+                let status = str_of(&r, "status").to_string();
+                if status != "running" {
+                    print_run(&r);
+                    if status == "done" { return Ok(()) } else { bail!("run {status}") }
+                }
+                if started.elapsed() > Duration::from_millis(timeout) {
+                    bail!("timed out after {timeout} ms");
+                }
+                tokio::time::sleep(Duration::from_secs(2)).await;
+            }
+        }
+        _ => bail!("usage: erkad run create|list|show|approve|retry|done|skip|cancel|delete|report|wait …"),
     }
     Ok(())
 }

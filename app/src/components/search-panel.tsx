@@ -3,6 +3,7 @@ import { store } from "../lib/store";
 import { searchText, type TextHit } from "../lib/ipc";
 import { Icon } from "./icons";
 import type { Project } from "../lib/types";
+import { t } from "../lib/i18n";
 
 /** Folder the next search is limited to ("Find in Folder" in the explorer); "" = whole project. */
 export const [searchFolder, setSearchFolder] = createSignal("");
@@ -49,21 +50,21 @@ export function SearchPanel(props: { project: Project }) {
         <input
           ref={input}
           class="text-input"
-          placeholder="Search in files (Enter)"
+          placeholder={t("Search in files (Enter)")}
           value={query()}
           onInput={(e) => setQuery(e.currentTarget.value)}
           onKeyDown={(e) => e.key === "Enter" && void run()}
         />
         <div class="toggles">
-          <button class={`toggle${caseSensitive() ? " on" : ""}`} title="Match case" onClick={() => { setCase(!caseSensitive()); void run(); }}>Aa</button>
-          <button class={`toggle${regex() ? " on" : ""}`} title="Regular expression" onClick={() => { setRegex(!regex()); void run(); }}>.*</button>
+          <button class={`toggle${caseSensitive() ? " on" : ""}`} title={t("Match case")} onClick={() => { setCase(!caseSensitive()); void run(); }}>Aa</button>
+          <button class={`toggle${regex() ? " on" : ""}`} title={t("Regular expression")} onClick={() => { setRegex(!regex()); void run(); }}>.*</button>
           <Show when={searchFolder()}>
-            <span class="chip" title="Searching only this folder">in {searchFolder()}/ <button class="icon-btn mini" title="Search the whole project" onClick={() => { setSearchFolder(""); void run(); }}><Icon name="close" size={9} /></button></span>
+            <span class="chip" title={t("Searching only this folder")}>{t("in {folder}/", { folder: searchFolder() })} <button class="icon-btn mini" title={t("Search the whole project")} onClick={() => { setSearchFolder(""); void run(); }}><Icon name="close" size={9} /></button></span>
           </Show>
           <span style={{ flex: 1 }} />
-          <Show when={busy()}><span class="muted" style={{ padding: 0 }}>searching…</span></Show>
+          <Show when={busy()}><span class="muted" style={{ padding: 0 }}>{t("searching…")}</span></Show>
           <Show when={result() && !busy()}>
-            <span class="muted" style={{ padding: 0 }}>{result()!.hits.length}{result()!.truncated ? "+" : ""} hits · {result()!.files_searched} files</span>
+            <span class="muted" style={{ padding: 0 }}>{t("{hits} hits · {files} files", { hits: `${result()!.hits.length}${result()!.truncated ? "+" : ""}`, files: result()!.files_searched })}</span>
           </Show>
         </div>
       </div>

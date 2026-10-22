@@ -1,11 +1,18 @@
-import { Show, createMemo, createSignal, onCleanup, onMount } from "solid-js";
+import { For, Show, createMemo, createSignal, onCleanup, onMount, createEffect } from "solid-js";
 import { store } from "../lib/store";
 import { Icon } from "./icons";
 import { MemoryMeter, UsageMeters } from "./usage-meter";
 import { InboxPanel } from "./inbox";
+import { setCovering } from "../lib/overlays";
+import { activeRuns } from "../lib/runs";
+import { pluginStatus, pluginStatusItems, type PluginInfo, type PluginStatusItem } from "../lib/plugins";
+import { t, msg } from "../lib/i18n";
+
+const waitingApproval = () => activeRuns().reduce((n, r) => n + r.tasks.filter((t) => t.status === "waiting_approval").length, 0);
 
 export function StatusBar() {
   const [inbox, setInbox] = createSignal(false);
+  createEffect(() => setCovering("inbox", inbox()));
   onMount(() => {
     const close = () => setInbox(false);
     const open = () => setInbox(true);
@@ -40,39 +47,46 @@ export function StatusBar() {
   const branch = () => {
     const p = store.activeProject();
     const info = p && store.projectInfo[p.id];
-    return info?.is_repo ? info.branch ?? "detached" : null;
+    return info?.is_repo ? info.branch ?? t("detached") : null;
   };
 
   return (
     <div class="statusbar">
-      <span class="item" title={store.connected() ? "Session daemon connected" : "Session daemon not connected"}>
+      <span class="item" title={store.connected() ? t("Session daemon connected") : t("Session daemon not connected")}>
         <span class={`conn${store.connected() ? " on" : ""}`} />
-        {store.connected() ? "erkad" : "erkad offline"}
+        {store.connected() ? "erkad" : t("erkad offline")}
       </span>
       <Show when={branch()}>
         <span class="item clickable" onClick={() => store.setRightPanel("git")}><Icon name="git" size={13} /> {branch()}</span>
       </Show>
       <span class="spacer" />
+      <For each={pluginStatusItems()}>{({ plugin, item }) => <PluginStatus plugin={plugin} item={item} />}</For>
       <Show when={store.state.settings.usageMeters}><UsageMeters /></Show>
       <Show when={store.state.settings.memoryMeter}><MemoryMeter /></Show>
       <Show when={store.lastSwitchMs() != null}>
-        <span class="item" title="Time to render the last project switch">switch {store.lastSwitchMs()} ms</span>
+        <span class="item" title={t("Time to render the last project switch")}>{t("switch {ms} ms", { ms: store.lastSwitchMs()! })}</span>
       </Show>
       <span class="item clickable" onClick={() => store.setOverlay("dashboard")}>
-        {counts().alive} sessions
-        <Show when={counts().working}> · <span style={{ color: "var(--working)" }}>{counts().working} working</span></Show>
-        <Show when={counts().waiting}> · <span style={{ color: "var(--waiting)" }}>{counts().waiting} need you</span></Show>
+        {counts().alive === 1 ? t("{n} session", { n: 1 }) : t("{n} sessions", { n: counts().alive })}
+        <Show when={counts().working}> · <span style={{ color: "var(--working)" }}>{t("{n} working", { n: counts().working })}</span></Show>
+        <Show when={counts().waiting}> · <span style={{ color: "var(--waiting)" }}>{t("{n} need you", { n: counts().waiting })}</span></Show>
       </span>
-      <span class={`item clickable${awake() !== "off" ? " on" : ""}`} title={AWAKE_TITLE[awake()]} onClick={cycleAwake}>
+      <Show when={activeRuns().length}>
+        <span class="item clickable" title={t("Orchestration runs in progress")} onClick={() => store.setOverlay("runs")}>
+          <Icon name="board" size={13} /> {activeRuns().length === 1 ? t("{n} run", { n: 1 }) : t("{n} runs", { n: activeRuns().length })}
+          <Show when={waitingApproval()}><span class="badge waiting" title={t("Tasks waiting for approval")}>{waitingApproval()}</span></Show>
+        </span>
+      </Show>
+      <span class={`item clickable${awake() !== "off" ? " on" : ""}`} title={t(AWAKE_TITLE[awake()])} onClick={cycleAwake}>
         <Icon name="coffee" size={13} />
-        <Show when={awake() !== "off"}>{awake() === "agents" ? "agents" : "on"}</Show>
+        <Show when={awake() !== "off"}>{awake() === "agents" ? t("agents") : t("on")}</Show>
       </span>
       <Show when={store.state.settings.floatingTerminal}>
-        <span class={`item clickable${store.state.floating?.open ? " on" : ""}`} title="Floating terminal" onClick={() => store.toggleFloating()}>
+        <span class={`item clickable${store.state.floating?.open ? " on" : ""}`} title={t("Floating terminal")} onClick={() => store.toggleFloating()}>
           <Icon name="float" size={13} />
         </span>
       </Show>
-      <span class="item clickable inbox-anchor" title="Activity and notifications" onPointerDown={(e) => e.stopPropagation()} onClick={() => setInbox(!inbox())}>
+      <span class="item clickable inbox-anchor" title={t("Activity and notifications")} onPointerDown={(e) => e.stopPropagation()} onClick={() => setInbox(!inbox())}>
         <Icon name="bell" size={13} />
         <Show when={store.unreadInbox()}><span class="badge waiting">{store.unreadInbox()}</span></Show>
         <Show when={inbox()}><InboxPanel onClose={() => setInbox(false)} /></Show>
@@ -81,10 +95,50 @@ export function StatusBar() {
   );
 }
 
+/** A plugin's status item: its command's output, re-run in the active project every interval
+ *  (and on click). Local projects only — the command runs on this computer. */
+function PluginStatus(props: { plugin: PluginInfo; item: PluginStatusItem }) {
+  const [out, setOut] = createSignal<{ text: string; error?: string } | null>(null);
+  const cwd = () => {
+    const p = store.activeProject();
+    return p && !p.remote ? p.path : null;
+  };
+  let busy = false;
+  const refresh = async () => {
+    const dir = cwd();
+    if (busy || !dir) return;
+    busy = true;
+    try {
+      const r = await pluginStatus(props.plugin.id, props.item.id, dir);
+      setOut(r.ok ? { text: r.text.split(/\r?\n/)[0] } : { text: "error", error: r.error || r.text });
+    } catch (e) {
+      setOut({ text: "error", error: String(e) });
+    } finally {
+      busy = false;
+    }
+  };
+  createEffect(() => {
+    if (!cwd()) return setOut(null);
+    void refresh();
+    const timer = setInterval(() => void refresh(), Math.max(5, props.item.intervalSeconds ?? 30) * 1000);
+    onCleanup(() => clearInterval(timer));
+  });
+  return (
+    <Show when={out()}>
+      {(o) => (
+        <span class={`item clickable plugin-status${o().error ? " error" : ""}`} data-status-item={`${props.plugin.id}.${props.item.id}`}
+          title={t("{name}: {label}{error} (click to refresh)", { name: props.plugin.manifest?.name ?? props.plugin.id, label: props.item.label ?? props.item.id, error: o().error ? `\n${o().error}` : "" })} onClick={() => void refresh()}>
+          <Show when={props.item.label}><span class="muted-inline">{props.item.label}</span> </Show>{o().error ? t("error") : o().text.slice(0, 60)}
+        </span>
+      )}
+    </Show>
+  );
+}
+
 const AWAKE_TITLE = {
-  off: "Keep computer awake: off (click: while agents work)",
-  agents: "Keep computer awake while an agent is working (click: always)",
-  always: "Keep computer awake: always (click: off)",
+  off: msg("Keep computer awake: off (click: while agents work)"),
+  agents: msg("Keep computer awake while an agent is working (click: always)"),
+  always: msg("Keep computer awake: always (click: off)"),
 } as const;
 
 const awake = () => store.state.settings.keepAwake ?? "off";

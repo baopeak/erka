@@ -20,10 +20,11 @@ fn headless_argv(kind: &str) -> Result<Vec<String>> {
     Ok(argv.iter().map(|s| s.to_string()).collect())
 }
 
-pub fn run(kind: &str, prompt: &str, cwd: &str, timeout: Duration) -> Result<String> {
+/// `env`: extra variables, e.g. the account's `CLAUDE_CONFIG_DIR` / `CODEX_HOME`.
+pub fn run(kind: &str, prompt: &str, cwd: &str, env: &std::collections::BTreeMap<String, String>, timeout: Duration) -> Result<String> {
     let argv = agents::platform_argv(headless_argv(kind)?)?;
     let mut cmd = Command::new(&argv[0]);
-    cmd.args(&argv[1..]).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    cmd.args(&argv[1..]).envs(env).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
     if std::path::Path::new(cwd).is_dir() {
         cmd.current_dir(cwd);
     }

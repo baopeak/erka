@@ -6,8 +6,18 @@ import { store } from "../lib/store";
 import { agentHistoryList, isDir, onEvent } from "../lib/ipc";
 import { isMac, relTimeShort } from "../lib/platform";
 import { newChat, supportsChat } from "../chat/mode-switch";
+import { HOME_VAR, accountHomes, accountLabel, isAccountAgent } from "../lib/accounts";
+
+/** A conversation resumes on the account it was made on. */
+function historyAccount(it: HistoryItem): { account?: string; env?: Record<string, string> } {
+  if (!isAccountAgent(it.agent)) return {};
+  return it.home ? { env: { [HOME_VAR[it.agent]]: it.home } } : { account: "default" };
+}
+
+export const historyAccountLabel = (it: HistoryItem) => (isAccountAgent(it.agent) && it.home ? accountLabel(it.agent, it.home) : null);
 import { Icon, KindGlyph } from "./icons";
 import type { HistoryItem, Project } from "../lib/types";
+import { formatDate, t } from "../lib/i18n";
 
 type Scope = "folder" | "project" | "all";
 const PAGE = 150;
@@ -18,7 +28,7 @@ const [items, setItems] = createSignal<HistoryItem[] | null>(null);
 const [loadError, setLoadError] = createSignal<string | null>(null);
 let inFlight: Promise<void> | null = null;
 function refresh(count = true) {
-  inFlight ??= agentHistoryList(count)
+  inFlight ??= agentHistoryList(count, accountHomes())
     .then((list) => {
       setItems(list);
       setLoadError(null);
@@ -38,20 +48,22 @@ function dayLabel(ms: number): string {
   const start = new Date();
   start.setHours(0, 0, 0, 0);
   const days = Math.floor((start.getTime() - new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()) / 86_400_000);
-  if (days <= 0) return "Today";
-  if (days === 1) return "Yesterday";
-  if (days < 7) return d.toLocaleDateString(undefined, { weekday: "long" });
-  return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+  if (days <= 0) return t("Today");
+  if (days === 1) return t("Yesterday");
+  if (days < 7) return formatDate(d, { weekday: "long" });
+  return formatDate(d);
 }
 
 /** A command that resumes the conversation from a fresh terminal (PowerShell on Windows). */
 function resumeCommand(it: HistoryItem): string {
-  const run = { claude: `claude --resume ${it.id}`, codex: `codex resume ${it.id}`, omp: `omp --resume ${it.id}` }[it.agent];
+  let run = { claude: `claude --resume ${it.id}`, codex: `codex resume ${it.id}`, omp: `omp --resume ${it.id}` }[it.agent];
+  const posix = isMac || (!!it.cwd && !/^[a-z]:|^\\\\/i.test(it.cwd));
+  // Single quotes: no `$`, backtick or wildcard expansion of folder names.
+  const q = (p: string) => (posix ? `'${p.replace(/'/g, "'\\''")}'` : `'${p.replace(/'/g, "''")}'`);
+  // A conversation of another account resumes with that account's config home.
+  if (it.home && isAccountAgent(it.agent)) run = posix ? `${HOME_VAR[it.agent]}=${q(it.home)} ${run}` : `$env:${HOME_VAR[it.agent]}=${q(it.home)}; ${run}`;
   if (!it.cwd) return run;
-  // Single quotes: no `$`, backtick or wildcard expansion of the folder name.
-  return isMac || !/^[a-z]:|^\\\\/i.test(it.cwd)
-    ? `cd '${it.cwd.replace(/'/g, "'\\''")}' && ${run}`
-    : `Set-Location -LiteralPath '${it.cwd.replace(/'/g, "''")}'; ${run}`;
+  return posix ? `cd ${q(it.cwd)} && ${run}` : `Set-Location -LiteralPath ${q(it.cwd)}; ${run}`;
 }
 
 /** The sidebar project owning the folder (deepest match), adding the folder as a project if none. */
@@ -112,15 +124,15 @@ export function HistoryPanel(props: { project: Project }) {
     if (running) return store.revealSession(running);
     const key = `${it.agent}:${it.id}`;
     if (resuming.has(key)) return;
-    if (!it.cwd) return store.notify("This conversation has no folder to resume in");
+    if (!it.cwd) return store.notify(t("This conversation has no folder to resume in"));
     resuming.add(key);
     try {
       // A deleted folder (e.g. a removed worktree) must not turn into a dead project.
-      if (!(await isDir(it.cwd).catch(() => false))) return store.notify(`Folder no longer exists: ${it.cwd}`);
+      if (!(await isDir(it.cwd).catch(() => false))) return store.notify(t("Folder no longer exists: {path}", { path: it.cwd }));
       const pid = projectFor(it);
       const info = chat
-        ? await newChat(pid, it.agent, "tab", { resume: it.id, cwd: it.cwd })
-        : await store.newSession(pid, it.agent, { agentSessionId: it.id, cwd: it.cwd });
+        ? await newChat(pid, it.agent, "tab", { resume: it.id, cwd: it.cwd, home: it.home })
+        : await store.newSession(pid, it.agent, { agentSessionId: it.id, cwd: it.cwd, ...historyAccount(it) });
       // The owning project may not be the one on screen.
       if (info) store.revealSession(info.id);
     } finally {
@@ -131,21 +143,21 @@ export function HistoryPanel(props: { project: Project }) {
   return (
     <div class="history">
       <div class="explorer-tools">
-        <input class="text-input" placeholder="Search conversations" value={query()} onInput={(e) => { setQuery(e.currentTarget.value); setLimit(PAGE); }}
+        <input class="text-input" placeholder={t("Search conversations")} value={query()} onInput={(e) => { setQuery(e.currentTarget.value); setLimit(PAGE); }}
           onKeyDown={(e) => e.key === "Escape" && setQuery("")} />
         <div class="history-scope">
           <div class="seg">
-            <button class={scope() === "folder" ? "on" : ""} title={props.project.path} onClick={() => setScope("folder")}>This folder</button>
-            <button class={scope() === "project" ? "on" : ""} title="This folder and every folder inside it" onClick={() => setScope("project")}>Project</button>
-            <button class={scope() === "all" ? "on" : ""} onClick={() => setScope("all")}>All</button>
+            <button class={scope() === "folder" ? "on" : ""} title={props.project.path} onClick={() => setScope("folder")}>{t("This folder")}</button>
+            <button class={scope() === "project" ? "on" : ""} title={t("This folder and every folder inside it")} onClick={() => setScope("project")}>{t("Project")}</button>
+            <button class={scope() === "all" ? "on" : ""} onClick={() => setScope("all")}>{t("All")}</button>
           </div>
-          <button class="icon-btn" title="Rescan transcripts" onClick={() => void refresh()}><Icon name="refresh" size={14} /></button>
+          <button class="icon-btn" title={t("Rescan transcripts")} onClick={() => void refresh()}><Icon name="refresh" size={14} /></button>
         </div>
       </div>
       <div class="list history-list">
-        <Show when={items() || loadError()} fallback={<div class="muted">Reading transcripts…</div>}>
-          <Show when={!loadError() || items()} fallback={<div class="muted">Could not read transcripts: {loadError()}</div>}>
-            <For each={groups()} fallback={<div class="muted">{query() ? "No matching conversations" : "No conversations here yet"}</div>}>
+        <Show when={items() || loadError()} fallback={<div class="muted">{t("Reading transcripts…")}</div>}>
+          <Show when={!loadError() || items()} fallback={<div class="muted">{t("Could not read transcripts: {error}", { error: loadError() ?? "" })}</div>}>
+            <For each={groups()} fallback={<div class="muted">{query() ? t("No matching conversations") : t("No conversations here yet")}</div>}>
               {(g) => (
                 <>
                   <div class="history-day">{g.day}</div>
@@ -154,20 +166,21 @@ export function HistoryPanel(props: { project: Project }) {
                       <div class={`history-row${live().has(it.id) ? " running" : ""}`} title={[it.title, it.first_prompt, it.cwd].filter(Boolean).join("\n")} onDblClick={() => void resume(it, false)}>
                         <KindGlyph kind={it.agent} size={14} />
                         <div class="history-text">
-                          <div class="history-title">{it.title ?? it.first_prompt ?? "(no prompt)"}</div>
+                          <div class="history-title">{it.title ?? it.first_prompt ?? t("(no prompt)")}</div>
                           <div class="history-sub">
                             <Show when={scope() !== "folder" && it.cwd}><span class="history-dir">{it.cwd.split(/[\\/]/).pop()}</span></Show>
                             <span>{relTimeShort(it.updated_at)}</span>
-                            <Show when={it.turns}><span>{it.turns} {it.turns === 1 ? "prompt" : "prompts"}</span></Show>
-                            <Show when={live().has(it.id)}><span class="history-live">open</span></Show>
+                            <Show when={it.turns}><span>{it.turns === 1 ? t("{n} prompt", { n: it.turns }) : t("{n} prompts", { n: it.turns ?? 0 })}</span></Show>
+                            <Show when={live().has(it.id)}><span class="history-live">{t("open")}</span></Show>
+                            <Show when={historyAccountLabel(it)}>{(l) => <span class="history-account" title={t("Account")}>{l()}</span>}</Show>
                           </div>
                         </div>
                         <div class="row-actions" onDblClick={(e) => e.stopPropagation()}>
-                          <button class="icon-btn" title={live().has(it.id) ? "Show the running session" : "Resume in terminal"} onClick={() => void resume(it, false)}><Icon name="terminal" size={13} /></button>
+                          <button class="icon-btn" title={live().has(it.id) ? t("Show the running session") : t("Resume in terminal")} onClick={() => void resume(it, false)}><Icon name="terminal" size={13} /></button>
                           <Show when={supportsChat(it.agent) && !live().has(it.id)}>
-                            <button class="icon-btn" title="Open in chat view" onClick={() => void resume(it, true)}><Icon name="chat" size={13} /></button>
+                            <button class="icon-btn" title={t("Open in chat view")} onClick={() => void resume(it, true)}><Icon name="chat" size={13} /></button>
                           </Show>
-                          <button class="icon-btn" title="Copy resume command" onClick={() => void writeText(resumeCommand(it)).then(() => store.notify("Resume command copied"))}><Icon name="copy" size={13} /></button>
+                          <button class="icon-btn" title={t("Copy resume command")} onClick={() => void writeText(resumeCommand(it)).then(() => store.notify(t("Resume command copied")))}><Icon name="copy" size={13} /></button>
                         </div>
                       </div>
                     )}
@@ -176,7 +189,7 @@ export function HistoryPanel(props: { project: Project }) {
               )}
             </For>
             <Show when={filtered().length > limit()}>
-              <button class="btn history-more" onClick={() => setLimit((l) => l + PAGE)}>Show more ({filtered().length - limit()})</button>
+              <button class="btn history-more" onClick={() => setLimit((l) => l + PAGE)}>{t("Show more ({n})", { n: filtered().length - limit() })}</button>
             </Show>
           </Show>
         </Show>

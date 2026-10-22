@@ -5,7 +5,9 @@ import { gitState } from "../lib/git-state";
 import { Explorer } from "./explorer";
 import { GitPanel } from "./git-panel";
 import { HistoryPanel } from "./history-panel";
+import { IssuesPanel } from "./issues-panel";
 import type { Project } from "../lib/types";
+import { t } from "../lib/i18n";
 
 export function RightPanel(props: { project: Project }) {
   const panel = () => store.workspace(props.project.id).rightPanel;
@@ -34,7 +36,7 @@ export function RightPanel(props: { project: Project }) {
     el.addEventListener("pointerup", up);
   };
 
-  const tab = (id: "files" | "git" | "history", label: string) => (
+  const tab = (id: "files" | "git" | "history" | "issues", label: string) => (
     <button class={`ptab${panel() === id || (id === "files" && panel() === "search") ? " active" : ""}`} onClick={() => store.showRightPanel(id)}>
       {label}
       {id === "git" && gitState.status()?.files.length ? ` ${gitState.status()!.files.length}` : ""}
@@ -45,15 +47,17 @@ export function RightPanel(props: { project: Project }) {
     <aside class="rightpanel">
       <div class="panel-resizer" onPointerDown={startResize} />
       <div class="panel-tabs">
-        {tab("files", "Files")}
-        {tab("git", "Changes")}
-        {tab("history", "Sessions")}
+        {tab("files", t("Files"))}
+        {tab("git", t("Changes"))}
+        {tab("history", t("Sessions"))}
+        {tab("issues", t("Issues"))}
       </div>
       <div class="panel-body">
         <Switch>
           <Match when={panel() === "files" || panel() === "search"}><Explorer project={props.project} /></Match>
           <Match when={panel() === "git"}><GitPanel project={props.project} /></Match>
           <Match when={panel() === "history"}><HistoryPanel project={props.project} /></Match>
+          <Match when={panel() === "issues"}><IssuesPanel project={props.project} /></Match>
         </Switch>
       </div>
     </aside>

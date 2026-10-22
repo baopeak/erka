@@ -13,6 +13,11 @@ use crate::git::git;
 
 /// Network git: never prompts on a terminal (there is none) and gives up after a while.
 async fn git_net(cwd: &Path, args: &[&str]) -> CmdResult<String> {
+    if let Some(dir) = cwd.to_str().filter(|d| crate::remote::is_remote(d)) {
+        let out = crate::remote::git(dir, args).await?;
+        let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), out.stderr);
+        return if out.ok { Ok(text.trim().to_string()) } else { Err(text.trim().to_string()) };
+    }
     let mut cmd = tokio::process::Command::new("git");
     cmd.args(["-c", "color.ui=false"])
         .args(args)
@@ -92,6 +97,21 @@ pub async fn git_remote(root: String, action: String) -> CmdResult<String> {
 
 /// The operation in progress in this worktree (merge, rebase, cherry-pick, revert), if any.
 pub async fn operation(dir: &Path) -> Option<&'static str> {
+    if let Some(d) = dir.to_str().filter(|d| crate::remote::is_remote(d)) {
+        // The same markers, looked up on the host.
+        let r = crate::remote::parse_root(d)?;
+        let script = format!(
+            "cd {} && g=$(git rev-parse --absolute-git-dir) || exit 0; if [ -e \"$g/rebase-merge\" ] || [ -e \"$g/rebase-apply\" ]; then echo rebase; elif [ -e \"$g/MERGE_HEAD\" ]; then echo merge; elif [ -e \"$g/CHERRY_PICK_HEAD\" ]; then echo cherry-pick; elif [ -e \"$g/REVERT_HEAD\" ]; then echo revert; fi",
+            crate::remote::q(&r.path)
+        );
+        return match crate::remote::exec_ok(&r, &script).await.ok()?.trim() {
+            "rebase" => Some("rebase"),
+            "merge" => Some("merge"),
+            "cherry-pick" => Some("cherry-pick"),
+            "revert" => Some("revert"),
+            _ => None,
+        };
+    }
     let gd = output(dir, &["rev-parse", "--absolute-git-dir"]).await.ok()?;
     let gd = Path::new(gd.trim());
     if gd.join("rebase-merge").exists() || gd.join("rebase-apply").exists() {

@@ -77,6 +77,9 @@ try:
 
     # Pane tools: split from the hover toolbar, then maximize and restore.
     d.js("document.querySelector('.pane-tools button[title=\"Split right\"]').click()")
+    # The new pane asks what to run: key 1..9 picks; Terminal is the last launcher entry.
+    d.wait("return !!document.querySelector('.empty-pane')", 10)
+    d.js("[...document.querySelectorAll('.empty-pane-kind')].find(b => b.title === 'Terminal').click()")
     d.wait("return document.querySelectorAll('.pane .term-host .xterm').length === 2", 20)
     run.check("pane toolbar splits", True)
     d.js("document.querySelector('.pane-header button[title=\"Maximize pane\"]').click()")

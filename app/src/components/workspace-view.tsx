@@ -1,22 +1,34 @@
-import { For, Show, createEffect, createMemo, onCleanup, onMount } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 import { store, sessionLabel } from "../lib/store";
 import { allPanes } from "../lib/layout";
 import { chordLabel } from "../lib/platform";
 import { chordOf, commands } from "../lib/commands";
 import { basename } from "../lib/platform";
 import { Icon, KindGlyph } from "./icons";
-import { SplitView } from "./split-view";
+import { SplitView, paneDrag, startTabDrag } from "./split-view";
 import { StatusDot } from "./sidebar";
 import { Launcher } from "./welcome";
+import { openLayoutMenu } from "./layout-menu";
+import { browserState, openBrowser } from "../lib/browser";
 import type { Pane, Project, Tab } from "../lib/types";
+import { t } from "../lib/i18n";
 
 export function paneTitle(pane: Pane): string {
   if (pane.sessionId) {
     const s = store.sessions[pane.sessionId];
-    return s ? sessionLabel(s) : "Session";
+    return s ? sessionLabel(s) : t("Session");
   }
   if (pane.path) return (pane.kind === "diff" ? "Δ " : "") + basename(pane.path);
-  return "Empty";
+  if (pane.kind === "browser") {
+    const title = browserState[pane.id]?.title;
+    if (title) return title;
+    try {
+      return pane.url ? new URL(pane.url).host || t("Browser") : t("Browser");
+    } catch {
+      return t("Browser");
+    }
+  }
+  return t("Empty pane");
 }
 
 function TabTitle(props: { tab: Tab }) {
@@ -29,8 +41,9 @@ function TabTitle(props: { tab: Tab }) {
         {(s) => <StatusDot s={s()} />}
       </Show>
       <Show when={session()}>{(s) => <KindGlyph kind={s().kind} size={14} />}</Show>
+      <Show when={props.tab.broadcast}><span class="badge broadcast-badge" title={t("Broadcast input is on")}>⇶</span></Show>
       <span class="title">
-        {paneTitle(focus())}
+        {props.tab.name ?? paneTitle(focus())}
         <Show when={panes().length > 1}> <span style={{ color: "var(--text-faint)" }}>+{panes().length - 1}</span></Show>
       </span>
     </>
@@ -40,6 +53,7 @@ function TabTitle(props: { tab: Tab }) {
 export function WorkspaceView(props: { project: Project }) {
   const ws = () => store.workspace(props.project.id);
   const active = () => store.activeTab(props.project.id);
+  const [renaming, setRenaming] = createSignal<string | null>(null);
   const hint = (id: string) => {
     const c = commands.find((x) => x.id === id);
     const k = c && chordOf(c);
@@ -48,7 +62,7 @@ export function WorkspaceView(props: { project: Project }) {
 
   const closeTab = async (tab: Tab) => {
     const live = allPanes(tab.root).filter((p) => p.sessionId && store.sessions[p.sessionId]?.alive && store.sessions[p.sessionId]?.kind !== "shell");
-    if (live.length && !confirm(`Stop ${live.length} running agent session(s) in this tab?`)) return;
+    if (live.length && !confirm(live.length === 1 ? t("Stop {n} running agent session in this tab?", { n: live.length }) : t("Stop {n} running agent sessions in this tab?", { n: live.length }))) return;
     for (const pane of allPanes(tab.root)) await store.closePane(props.project.id, tab.id, pane.id);
   };
 
@@ -67,30 +81,52 @@ export function WorkspaceView(props: { project: Project }) {
 
   return (
     <>
-      <div class={`tabbar${ws().rightPanel ? " panel-open" : ""}`}>
+      <div class={`tabbar${ws().rightPanel ? " panel-open" : ""}${paneDrag()?.toTab === "new" ? " drop-new" : ""}`}>
         <div class="tabs" ref={tabsRef}>
           <For each={ws().tabs}>
             {(tab) => (
               <div
-                class={`tab${active()?.id === tab.id ? " active" : ""}`}
+                class={`tab${active()?.id === tab.id ? " active" : ""}${paneDrag()?.toTab === tab.id ? " drop-target" : ""}${paneDrag()?.tabId === tab.id && !paneDrag()?.paneId ? " dragging" : ""}`}
+                data-tab-id={tab.id}
+                title={t("Drag to reorder, or onto a pane edge to merge")}
+                onPointerDown={(e) => renaming() !== tab.id && startTabDrag(e, props.project, tab)}
                 onClick={() => store.selectTab(props.project.id, tab.id)}
+                onDblClick={() => setRenaming(tab.id)}
                 onAuxClick={(e) => e.button === 1 && void closeTab(tab)}
               >
-                <TabTitle tab={tab} />
+                <Show when={renaming() === tab.id} fallback={<TabTitle tab={tab} />}>
+                  <input
+                    class="tab-rename"
+                    value={tab.name ?? ""}
+                    placeholder={t("Tab name")}
+                    ref={(el) => queueMicrotask(() => { el.focus(); el.select(); })}
+                    onClick={(e) => e.stopPropagation()}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") e.currentTarget.blur();
+                      if (e.key === "Escape") { e.currentTarget.value = tab.name ?? ""; e.currentTarget.blur(); }
+                    }}
+                    onBlur={(e) => { store.renameTab(props.project.id, tab.id, e.currentTarget.value); setRenaming(null); }}
+                  />
+                </Show>
                 <button class="icon-btn close" onClick={(e) => { e.stopPropagation(); void closeTab(tab); }}><Icon name="close" size={12} /></button>
               </div>
             )}
           </For>
         </div>
+        <Show when={paneDrag()?.barX}>
+          {(x) => <div class="tab-insert" style={{ left: `${x()}px`, top: `${tabsRef.getBoundingClientRect().top + 5}px` }} />}
+        </Show>
         <div class="tabbar-actions">
-          <button class="icon-btn" title={`New terminal${hint("new.shell")}`} onClick={() => void store.newSession(props.project.id, "shell")}><Icon name="terminal" /></button>
-          <button class="icon-btn" title={`New session…${hint("new.menu")}`} onClick={() => store.setOverlay("newsession")}><Icon name="plus" /></button>
-          <button class="icon-btn" title={`Split right${hint("split.right")}`} onClick={() => void store.newSession(props.project.id, "shell", { where: "right" })}><Icon name="splitRight" /></button>
-          <button class="icon-btn" title={`Split down${hint("split.down")}`} onClick={() => void store.newSession(props.project.id, "shell", { where: "down" })}><Icon name="splitDown" /></button>
+          <button class="icon-btn" title={t("New terminal") + hint("new.shell")} onClick={() => void store.newSession(props.project.id, "shell")}><Icon name="terminal" /></button>
+          <button class="icon-btn" title={t("New session…") + hint("new.menu")} onClick={() => store.setOverlay("newsession")}><Icon name="plus" /></button>
+          <button class="icon-btn" title={t("Split right") + hint("split.right")} onClick={() => store.splitPicker(props.project.id, "right")}><Icon name="splitRight" /></button>
+          <button class="icon-btn" title={t("Split down") + hint("split.down")} onClick={() => store.splitPicker(props.project.id, "down")}><Icon name="splitDown" /></button>
+          <button class="icon-btn" title={t("Browser") + hint("browser.open")} onClick={() => openBrowser()}><Icon name="globe" /></button>
+          <button class="icon-btn layout-btn" title={t("Layout: grid, equal sizes, broadcast, saved layouts") + hint("layout.menu")} disabled={!active()} onClick={(e) => openLayoutMenu(e, props.project, active())}><Icon name="grid" /></button>
           <span class="panel-toggle" style={{ width: "8px" }} />
-          <button class={`icon-btn panel-toggle${ws().rightPanel === "files" ? " active" : ""}`} title={`Explorer${hint("panel.files")}`} onClick={() => store.setRightPanel("files")}><Icon name="files" /></button>
-          <button class={`icon-btn panel-toggle${ws().rightPanel === "git" ? " active" : ""}`} title={`Source control${hint("panel.git")}`} onClick={() => store.setRightPanel("git")}><Icon name="git" /></button>
-          <button class={`icon-btn panel-toggle${ws().rightPanel === "search" ? " active" : ""}`} title={`Search${hint("panel.search")}`} onClick={() => store.setRightPanel("search")}><Icon name="search" /></button>
+          <button class={`icon-btn panel-toggle${ws().rightPanel === "files" ? " active" : ""}`} title={t("Explorer") + hint("panel.files")} onClick={() => store.setRightPanel("files")}><Icon name="files" /></button>
+          <button class={`icon-btn panel-toggle${ws().rightPanel === "git" ? " active" : ""}`} title={t("Source control") + hint("panel.git")} onClick={() => store.setRightPanel("git")}><Icon name="git" /></button>
+          <button class={`icon-btn panel-toggle${ws().rightPanel === "search" ? " active" : ""}`} title={t("Search") + hint("panel.search")} onClick={() => store.setRightPanel("search")}><Icon name="search" /></button>
         </div>
       </div>
       <div class="tab-content">

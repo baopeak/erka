@@ -2,6 +2,7 @@
 // about keys another command already uses and keys terminal programs rely on.
 import { For, Show, createMemo, createSignal, onCleanup } from "solid-js";
 import { store } from "../../lib/store";
+import { t, translated } from "../../lib/i18n";
 import { commands, chordOf, commandsWithChord, defaultChordOf, eventChord, normalizeChord, suspendKeymap } from "../../lib/commands";
 import { chordLabel, isMac } from "../../lib/platform";
 import { entryMatches, catalogEntry } from "../../lib/settings-catalog";
@@ -17,8 +18,8 @@ interface Pending {
 /** Chords that can never be a shortcut (they would stop a character from being typed). */
 function unusable(chord: string): string | null {
   const mods = chord.split("+").slice(0, -1);
-  if (!mods.length) return "Add Ctrl, Alt or Cmd: a single key belongs to the terminal.";
-  if (mods.every((m) => m === "shift")) return "Shift alone only changes the character typed; add Ctrl, Alt or Cmd.";
+  if (!mods.length) return t("Add Ctrl, Alt or Cmd: a single key belongs to the terminal.");
+  if (mods.every((m) => m === "shift")) return t("Shift alone only changes the character typed; add Ctrl, Alt or Cmd.");
   return null;
 }
 
@@ -29,15 +30,15 @@ function tuiConflict(chord: string): string | null {
   const mods = parts.slice(0, -1);
   const letter = /^[a-z\[\]\\]$/.test(key);
   const is = (...m: string[]) => mods.length === m.length && m.every((x) => mods.includes(x));
-  if (!isMac && is("mod", "shift") && (key === "c" || key === "v")) return `Ctrl+Shift+${key.toUpperCase()} copies / pastes in terminals.`;
-  if (isMac && is("mod") && "cvxza".includes(key) && key.length === 1) return `⌘${key.toUpperCase()} is copy, paste, cut, undo or select-all everywhere.`;
-  if (!isMac && is("mod", "alt")) return `Ctrl+Alt is AltGr on many keyboard layouts: ${key.toUpperCase()} may type a character there (e.g. @ € { }).`;
+  if (!isMac && is("mod", "shift") && (key === "c" || key === "v")) return t("Ctrl+Shift+{key} copies / pastes in terminals.", { key: key.toUpperCase() });
+  if (isMac && is("mod") && "cvxza".includes(key) && key.length === 1) return t("⌘{key} is copy, paste, cut, undo or select-all everywhere.", { key: key.toUpperCase() });
+  if (!isMac && is("mod", "alt")) return t("Ctrl+Alt is AltGr on many keyboard layouts: {key} may type a character there (e.g. @ € { }).", { key: key.toUpperCase() });
   if (!isMac && mods.length === 1 && mods[0] === "mod" && letter)
-    return `Ctrl+${key.toUpperCase()} is used by shells and agent TUIs (Ctrl+C, Ctrl+R history, Ctrl+P/N, Ctrl+J…); terminals would no longer receive it.`;
+    return t("Ctrl+{key} is used by shells and agent TUIs (Ctrl+C, Ctrl+R history, Ctrl+P/N, Ctrl+J…); terminals would no longer receive it.", { key: key.toUpperCase() });
   if (isMac && mods.includes("ctrl") && !mods.includes("mod") && letter)
-    return `⌃${key.toUpperCase()} is a terminal control key; terminals would no longer receive it.`;
+    return t("⌃{key} is a terminal control key; terminals would no longer receive it.", { key: key.toUpperCase() });
   if (mods.length === 1 && mods[0] === "alt" && letter)
-    return `${isMac ? "⌥" : "Alt+"}${key.toUpperCase()} moves by word in shells and agent TUIs.`;
+    return t("{mod}{key} moves by word in shells and agent TUIs.", { mod: isMac ? "⌥" : "Alt+", key: key.toUpperCase() });
   return null;
 }
 
@@ -57,7 +58,7 @@ export function ShortcutSettings() {
   const rows = createMemo(() => {
     const words = query().toLowerCase().split(/\s+/).filter(Boolean);
     return commands.filter((c) => {
-      const hay = `${c.label} ${c.id} ${chordOf(c) ? chordLabel(chordOf(c)!) : ""}`.toLowerCase();
+      const hay = `${c.label} ${t(c.label)} ${c.id} ${chordOf(c) ? chordLabel(chordOf(c)!) : ""}`.toLowerCase();
       return words.every((w) => hay.includes(w));
     });
   });
@@ -112,41 +113,41 @@ export function ShortcutSettings() {
   return (
     <SettingRow id="shortcuts" wide match={shortcutsMatch}>
       <div class="shortcuts">
-        <input class="text-input" placeholder="Filter commands or keys" value={filter()} onInput={(e) => setFilter(e.currentTarget.value)} />
+        <input class="text-input" placeholder={t("Filter commands or keys")} value={filter()} onInput={(e) => setFilter(e.currentTarget.value)} />
         <Show when={pending()}>
           {(p) => (
             <div class="shortcut-warn" data-pending={p().id}>
               <div>
-                <b>{chordLabel(p().chord)}</b> for “{commands.find((c) => c.id === p().id)?.label}”
-                <Show when={p().conflicts.length}><div>Already used by {p().conflicts.join(", ")} — assigning removes it there.</div></Show>
+                <b>{chordLabel(p().chord)}</b> {t("for “{name}”", { name: t(commands.find((c) => c.id === p().id)?.label ?? "") })}
+                <Show when={p().conflicts.length}><div>{t("Already used by {names} — assigning removes it there.", { names: p().conflicts.map((x) => t(x)).join(", ") })}</div></Show>
                 <Show when={p().tui}><div>{p().tui}</div></Show>
               </div>
               <div class="inline-fields">
-                <button class="btn primary" onClick={() => assign(p())}>Assign anyway</button>
-                <button class="btn" onClick={() => setPending(null)}>Cancel</button>
+                <button class="btn primary" onClick={() => assign(p())}>{t("Assign anyway")}</button>
+                <button class="btn" onClick={() => setPending(null)}>{t("Cancel")}</button>
               </div>
             </div>
           )}
         </Show>
         <div class="shortcut-table">
-          <For each={rows()} fallback={<div class="muted">No matching commands</div>}>
+          <For each={rows()} fallback={<div class="muted">{t("No matching commands")}</div>}>
             {(c) => {
               const chord = () => chordOf(c);
               const overridden = () => store.state.keymap?.[c.id] !== undefined;
               return (
                 <div class={`shortcut-row${recording() === c.id ? " recording" : ""}`} data-command={c.id}>
-                  <span class="shortcut-label">{c.label}</span>
+                  <span class="shortcut-label">{t(c.label)}</span>
                   <span class="shortcut-key">
                     <Show when={recording() === c.id} fallback={<Show when={chord()} fallback={<span class="muted-inline">—</span>}><span class="kbd">{chordLabel(chord()!)}</span></Show>}>
-                      <span class="kbd live">{hint() ?? "Press keys… (Esc cancels)"}</span>
+                      <span class="kbd live">{hint() ?? t("Press keys… (Esc cancels)")}</span>
                     </Show>
-                    <Show when={chord() && commandsWithChord(chord()!, c.id).length}><span class="clash" title={`Also bound to ${commandsWithChord(chord()!, c.id).map((x) => x.label).join(", ")}`}>clash</span></Show>
-                    <Show when={overridden()}><span class="changed" title={`Default: ${defaultChordOf(c) ? chordLabel(defaultChordOf(c)!) : "none"}`}>changed</span></Show>
+                    <Show when={chord() && commandsWithChord(chord()!, c.id).length}><span class="clash" title={t("Also bound to {names}", { names: commandsWithChord(chord()!, c.id).map((x) => t(x.label)).join(", ") })}>{t("clash")}</span></Show>
+                    <Show when={overridden()}><span class="changed" title={t("Default: {key}", { key: defaultChordOf(c) ? chordLabel(defaultChordOf(c)!) : t("none") })}>{t("changed")}</span></Show>
                   </span>
                   <span class="shortcut-actions">
-                    <button class="btn mini" onClick={() => record(c.id)}>Change</button>
-                    <Show when={chord()}><button class="btn mini" onClick={() => store.setShortcut(c.id, "")}>Remove</button></Show>
-                    <Show when={overridden()}><button class="btn mini" onClick={() => reset(c.id)}>Reset</button></Show>
+                    <button class="btn mini" onClick={() => record(c.id)}>{t("Change")}</button>
+                    <Show when={chord()}><button class="btn mini" onClick={() => store.setShortcut(c.id, "")}>{t("Remove")}</button></Show>
+                    <Show when={overridden()}><button class="btn mini" onClick={() => reset(c.id)}>{t("Reset")}</button></Show>
                   </span>
                 </div>
               );
@@ -161,5 +162,5 @@ export function ShortcutSettings() {
 /** The shortcuts section shows when the page search matches it or any command. */
 export function shortcutsMatch(q: string): boolean {
   const words = q.toLowerCase().split(/\s+/).filter(Boolean);
-  return entryMatches(catalogEntry("shortcuts")!, q) || commands.some((c) => words.every((w) => c.label.toLowerCase().includes(w)));
+  return entryMatches(catalogEntry("shortcuts")!, q) || commands.some((c) => words.every((w) => `${c.label} ${translated(c.label) ?? ""}`.toLowerCase().includes(w)));
 }

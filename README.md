@@ -22,6 +22,7 @@ Agents live in a background session daemon, so switching projects, closing the w
   - [Files, viewers and search](#files-viewers-and-search)
   - [Activity and automations](#activity-and-automations)
   - [Usage, settings and shortcuts](#usage-settings-and-shortcuts)
+  - [Layouts, runs, remote hosts and more](#layouts-runs-remote-hosts-and-more)
 - [How it works](#how-it-works)
 - [Performance](#performance)
 - [Install](#install)
@@ -57,7 +58,8 @@ Agents live in a background session daemon, so switching projects, closing the w
 ### Terminals
 
 - xterm.js with the WebGL renderer, a bundled modern ConPTY on Windows, true colour, Nerd Font glyphs, OSC 52 clipboard (only from the visible terminal), links, find, drag-and-drop of file paths.
-- Splits right / down, maximize, tabs per project, keyboard focus cycling.
+- Splits right / down that ask which agent or shell to start, maximize, tabs per project (drag to reorder or merge), keyboard focus cycling.
+- **Long output**: scrolled up, a pill counts new lines and takes you back to the bottom; `Ctrl+Shift+↑ / ↓` jumps between the prompts you sent, so a conversation of thousands of lines reads turn by turn.
 - **Context menu**: copy, paste, select all, *Copy Context* (the transcript, ready to paste into another agent), find, clear, split, insert a quick command, hand off to another agent.
 - **Nine terminal colour themes** (Dracula, Nord, One Dark, Tokyo Night, Catppuccin Mocha, Gruvbox, Solarized dark / light, GitHub Light) on top of the dark and light app themes; the daemon's snapshots use the same palette.
 - **Floating terminal**: a global shell over everything, one shortcut away (`Ctrl+Shift+`` ` / `⌘⌥A`); it keeps running when hidden.
@@ -137,6 +139,21 @@ Agents live in a background session daemon, so switching projects, closing the w
 ![Light theme](docs/screenshots/light.png)
 *Light theme — the interface, terminals and editors switch together.*
 
+### Layouts, runs, remote hosts and more
+
+- **Grid layouts**: arrange a tab as rows × columns (or per-row counts like `3,2`), start one agent per cell, drag panes to swap or move them, equalize, focus panes by direction, broadcast typing to every terminal of a tab, save layouts and open them from a project's start page.
+- **Resume after a restart**: when the daemon stops while agents work (reboot, update, crash), their sessions come back interrupted and resume the same conversation when you open them, all at once, or on request.
+- **Several Claude Code / Codex accounts**, each with its own sign-in, settings, history and usage meter; new sessions use the active account, running ones keep theirs.
+- **Orchestration runs**: split a job into agent tasks with dependencies, approval gates and a worktree per task (or let an AI plan them); the daemon runs them and agents report back with `erkad run report`.
+- **Linear, Jira and GitLab**: your issues in a panel (start an agent or a worktree from one, change its state), GitLab merge requests and pipelines next to GitHub pull requests. Tokens stay in the OS credential store.
+- **Browser panes with design mode**: open a page next to your agents, click elements to collect their selector, HTML and screenshot, and send them to an agent; localhost links from terminals open there.
+- **Remote projects over SSH**: terminals and agents on another machine (kept alive in tmux), with files, search and git through your own `ssh` config.
+- **SSH hosts (Termius-style)**: saved hosts with groups, tags and notes; key, agent or password login (passwords in the OS credential store); one click for a terminal or **Claude Code on the server** in tmux; fingerprint check on first connect; file browser with upload / download; keys (generate, import, install on a host, add to the agent); known hosts; local / remote / SOCKS port forwarding; a command run on several hosts at once.
+- **Phone access** (opt-in): pair a phone with a QR code to see every session, read its screen and answer agents that need you.
+- **Voice dictation** on this computer: Vietnamese or ~100 languages with Whisper, into any text field or terminal.
+- **Plugins**: declarative manifests that add agents, commands, quick commands, themes, layouts and status-bar items, enabled only after you review what they run.
+- **English and Vietnamese** interface.
+
 Screenshots are taken from the running app by [`scripts/e2e/readme_shots.py`](scripts/e2e/readme_shots.py).
 
 ## How it works
@@ -146,10 +163,11 @@ Erka (Tauri app)                          erkad (session daemon, one per user)
 ├─ WebView: SolidJS UI, xterm.js, CM6     ├─ Session × N  (PTY + VT state + ring buffer)
 ├─ Rust core: daemon client, fs, git,     ├─ ChatSession × N (agent stdio JSON relay)
 │  search, file watcher, transcript       ├─ status ticker (250 ms) + persistence (30 s)
-│  history, usage, memory meter, gh       ├─ automations, keep-awake, worktree comments
-└─ local socket ◄──────────────────────►  └─ local socket server
-                                          erkad hook  ◄── agent hooks (Claude/Codex)
-                                          erkad terminal / worktree ◄── scripts, agents
+│  history, usage, memory meter, gh,      ├─ automations, runs, keep-awake, comments
+│  accounts, plugins, integrations, ssh   ├─ phone server (opt-in)
+├─ local socket ◄──────────────────────►  └─ local socket server
+└─ erka-stt (speech helper, on demand)    erkad hook  ◄── agent hooks (Claude/Codex)
+                                          erkad terminal / worktree / run ◄── scripts, agents
 ```
 
 - **The UI owns nothing that must keep running.** `erkad` parses every PTY byte once (`alacritty_terminal`), keeps a 1 MiB ring and an ANSI snapshot per session, and fans output out to attached views. A slow view is told to resync; the PTY never pauses.
@@ -180,7 +198,7 @@ Installers are produced by CI (`.github/workflows/ci.yml`) as build artifacts:
 - **Windows**: `Erka_x.y.z_x64-setup.exe` (per-user NSIS installer, no admin needed).
 - **macOS**: `.dmg` — drag Erka to Applications.
 
-Optional: the GitHub CLI (`gh`, signed in) for pull requests, and VS Code / Cursor / Zed / … for *Open in*.
+Optional: the GitHub CLI (`gh`, signed in) for pull requests; VS Code / Cursor / Zed / … for *Open in*; an OpenSSH client (built into Windows 10+ and macOS) and, on remote hosts, `tmux` for remote projects.
 
 ## Build from source
 
@@ -211,6 +229,8 @@ erkad terminal wait 3 --timeout-ms 600000     # until it stops working
 erkad terminal read 3 --lines 80              # its last 80 lines, scrollback included
 erkad worktree set --comment "fix reproduced; writing test" --status progress
 erkad worktree get                            # comment and status of this worktree
+erkad run create run.json                     # an orchestration run (tasks, deps, approvals)
+erkad run report done "tests pass"            # from inside a run's agent session
 ```
 
 The raw daemon API is available too:
@@ -240,6 +260,10 @@ App shortcuts use `Ctrl+Shift` on Windows so plain `Ctrl+letter` keys reach the 
 | Word wrap (editor focused) | Alt+Z | ⌥Z |
 | Next / previous change in a diff | F7 / Shift+F7 | F7 / ⇧F7 |
 | Back / forward | Alt+Shift+← / → | ⌘⌥← / → |
+| Layout menu, focus pane by direction | Ctrl+Shift+L, Ctrl+Alt+arrows | ⌘⇧L, ⌃⌥ arrows |
+| Runs, browser, dictate | Ctrl+Shift+R, Ctrl+Shift+U, Ctrl+Shift+Space | ⌘⇧R, ⌘⇧U, ⌘⇧Space |
+| SSH hosts | Ctrl+Alt+H | ⌘⌥H |
+| Previous / next prompt in a terminal | Ctrl+Shift+↑ / ↓ | ⌘↑ / ↓ |
 | Project 1…9 | Alt+1…9 | ⌘1…9 |
 | Settings | Ctrl+, | ⌘, |
 
@@ -247,7 +271,8 @@ The full list is in the [user guide](docs/user-guide.md#keyboard-shortcuts).
 
 ## Privacy and data
 
-- Everything stays on your machine: sessions, layouts, settings, worktree comments and automations live in `%LOCALAPPDATA%\Erka` (Windows) or `~/Library/Application Support/Erka` (macOS). There is no telemetry and no network port.
+- Everything stays on your machine: sessions, layouts, settings, worktree comments, automations, runs, plugins and speech models live in `%LOCALAPPDATA%\Erka` (Windows) or `~/Library/Application Support/Erka` (macOS). There is no telemetry. No network port is opened unless you turn on **phone access** (one address and port you choose, paired devices only, optional HTTPS).
+- **Network use you ask for**: issue trackers and GitLab (with tokens kept in the OS credential store), remote projects and saved SSH hosts through your `ssh` (saved passwords and key passphrases stay in the OS credential store), plugin installs from git, and one-time speech-model downloads (GitHub / Hugging Face, checked against pinned SHA-256). Voice is recognised locally.
 - **Usage meters** read the agents' own sign-in (`~/.claude/.credentials.json` or the macOS keychain, and `~/.codex/auth.json`). Tokens stay in Erka's Rust core and are sent only to the vendor's usage endpoint, identifying as Erka; the UI only sees percentages and reset times. The meters can be turned off in Settings.
 - **AI helpers** (commit messages, PR text, conflict help) run your installed `claude` or `codex` CLI with your own sign-in; only the diff or context shown in the request is sent. **Pull requests** go through your `gh` login.
 - **Session history** reads the agents' transcript folders (`~/.claude/projects`, `~/.codex/sessions`, `~/.omp/agent/sessions`) locally.
@@ -258,7 +283,7 @@ The full list is in the [user guide](docs/user-guide.md#keyboard-shortcuts).
 
 ```bash
 cargo test --workspace             # protocol, daemon, app backend
-cd app && pnpm typecheck
+cd app && pnpm typecheck && pnpm i18n:check
 erkad bench --sessions 20 --mb 2   # daemon throughput
 ```
 
@@ -271,6 +296,14 @@ End-to-end tests drive the real app through WebDriver (`tauri-driver` + a matchi
 | `scripts/e2e/chat.py` | Claude / Codex / OMP: TUI ↔ chat with the same conversation (real model calls) |
 | `scripts/e2e/phase1.py` … `phase5.py` | key hints, explorer, sidebar, search, history, usage, quick commands, settings, shortcuts, navigation, themes, worktrees, board, state migration |
 | `scripts/e2e/parity.py` | agent presets and Yolo, startup prompts, `erkad terminal` / `worktree` CLI, push / pull / sync / abort, worktree copy / link, review notes, inbox, floating terminal, hibernation, keep-awake, themes, viewers, automations (`--ai`: one real one-shot call) |
+| `scripts/e2e/layouts.py` | grids, per-row counts, drag to swap / move, equalize, broadcast, saved layouts, resume after a daemon restart (real Claude, terminal and chat) |
+| `scripts/e2e/accounts.py`, `runs.py`, `integrations.py` | several accounts; orchestration runs (real agent reporting, AI planning); Linear / Jira / GitLab (GitLab live) |
+| `scripts/e2e/browser.py`, `remote.py`, `mobile.py` | browser panes and design mode (trusted page input via DevTools); SSH projects (local test host); phone pairing and replies |
+| `scripts/e2e/ssh_hosts.py` | SSH hosts page against a local test host: password login through askpass, fingerprint check, terminal and Claude Code on the host, files, port forwards, keys installed and used, known hosts, config import (set `ERKA_SSH_DIR`) |
+| `scripts/e2e/agent_resume.py` | Claude / Codex / OMP resume the same conversation after the daemon is killed (real model calls, daemon only) |
+| `scripts/e2e/scrollback.py` | long output: back-to-bottom with a new-lines count, jumping between the prompts sent |
+| `scripts/e2e/plugins.py`, `voice.py` | plugin install / review / every contribution; speech-model download, dictation into terminals and fields |
+| `scripts/e2e/i18n.py` | Vietnamese interface: no untranslated text on 30 surfaces, dates, switching languages without a reload |
 | `scripts/e2e/ui_tour.py` | screenshots of every surface in dark, light, compact and small-window layouts |
 | `scripts/e2e/readme_shots.py` | the screenshots in this README, from a demo repository |
 
@@ -280,7 +313,8 @@ End-to-end tests drive the real app through WebDriver (`tauri-driver` + a matchi
 app/                 Tauri app: SolidJS UI (src/) and Rust core (src-tauri/)
 crates/erka-proto/   wire protocol and endpoint / data-dir conventions
 crates/erkad/        session daemon: PTYs, VT state, snapshots, hooks, chat relay,
-                     automations, keep-awake, worktree comments, terminal CLI
+                     automations, runs, phone server, keep-awake, worktree comments, CLI
+crates/erka-stt/     speech-to-text helper (sherpa-onnx), started by the app on demand
 scripts/             dev daemon, release build, end-to-end tests
 third_party/conpty/  sideloaded ConPTY (conpty.dll + OpenConsole.exe) for Windows
 docs/                user guide, architecture, screenshots
@@ -289,8 +323,9 @@ plans/               implementation plans and reports
 
 ## Documentation
 
-- [User guide](docs/user-guide.md) — everyday use, agents, terminals, worktrees and `.erka.yaml`, source control and review, viewers, automations, settings, shortcuts.
-- [Architecture](docs/architecture.md) — processes, protocol, threading, attach semantics, rendering policy, chat mode, daemon services.
+- [User guide](docs/user-guide.md) — everyday use, agents, terminals, worktrees and `.erka.yaml`, source control and review, viewers, automations, layouts, resume, accounts, runs, issue trackers, browser panes, remote projects, phone access, voice, plugins, language, settings, shortcuts.
+- [Architecture](docs/architecture.md) — processes, protocol, threading, attach semantics, rendering policy, chat mode, daemon services, layouts, runs, integrations, remote, phone server, plugins, voice, languages.
+- [Plugins](docs/plugins.md) — the `erka-plugin.json` format and how approval works.
 - [ConPTY notes](docs/third-party-conpty.md) — the bundled Windows console host.
 - [Plans and reports](plans/) — design decisions, UI and feature comparisons with Orca, measurements and test results.
 

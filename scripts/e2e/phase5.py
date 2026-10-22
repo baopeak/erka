@@ -204,7 +204,7 @@ try:
     time.sleep(1)
     backups = glob.glob(os.path.join(data_dir, "app-state.v1-*.bak.json"))
     run.check("an old state file is backed up before migration", len(backups) == 1 and json.load(open(backups[0], encoding="utf8"))["version"] == 1, str(backups))
-    run.check("and rewritten in the current format", json.load(open(state_file, encoding="utf8"))["version"] == 2
+    run.check("and rewritten in the current format", json.load(open(state_file, encoding="utf8"))["version"] == 3
               and d.js(f"return {S}.childrenOf(arguments[0]).length", repo_id) == 2)
 
     for s in daemon(d, "session.list"):

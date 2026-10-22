@@ -50,7 +50,7 @@ def escape():
 
 try:
     run.boot()
-    d._req("POST", d.s("/window/rect"), {"width": 1480, "height": 920})
+    d.set_window_size(1480, 920)
     d._req("POST", d.s("/timeouts"), {"script": 240000})
     for s in daemon(d, "session.list"):
         daemon(d, "session.close", {"handle": s["handle"]})

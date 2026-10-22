@@ -2,6 +2,7 @@
 // (Claude stream-json, Codex app-server, ACP) into these items; the UI only knows items.
 import { createStore, produce, type SetStoreFunction } from "solid-js/store";
 import { attachTerminal, b64ToBytes, daemon, sendInput } from "../lib/ipc";
+import { t } from "../lib/i18n";
 
 export type ChatItem =
   | { kind: "user"; id: string; text: string; pending?: boolean }
@@ -141,7 +142,7 @@ export class ChatController {
       }
       if (msg?.type === "erka_exit") {
         this.set({ exited: true, busy: false });
-        this.upsert({ kind: "system", id: `exit-${Date.now()}`, text: `Agent process exited (code ${msg.code}).`, tone: "info" });
+        this.upsert({ kind: "system", id: `exit-${Date.now()}`, text: t("Agent process exited (code {code}).", { code: String(msg.code) }), tone: "info" });
         continue;
       }
       if (msg?.type === "erka_stderr") {
@@ -166,7 +167,7 @@ export class ChatController {
       if (applied) this.feed(data);
       else early.push(data);
     }).catch((e) => {
-      this.upsert({ kind: "system", id: "attach-error", text: `Could not attach: ${e}`, tone: "error" });
+      this.upsert({ kind: "system", id: "attach-error", text: t("Could not attach: {error}", { error: String(e) }), tone: "error" });
       return null;
     });
     if (!reply || gen !== this.attachGen) return;

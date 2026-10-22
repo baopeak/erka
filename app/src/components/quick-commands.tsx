@@ -5,45 +5,46 @@ import { isMac, uid } from "../lib/platform";
 import { quickCommandsFor, runQuickCommand } from "../lib/quick-commands";
 import { Icon } from "./icons";
 import type { QuickCommand } from "../lib/types";
+import { t } from "../lib/i18n";
 
 export function QuickCommandsEditor() {
   const list = () => store.state.settings.quickCommands ?? [];
   const save = (next: QuickCommand[]) => store.setSettings({ quickCommands: next });
   const patch = (id: string, p: Partial<QuickCommand>) => save(list().map((c) => (c.id === id ? { ...c, ...p } : c)));
   const add = () =>
-    save([...list(), { id: uid(), label: "New command", text: "", action: "terminal", enter: true, projectId: null }]);
+    save([...list(), { id: uid(), label: t("New command"), text: "", action: "terminal", enter: true, projectId: null }]);
   // A command limited to a project that was removed runs everywhere (see quickCommandsFor).
   const scopeOf = (c: QuickCommand) => (c.projectId && store.state.projects.some((p) => p.id === c.projectId) ? c.projectId : "");
 
   return (
     <div class="qc-editor">
-      <Show when={!list().length}><div class="muted" style={{ padding: "4px 0" }}>No quick commands yet.</div></Show>
+      <Show when={!list().length}><div class="muted" style={{ padding: "4px 0" }}>{t("No quick commands yet.")}</div></Show>
       {/* Index, not For: a row stays mounted while its command object is replaced on edit, so a
           click right after typing is not lost to a re-created row. */}
       <Index each={list()}>
         {(c) => (
           <div class="qc-row" data-qc={c().id}>
             <div class="qc-line">
-              <input class="text-input qc-label" value={c().label} placeholder="Label" onChange={(e) => patch(c().id, { label: e.currentTarget.value.trim() || "Untitled" })} />
+              <input class="text-input qc-label" value={c().label} placeholder={t("Label")} onChange={(e) => patch(c().id, { label: e.currentTarget.value.trim() || t("Untitled") })} />
               <div class="toggles">
-                <button class={`toggle${c().action === "terminal" ? " on" : ""}`} title="Type into the focused terminal (or a new one)" onClick={() => patch(c().id, { action: "terminal" })}>Terminal</button>
-                <button class={`toggle${c().action === "agent" ? " on" : ""}`} title="Send as a prompt to the focused agent" onClick={() => patch(c().id, { action: "agent" })}>Agent</button>
+                <button class={`toggle${c().action === "terminal" ? " on" : ""}`} title={t("Type into the focused terminal (or a new one)")} onClick={() => patch(c().id, { action: "terminal" })}>{t("Terminal")}</button>
+                <button class={`toggle${c().action === "agent" ? " on" : ""}`} title={t("Send as a prompt to the focused agent")} onClick={() => patch(c().id, { action: "agent" })}>{t("Agent")}</button>
               </div>
-              <button class="icon-btn" title="Delete" onClick={() => save(list().filter((x) => x.id !== c().id))}><Icon name="close" size={13} /></button>
+              <button class="icon-btn" title={t("Delete")} onClick={() => save(list().filter((x) => x.id !== c().id))}><Icon name="close" size={13} /></button>
             </div>
-            <textarea class="text-input qc-text" rows={2} value={c().text} placeholder={c().action === "agent" ? "Prompt for the agent" : "Command, e.g. npm test"}
+            <textarea class="text-input qc-text" rows={2} value={c().text} placeholder={c().action === "agent" ? t("Prompt for the agent") : t("Command, e.g. npm test")}
               onChange={(e) => patch(c().id, { text: e.currentTarget.value })} />
             <div class="qc-line qc-opts">
-              <label><input type="checkbox" checked={c().enter} onChange={(e) => patch(c().id, { enter: e.currentTarget.checked })} /> Press Enter</label>
+              <label><input type="checkbox" checked={c().enter} onChange={(e) => patch(c().id, { enter: e.currentTarget.checked })} /> {t("Press Enter")}</label>
               <select class="text-input" value={scopeOf(c())} onChange={(e) => patch(c().id, { projectId: e.currentTarget.value || null })}>
-                <option value="">All projects</option>
-                <For each={store.state.projects}>{(p) => <option value={p.id}>Only {p.name}</option>}</For>
+                <option value="">{t("All projects")}</option>
+                <For each={store.state.projects}>{(p) => <option value={p.id}>{t("Only {name}", { name: p.name })}</option>}</For>
               </select>
             </div>
           </div>
         )}
       </Index>
-      <button class="btn" onClick={add}><Icon name="plus" size={13} /> Add quick command</button>
+      <button class="btn" onClick={add}><Icon name="plus" size={13} /> {t("Add quick command")}</button>
     </div>
   );
 }
@@ -61,7 +62,7 @@ export function QuickCommandList(props: { onRun?: () => void }) {
       <div class="qc-list">
         <For each={list()}>
           {(c, i) => (
-            <button class="qc-chip" title={`${c.action === "agent" ? "Prompt" : "Command"}: ${c.text}`} onClick={() => run(c)}>
+            <button class="qc-chip" title={c.action === "agent" ? t("Prompt: {text}", { text: c.text }) : t("Command: {text}", { text: c.text })} onClick={() => run(c)}>
               <Icon name={c.action === "agent" ? "chat" : "terminal"} size={12} />
               {c.label}
               <Show when={i() < 9}><span class="kbd">{isMac ? "⌃" : "Ctrl+"}{i() + 1}</span></Show>

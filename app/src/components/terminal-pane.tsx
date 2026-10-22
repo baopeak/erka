@@ -8,6 +8,8 @@ import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { isMac } from "../lib/platform";
 import { isAgentKind, kindInfo, launchableAgents } from "../lib/agents";
 import { quickCommandsFor } from "../lib/quick-commands";
+import { t } from "../lib/i18n";
+import { commandHint as hint } from "../lib/commands";
 
 export function TerminalPane(props: { sessionId: string; focused: boolean }) {
   let host!: HTMLDivElement;
@@ -62,7 +64,7 @@ export function TerminalPane(props: { sessionId: string; focused: boolean }) {
 
   const restart = () => {
     const s = session();
-    if (s) void daemon("session.restart", { handle: s.handle }).catch((e) => store.notify(String(e)));
+    if (s) void store.resumeSession(s.id);
   };
 
   /** The last lines of this terminal as plain text (scrollback included), capped in size. */
@@ -77,7 +79,7 @@ export function TerminalPane(props: { sessionId: string; focused: boolean }) {
   /** Starts another agent seeded with this session's recent transcript (this one keeps running). */
   const handOff = async (kind: string) => {
     const s = session();
-    if (!s?.project_id) return store.notify("Hand-off needs a project session");
+    if (!s?.project_id) return store.notify(t("Hand-off needs a project session"));
     const text = await transcript().catch(() => "");
     const prompt = `You are taking over a task from another coding agent (${kindInfo(s.kind).label}) working in this folder. Below is the end of its terminal session. Work out what was being done and what is left, then continue.\n\n----- transcript -----\n${text}\n----- end -----`;
     await store.newSession(s.project_id, kind, { prompt, where: "right" });
@@ -86,25 +88,25 @@ export function TerminalPane(props: { sessionId: string; focused: boolean }) {
   const menu = (e: MouseEvent) => {
     const s = session();
     const items: MenuItem[] = [
-      { label: "Copy", hint: isMac ? "⌘C" : "Ctrl+C", run: () => view.term.hasSelection() && void writeText(view.term.getSelection()) },
-      { label: "Paste", hint: isMac ? "⌘V" : "Ctrl+V", run: () => void view.pasteFromClipboard() },
-      { label: "Select All", run: () => view.term.selectAll() },
-      { label: "Copy Context", run: () => void transcript().then((t) => writeText(t)).then(() => store.notify("Copied the last 400 lines")) },
-      { label: "Find…", run: () => { setFinding(true); queueMicrotask(() => findInput?.focus()); } },
-      { label: "Clear", run: () => view.term.clear() },
+      { label: t("Copy"), hint: isMac ? "⌘C" : "Ctrl+C", run: () => view.term.hasSelection() && void writeText(view.term.getSelection()) },
+      { label: t("Paste"), hint: isMac ? "⌘V" : "Ctrl+V", run: () => void view.pasteFromClipboard() },
+      { label: t("Select All"), run: () => view.term.selectAll() },
+      { label: t("Copy Context"), run: () => void transcript().then((text) => writeText(text)).then(() => store.notify(t("Copied the last 400 lines"))) },
+      { label: t("Find…"), run: () => { setFinding(true); queueMicrotask(() => findInput?.focus()); } },
+      { label: t("Clear"), run: () => view.term.clear() },
       null,
-      { label: "Split Right", run: () => s?.project_id && void store.newSession(s.project_id, "shell", { where: "right" }) },
-      { label: "Split Down", run: () => s?.project_id && void store.newSession(s.project_id, "shell", { where: "down" }) },
+      { label: t("Split Right…"), run: () => s?.project_id && store.splitPicker(s.project_id, "right") },
+      { label: t("Split Down…"), run: () => s?.project_id && store.splitPicker(s.project_id, "down") },
     ];
     const quick = quickCommandsFor(s?.project_id ?? null);
     if (quick.length) {
       items.push(null);
-      for (const c of quick.slice(0, 8)) items.push({ label: `Insert: ${c.label}`, run: () => { view.paste(c.text); view.focus(); } });
+      for (const c of quick.slice(0, 8)) items.push({ label: t("Insert: {label}", { label: c.label }), run: () => { view.paste(c.text); view.focus(); } });
     }
     if (s && isAgentKind(s.kind) && s.project_id) {
       items.push(null);
       for (const kind of launchableAgents(store.state.settings.hiddenAgents).filter((k) => k !== s.kind).slice(0, 6)) {
-        items.push({ label: `Hand Off to ${kindInfo(kind).label}`, run: () => void handOff(kind) });
+        items.push({ label: t("Hand Off to {agent}", { agent: kindInfo(kind).label }), run: () => void handOff(kind) });
       }
     }
     openContextMenu(e, items);
@@ -113,11 +115,20 @@ export function TerminalPane(props: { sessionId: string; focused: boolean }) {
   return (
     <div class="term-wrap" data-session={props.sessionId} onContextMenu={menu}>
       <div ref={host} style={{ width: "100%", height: "100%" }} />
+      <Show when={view.scrolledAway().away}>
+        <div class="scroll-pill" data-scroll-pill>
+          <button class="icon-btn" title={t("Previous prompt") + hint("terminal.prevPrompt")} onClick={() => view.jumpPrompt(-1)}><Icon name="up" size={13} /></button>
+          <button class="icon-btn" title={t("Next prompt") + hint("terminal.nextPrompt")} onClick={() => view.jumpPrompt(1)}><Icon name="down" size={13} /></button>
+          <button class="scroll-pill-bottom" data-jump-bottom title={t("Scroll to bottom") + hint("terminal.bottom")} onClick={() => { view.scrollToBottom(); view.focus(); }}>
+            {view.scrolledAway().newLines ? t("{n} new lines", { n: view.scrolledAway().newLines }) : t("Back to bottom")} <Icon name="down" size={12} />
+          </button>
+        </div>
+      </Show>
       <Show when={finding()}>
         <div class="findbar">
           <input
             ref={findInput}
-            placeholder="Find in terminal"
+            placeholder={t("Find in terminal")}
             value={query()}
             onInput={(e) => { setQuery(e.currentTarget.value); find(true); }}
             onKeyDown={(e) => {
@@ -125,19 +136,25 @@ export function TerminalPane(props: { sessionId: string; focused: boolean }) {
               if (e.key === "Escape") closeFind();
             }}
           />
-          <button class="icon-btn" onClick={() => find(false)} title="Previous (Shift+Enter)"><Icon name="up" size={14} /></button>
-          <button class="icon-btn" onClick={() => find(true)} title="Next (Enter)"><Icon name="down" size={14} /></button>
-          <button class="icon-btn" onClick={closeFind} title="Close (Esc)"><Icon name="close" size={12} /></button>
+          <button class="icon-btn" onClick={() => find(false)} title={t("Previous (Shift+Enter)")}><Icon name="up" size={14} /></button>
+          <button class="icon-btn" onClick={() => find(true)} title={t("Next (Enter)")}><Icon name="down" size={14} /></button>
+          <button class="icon-btn" onClick={closeFind} title={t("Close (Esc)")}><Icon name="close" size={12} /></button>
         </div>
       </Show>
       <Show when={!session()}>
-        <div class="pane-overlay"><div class="exit-card"><span class="msg">Session not available (daemon {store.connected() ? "has no such session" : "disconnected"})</span></div></div>
+        <div class="pane-overlay"><div class="exit-card"><span class="msg">{store.connected() ? t("Session not available (daemon has no such session)") : t("Session not available (daemon disconnected)")}</span></div></div>
       </Show>
       <Show when={session() && !session()!.alive}>
         <div style={{ position: "absolute", left: "12px", right: "12px", bottom: "10px", "z-index": 6, display: "flex", "justify-content": "center" }}>
           <div class="exit-card" style={{ "flex-direction": "row", padding: "8px 12px" }}>
-            <span class="msg">Process exited{session()!.exit_code != null ? ` (code ${session()!.exit_code})` : ""}</span>
-            <button class="btn primary" onClick={restart}><Icon name="restart" size={14} /> {store.resumable(session()!) ? "Resume" : "Restart"}</button>
+            <span class="msg">
+              {session()!.interrupted
+                ? t("Stopped when the session daemon stopped (restart, update or crash)")
+                : session()!.exit_code != null
+                  ? t("Process exited (code {code})", { code: session()!.exit_code! })
+                  : t("Process exited")}
+            </span>
+            <button class="btn primary" onClick={restart}><Icon name="restart" size={14} /> {store.resumable(session()!) ? t("Resume") : t("Restart")}</button>
           </div>
         </div>
       </Show>

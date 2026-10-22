@@ -8,6 +8,7 @@ import { store } from "../lib/store";
 import { chooseAgentAndSend } from "../lib/send-to-agent";
 import { Icon } from "./icons";
 import type { Project, ReviewNote } from "../lib/types";
+import { t } from "../lib/i18n";
 
 /** Lines with a review note, per editor (updated from the store). */
 const setNoteLines = StateEffect.define<number[]>();
@@ -74,7 +75,7 @@ export function DiffView(props: { project: Project; path: string; staged: boolea
   let host!: HTMLDivElement;
   let box!: HTMLDivElement;
   const [unified, setUnified] = createSignal(host?.clientWidth < 900);
-  const [info, setInfo] = createSignal("");
+  const [info, setInfo] = createSignal<"" | "new" | "deleted">("");
   const [draft, setDraft] = createSignal<{ line: number; side: "new" | "old"; text: string; x: number; y: number } | null>(null);
   const [noteText, setNoteText] = createSignal("");
   let destroy: (() => void) | null = null;
@@ -111,7 +112,7 @@ export function DiffView(props: { project: Project; path: string; staged: boolea
       host.replaceChildren();
       const a = v.original ?? "";
       const b = v.modified ?? "";
-      setInfo(v.original == null ? "new file" : v.modified == null ? "deleted" : "");
+      setInfo(v.original == null ? "new" : v.modified == null ? "deleted" : "");
       if (unified()) {
         const view = new EditorView({ parent: host, doc: b, extensions: [...exts("new"), unifiedMergeView({ original: a, mergeControls: false, gutter: true })] });
         editors = [{ view, side: "new" }];
@@ -157,22 +158,22 @@ export function DiffView(props: { project: Project; path: string; staged: boolea
     <div class="viewer" ref={box}>
       <div class="viewer-bar">
         <span class="path">&lrm;{props.path}</span>
-        <span style={{ color: "var(--text-faint)" }}>{props.staged ? "HEAD ↔ index" : "HEAD ↔ working tree"}{info() ? ` · ${info()}` : ""}</span>
+        <span style={{ color: "var(--text-faint)" }}>{props.staged ? t("HEAD ↔ index") : t("HEAD ↔ working tree")}{info() ? ` · ${info() === "new" ? t("new file") : t("deleted")}` : ""}</span>
         <div class="toggles">
-          <button class="icon-btn" title="Previous change (Shift+F7)" onClick={() => jump(false)}><Icon name="up" size={14} /></button>
-          <button class="icon-btn" title="Next change (F7)" onClick={() => jump(true)}><Icon name="down" size={14} /></button>
-          <button class={`toggle${!unified() ? " on" : ""}`} onClick={() => { setUnified(false); void render(); }}>Split</button>
-          <button class={`toggle${unified() ? " on" : ""}`} onClick={() => { setUnified(true); void render(); }}>Unified</button>
-          <button class="toggle" onClick={() => store.openFile(props.project.id, props.path)}>Open file</button>
+          <button class="icon-btn" title={t("Previous change (Shift+F7)")} onClick={() => jump(false)}><Icon name="up" size={14} /></button>
+          <button class="icon-btn" title={t("Next change (F7)")} onClick={() => jump(true)}><Icon name="down" size={14} /></button>
+          <button class={`toggle${!unified() ? " on" : ""}`} onClick={() => { setUnified(false); void render(); }}>{t("Split")}</button>
+          <button class={`toggle${unified() ? " on" : ""}`} onClick={() => { setUnified(true); void render(); }}>{t("Unified")}</button>
+          <button class="toggle" onClick={() => store.openFile(props.project.id, props.path)}>{t("Open file")}</button>
         </div>
       </div>
       <Show when={allNotes().length}>
         <div class="notes-bar">
           <Icon name="note" size={14} />
-          <span>{allNotes().length} review note{allNotes().length > 1 ? "s" : ""}{fileNotes().length !== allNotes().length ? ` (${fileNotes().length} here)` : ""}</span>
+          <span>{allNotes().length > 1 ? t("{n} review notes", { n: allNotes().length }) : t("{n} review note", { n: allNotes().length })}{fileNotes().length !== allNotes().length ? ` (${t("{n} here", { n: fileNotes().length })})` : ""}</span>
           <span style={{ flex: 1 }} />
-          <button class="btn primary" onClick={(e) => chooseAgentAndSend(e, props.project.id, notesPrompt(allNotes()))}>Send to agent ▾</button>
-          <button class="btn" title="Remove every note (resolve all)" onClick={() => { store.removeNotes(props.project.id, "all"); queueMicrotask(pushMarks); }}>Resolve all</button>
+          <button class="btn primary" onClick={(e) => chooseAgentAndSend(e, props.project.id, notesPrompt(allNotes()))}>{t("Send to agent")} ▾</button>
+          <button class="btn" title={t("Remove every note (resolve all)")} onClick={() => { store.removeNotes(props.project.id, "all"); queueMicrotask(pushMarks); }}>{t("Resolve all")}</button>
         </div>
         <Show when={fileNotes().length}>
           <div class="notes-list">
@@ -181,7 +182,7 @@ export function DiffView(props: { project: Project; path: string; staged: boolea
                 <div class="note-item">
                   <span class="note-line">{n.side === "old" ? "−" : ""}{n.line}</span>
                   <span class="note-body">{n.note}</span>
-                  <button class="icon-btn" title="Resolve (remove)" onClick={() => remove(n.id)}><Icon name="check" size={13} /></button>
+                  <button class="icon-btn" title={t("Resolve (remove)")} onClick={() => remove(n.id)}><Icon name="check" size={13} /></button>
                 </div>
               )}
             </For>
@@ -192,11 +193,11 @@ export function DiffView(props: { project: Project; path: string; staged: boolea
       <Show when={draft()}>
         {(d) => (
           <div class="note-draft" style={{ left: `${Math.max(8, d().x)}px`, top: `${d().y}px` }} onPointerDown={(e) => e.stopPropagation()}>
-            <div class="muted" style={{ padding: "0 0 6px" }}>Note on {d().side === "old" ? "removed " : ""}line {d().line}</div>
+            <div class="muted" style={{ padding: "0 0 6px" }}>{d().side === "old" ? t("Note on removed line {line}", { line: d().line }) : t("Note on line {line}", { line: d().line })}</div>
             <textarea
               class="commit-box"
               value={noteText()}
-              placeholder="What should change here?"
+              placeholder={t("What should change here?")}
               onInput={(e) => setNoteText(e.currentTarget.value)}
               onKeyDown={(e) => {
                 if (e.key === "Escape") setDraft(null);
@@ -204,8 +205,8 @@ export function DiffView(props: { project: Project; path: string; staged: boolea
               }}
             />
             <div style={{ display: "flex", gap: "6px", "justify-content": "flex-end", "margin-top": "6px" }}>
-              <button class="btn" onClick={() => setDraft(null)}>Cancel</button>
-              <button class="btn primary" onClick={saveDraft}>Add note</button>
+              <button class="btn" onClick={() => setDraft(null)}>{t("Cancel")}</button>
+              <button class="btn primary" onClick={saveDraft}>{t("Add note")}</button>
             </div>
           </div>
         )}

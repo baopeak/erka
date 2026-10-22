@@ -8,6 +8,7 @@ import { FileTree, type FileTreeApi } from "./file-tree";
 import { SearchPanel } from "./search-panel";
 import { Icon } from "./icons";
 import type { Project } from "../lib/types";
+import { t } from "../lib/i18n";
 
 export function Explorer(props: { project: Project }) {
   const mode = () => (store.workspace(props.project.id).rightPanel === "search" ? "contents" : "names");
@@ -29,20 +30,20 @@ export function Explorer(props: { project: Project }) {
     <div class="explorer">
       <div class="explorer-head">
         <span class="explorer-title" title={props.project.path}>{props.project.name}</span>
-        <button class="icon-btn" title="Collapse all" onClick={() => api?.collapseAll()}><Icon name="minus" size={14} /></button>
-        <button class="icon-btn" title="Refresh" onClick={() => { api?.refresh(); void gitState.refresh(); }}><Icon name="refresh" size={14} /></button>
+        <button class="icon-btn" title={t("Collapse all")} onClick={() => api?.collapseAll()}><Icon name="minus" size={14} /></button>
+        <button class="icon-btn" title={t("Refresh")} onClick={() => { api?.refresh(); void gitState.refresh(); }}><Icon name="refresh" size={14} /></button>
       </div>
       <div class="explorer-tools">
         <Show when={mode() === "names"}>
-          <input class="text-input" placeholder="Filter files by name" value={filter()} onInput={(e) => setFilter(e.currentTarget.value)}
+          <input class="text-input" placeholder={t("Filter files by name")} value={filter()} onInput={(e) => setFilter(e.currentTarget.value)}
             onKeyDown={(e) => {
               if (e.key === "Escape") setFilter("");
               if (e.key === "Enter" && hits()[0]) store.openFile(props.project.id, hits()[0].path);
             }} />
         </Show>
         <div class="seg">
-          <button class={mode() === "names" ? "on" : ""} onClick={() => store.showRightPanel("files")}>Names</button>
-          <button class={mode() === "contents" ? "on" : ""} onClick={() => store.showRightPanel("search")}>Contents</button>
+          <button class={mode() === "names" ? "on" : ""} onClick={() => store.showRightPanel("files")}>{t("Names")}</button>
+          <button class={mode() === "contents" ? "on" : ""} onClick={() => store.showRightPanel("search")}>{t("Contents")}</button>
         </div>
       </div>
       <Show when={mode() === "contents"}><SearchPanel project={props.project} /></Show>
@@ -53,7 +54,7 @@ export function Explorer(props: { project: Project }) {
       <Switch>
         <Match when={mode() === "names" && filtering()}>
           <div class="list">
-            <For each={hits()} fallback={<div class="muted">No matching files</div>}>
+            <For each={hits()} fallback={<div class="muted">{t("No matching files")}</div>}>
               {(h) => {
                 const name = h.path.split("/").pop()!;
                 const dir = h.path.slice(0, h.path.length - name.length - 1);

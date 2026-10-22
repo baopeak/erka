@@ -10,6 +10,10 @@ REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
 
 def default_app():
+    # ERKA_E2E_APP: test another build, e.g. the release executable that goes into the installer
+    # (start tauri-driver with ERKA_E2E=1 so it exposes its internals to the tests).
+    if os.environ.get("ERKA_E2E_APP"):
+        return os.environ["ERKA_E2E_APP"]
     meta = json.loads(subprocess.check_output(["cargo", "metadata", "--format-version", "1", "--no-deps"], cwd=REPO))
     return os.path.join(meta["target_directory"], "debug", "erka.exe" if os.name == "nt" else "erka")
 
@@ -19,6 +23,35 @@ def daemon(d, method, params=None):
     if "err" in r:
         raise RuntimeError(r["err"])
     return r["ok"]
+
+
+def restart_daemon(d, erkad, kill=False):
+    """Stops the daemon (its sessions keep running unless `kill`) and waits for a new one: the app
+    starts it itself when ERKA_DAEMON_PATH is set, otherwise this starts `erkad serve`."""
+    import time
+    old = daemon(d, "daemon.info")["pid"]
+    try:
+        daemon(d, "daemon.shutdown", {"kill_sessions": kill})
+    except Exception:
+        pass  # the reply may race the daemon exiting
+
+    def new_pid():
+        try:
+            return d.js("return window.__erka.store.connected()") and daemon(d, "daemon.info")["pid"] != old
+        except Exception:
+            return False
+
+    def wait(seconds):
+        end = time.time() + seconds
+        while time.time() < end and not new_pid():
+            time.sleep(0.5)
+        return new_pid()
+
+    if not wait(8):
+        flags = 0x08000000 | 0x00000008 if os.name == "nt" else 0  # CREATE_NO_WINDOW | DETACHED_PROCESS
+        subprocess.Popen([erkad, "serve"], env=os.environ.copy(), creationflags=flags, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if not wait(40):
+            raise TimeoutError("no new session daemon")
 
 
 class Run:
@@ -39,6 +72,8 @@ class Run:
         # First-run tips would float over whatever a scenario clicks.
         if not tips:
             self.d.js("window.__erka.store.setSettings({ tips: false })")
+        # Scenarios read English labels; the OS may well prefer Vietnamese.
+        self.d.js("window.__erka.store.setSettings({ language: 'en' })")
 
     def check(self, name, ok, detail=""):
         self.results.append((name, bool(ok), detail))

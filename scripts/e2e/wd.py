@@ -4,6 +4,7 @@
 """
 import base64
 import json
+import os
 import time
 import urllib.error
 import urllib.request
@@ -16,8 +17,9 @@ KEYS = {
 
 
 class Driver:
-    def __init__(self, app_path, url="http://127.0.0.1:4444"):
-        self.url = url
+    def __init__(self, app_path, url=None):
+        # ERKA_E2E_DRIVER: another tauri-driver port, when 4444 is taken by someone else's run.
+        self.url = url or os.environ.get("ERKA_E2E_DRIVER", "http://127.0.0.1:4444")
         caps = {"capabilities": {"alwaysMatch": {"browserName": "wry", "tauri:options": {"application": app_path}}}}
         self.sid = self._req("POST", "/session", caps)["sessionId"]
 
@@ -47,6 +49,15 @@ class Driver:
             "window.__TAURI_INTERNALS__.invoke(arguments[0], arguments[1] || {}).then(r => done({ok: r}), e => done({err: String(e)}));",
             cmd, payload or {},
         )
+
+    def set_window_size(self, width, height):
+        """Resizes the app window. Never WebDriver's `window/rect`: on WebView2 it moves the web
+        view inside the window, leaving the whole UI offset and clipped."""
+        r = self.invoke("test_window_size", {"width": width, "height": height})
+        if "err" in r:
+            raise RuntimeError(r["err"])
+        # Until the page sees the new size, layout-dependent checks would read the old one.
+        self.wait("return innerWidth === arguments[0] && innerHeight === arguments[1]", 5, 0.1, width, height)
 
     def wait(self, script, timeout=30, interval=0.25, *args):
         end = time.time() + timeout
@@ -86,6 +97,28 @@ class Driver:
             actions += seq
         self._req("POST", self.s("/actions"), {"actions": [{"type": "key", "id": "kb", "actions": actions}]})
         self._req("DELETE", self.s("/actions"))
+
+    def pointer(self, steps):
+        """Mouse actions in viewport CSS pixels: ("move", x, y) | ("down",) | ("up",) | ("pause", ms)."""
+        acts = []
+        for st in steps:
+            if st[0] == "move":
+                acts.append({"type": "pointerMove", "origin": "viewport", "x": int(st[1]), "y": int(st[2]), "duration": st[3] if len(st) > 3 else 50})
+            elif st[0] == "down":
+                acts.append({"type": "pointerDown", "button": 0})
+            elif st[0] == "up":
+                acts.append({"type": "pointerUp", "button": 0})
+            elif st[0] == "pause":
+                acts.append({"type": "pause", "duration": st[1]})
+        self._req("POST", self.s("/actions"), {"actions": [{"type": "pointer", "id": "mouse", "parameters": {"pointerType": "mouse"}, "actions": acts}]})
+        self._req("DELETE", self.s("/actions"))
+
+    def drag(self, x0, y0, x1, y1, steps=8):
+        seq = [("move", x0, y0), ("down",), ("pause", 50)]
+        for i in range(1, steps + 1):
+            seq.append(("move", x0 + (x1 - x0) * i / steps, y0 + (y1 - y0) * i / steps, 30))
+        seq += [("pause", 80), ("up",)]
+        self.pointer(seq)
 
     def quit(self):
         try:

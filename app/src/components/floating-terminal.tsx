@@ -5,6 +5,7 @@ import { chordOf, commands } from "../lib/commands";
 import { chordLabel } from "../lib/platform";
 import { TerminalPane } from "./terminal-pane";
 import { Icon } from "./icons";
+import { t } from "../lib/i18n";
 
 export function FloatingTerminal() {
   const f = () => store.state.floating;
@@ -22,17 +23,17 @@ export function FloatingTerminal() {
               <div class={`floating-tab${f().active === id ? " active" : ""}`} onClick={() => store.selectFloating(id)}>
                 <span class={`dot ${store.sessions[id]?.alive ? store.sessions[id]?.status : "exited"}`} />
                 <span>{sessionLabel(store.sessions[id])}</span>
-                <button class="icon-btn mini" title="Close" onClick={(e) => { e.stopPropagation(); void store.closeFloating(id); }}><Icon name="close" size={10} /></button>
+                <button class="icon-btn mini" title={t("Close")} onClick={(e) => { e.stopPropagation(); void store.closeFloating(id); }}><Icon name="close" size={10} /></button>
               </div>
             )}
           </For>
-          <button class="icon-btn mini" title="New floating terminal" onClick={() => void store.newFloating()}><Icon name="plus" size={13} /></button>
+          <button class="icon-btn mini" title={t("New floating terminal")} onClick={() => void store.newFloating()}><Icon name="plus" size={13} /></button>
         </div>
         <span style={{ flex: 1 }} />
-        <button class="icon-btn mini" title={`Hide${chord()}`} onClick={() => store.toggleFloating(false)}><Icon name="down" size={14} /></button>
+        <button class="icon-btn mini" title={t("Hide") + chord()} onClick={() => store.toggleFloating(false)}><Icon name="down" size={14} /></button>
       </div>
       <div class="floating-body">
-        <Show when={f().active && store.sessions[f().active!] ? f().active : null} keyed fallback={<div class="muted">Starting a terminal…</div>}>
+        <Show when={f().active && store.sessions[f().active!] ? f().active : null} keyed fallback={<div class="muted">{t("Starting a terminal…")}</div>}>
           {(id) => <TerminalPane sessionId={id} focused={true} />}
         </Show>
       </div>

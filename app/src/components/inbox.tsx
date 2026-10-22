@@ -5,6 +5,7 @@ import { store, sessionLabel } from "../lib/store";
 import { relTimeShort } from "../lib/platform";
 import { Icon } from "./icons";
 import type { InboxItem } from "../lib/types";
+import { t } from "../lib/i18n";
 
 const ICON: Record<InboxItem["kind"], string> = { finished: "check", waiting: "bell", automation: "clock", worktree: "branch", error: "close" };
 
@@ -28,19 +29,19 @@ export function InboxPanel(props: { onClose: () => void }) {
   return (
     <div class="inbox" onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
       <div class="inbox-head">
-        <b>Activity</b>
+        <b>{t("Activity")}</b>
         <div class="toggles">
-          <button class={`toggle${filter() === "all" ? " on" : ""}`} onClick={() => setFilter("all")}>All</button>
-          <button class={`toggle${filter() === "unread" ? " on" : ""}`} onClick={() => setFilter("unread")}>Unread {store.unreadInbox() || ""}</button>
+          <button class={`toggle${filter() === "all" ? " on" : ""}`} onClick={() => setFilter("all")}>{t("All")}</button>
+          <button class={`toggle${filter() === "unread" ? " on" : ""}`} onClick={() => setFilter("unread")}>{t("Unread")} {store.unreadInbox() || ""}</button>
         </div>
         <span style={{ flex: 1 }} />
-        <button class="link-btn" onClick={() => store.markInbox("all")}>Mark all read</button>
-        <button class="link-btn" onClick={() => store.clearInbox()}>Clear</button>
+        <button class="link-btn" onClick={() => store.markInbox("all")}>{t("Mark all read")}</button>
+        <button class="link-btn" onClick={() => store.clearInbox()}>{t("Clear")}</button>
       </div>
-      <input class="text-input" placeholder="Filter" value={query()} onInput={(e) => setQuery(e.currentTarget.value)} style={{ margin: "0 10px 8px", width: "calc(100% - 20px)" }} />
+      <input class="text-input" placeholder={t("Filter")} value={query()} onInput={(e) => setQuery(e.currentTarget.value)} style={{ margin: "0 10px 8px", width: "calc(100% - 20px)" }} />
       <div class="inbox-list">
         <Show when={working().length}>
-          <div class="group-label">Working now</div>
+          <div class="group-label">{t("Working now")}</div>
           <For each={working()}>
             {(s) => (
               <div class="inbox-item" onClick={() => { store.revealSession(s.id); props.onClose(); }}>
@@ -49,15 +50,15 @@ export function InboxPanel(props: { onClose: () => void }) {
               </div>
             )}
           </For>
-          <div class="group-label">Earlier</div>
+          <div class="group-label">{t("Earlier")}</div>
         </Show>
-        <For each={items()} fallback={<div class="muted">Nothing here yet. Agents that finish or need you while you look elsewhere show up here.</div>}>
+        <For each={items()} fallback={<div class="muted">{t("Nothing here yet. Agents that finish or need you while you look elsewhere show up here.")}</div>}>
           {(i) => (
             <div
               class={`inbox-item${i.read ? "" : " unread"} k-${i.kind}`}
               onClick={() => open(i)}
               onContextMenu={(e) => { e.preventDefault(); store.markInbox(i.id, !i.read); }}
-              title={i.read ? "Right-click: mark unread" : "Right-click: mark read"}
+              title={i.read ? t("Right-click: mark unread") : t("Right-click: mark read")}
             >
               <span class="inbox-icon"><Icon name={ICON[i.kind]} size={13} /></span>
               <span class="inbox-text">

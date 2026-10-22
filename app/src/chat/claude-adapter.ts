@@ -8,6 +8,7 @@
 //   with `control_response` (because of `--permission-prompt-tool stdio`);
 // - `result` ends a turn.
 import { type Adapter, type AdapterContext, type ChatItem, summarize, textOf } from "./chat-model";
+import { t } from "../lib/i18n";
 
 export function claudeArgs(resumeId: string | null, extra: string[] = []): string[] {
   return [
@@ -120,7 +121,7 @@ export function createClaudeAdapter(ctx: AdapterContext): Adapter {
           } else if (m.subtype === "status") {
             ctx.set("status", m.status ?? null);
           } else if (m.subtype === "api_retry") {
-            ctx.upsert({ kind: "system", id: `retry-${ctx.state.items.length}`, text: "API retry…", tone: "info" });
+            ctx.upsert({ kind: "system", id: `retry-${ctx.state.items.length}`, text: t("API retry…"), tone: "info" });
           }
           return;
         case "stream_event": {
@@ -170,12 +171,12 @@ export function createClaudeAdapter(ctx: AdapterContext): Adapter {
           ctx.upsert({
             kind: "permission",
             id: m.request_id,
-            title: `Allow ${r.tool_name}?`,
+            title: t("Allow {tool}?", { tool: String(r.tool_name) }),
             detail: summarize(r.input, 600),
             options: [
-              { id: "allow", label: "Allow", tone: "allow" },
-              { id: "allow-session", label: "Allow for session", tone: "allow" },
-              { id: "deny", label: "Deny", tone: "deny" },
+              { id: "allow", label: t("Allow"), tone: "allow" },
+              { id: "allow-session", label: t("Allow for session"), tone: "allow" },
+              { id: "deny", label: t("Deny"), tone: "deny" },
             ],
           });
           pendingInputs.set(m.request_id, { input: r.input, suggestions: r.permission_suggestions });
@@ -188,7 +189,7 @@ export function createClaudeAdapter(ctx: AdapterContext): Adapter {
           ctx.upsert({
             kind: "result",
             id: `result-${m.uuid ?? ctx.state.items.length}`,
-            text: [m.is_error ? `Error: ${m.result ?? m.subtype}` : null, m.duration_ms ? `${(m.duration_ms / 1000).toFixed(1)}s` : null, m.num_turns ? `${m.num_turns} turns` : null, m.total_cost_usd != null ? `$${m.total_cost_usd.toFixed(3)}` : null].filter(Boolean).join(" · "),
+            text: [m.is_error ? t("Error: {error}", { error: String(m.result ?? m.subtype) }) : null, m.duration_ms ? `${(m.duration_ms / 1000).toFixed(1)}s` : null, m.num_turns ? (m.num_turns === 1 ? t("{n} turn", { n: m.num_turns }) : t("{n} turns", { n: m.num_turns })) : null, m.total_cost_usd != null ? `$${m.total_cost_usd.toFixed(3)}` : null].filter(Boolean).join(" · "),
           });
           // Close any stale streaming markers.
           for (const it of ctx.state.items) if ((it as any).streaming) ctx.patch(it.id, (i: any) => (i.streaming = false));

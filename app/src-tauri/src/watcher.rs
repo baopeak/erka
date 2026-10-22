@@ -133,6 +133,10 @@ fn classify(root: &Path, path: &Path) -> Change {
 // off the main thread, a project switch never waits for it.
 #[tauri::command]
 pub async fn fs_watch(watchers: tauri::State<'_, Arc<Watchers>>, root: String) -> CmdResult<()> {
+    // Remote projects have no local folder to watch (their views refresh on demand).
+    if crate::remote::is_remote(&root) {
+        return Ok(());
+    }
     let w = watchers.inner().clone();
     crate::fs_ops::blocking(move || w.watch(&root)).await
 }

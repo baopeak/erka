@@ -20,13 +20,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      - name: Rust tests (protocol, daemon, app backend)
-        run: cargo test -p erka-proto -p erkad -p erka
+      - name: Rust tests (protocol, daemon, app backend, speech helper)
+        run: cargo test -p erka-proto -p erkad -p erka -p erka-stt
       - name: Frontend typecheck
         working-directory: app
         run: |
           pnpm install --frozen-lockfile
           pnpm typecheck
+          pnpm i18n:check
       - name: Bundle
         shell: bash
         run: scripts/build-release.sh --bundles ${{ matrix.os == 'windows-latest' && 'nsis' || 'app,dmg' }}

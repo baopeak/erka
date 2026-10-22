@@ -17,7 +17,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(__file__))
-from smoke_support import REPO, Run, daemon  # noqa: E402
+from smoke_support import REPO, Run, daemon, restart_daemon  # noqa: E402
 
 shots, scratch = sys.argv[1], sys.argv[2]
 with_ai = "--ai" in sys.argv
@@ -127,7 +127,7 @@ def wait_text(handle, needle, timeout=30):
 
 try:
     run.boot()
-    d._req("POST", d.s("/window/rect"), {"width": 1480, "height": 920})
+    d.set_window_size(1480, 920)
     d._req("POST", d.s("/timeouts"), {"script": 240000})
     # Sessions of an earlier run may still sit in the test folders.
     for s in daemon(d, "session.list"):
@@ -143,7 +143,7 @@ try:
     presets = daemon(d, "agent.presets")
     ids = [p["id"] for p in presets]
     run.check("agent.presets lists the preset agents", all(k in ids for k in ["claude", "codex", "gemini", "cursor", "opencode", "copilot", "aider"]), f"{len(ids)} presets; installed: {[p['id'] for p in presets if p['installed']]}")
-    run.check("the app loaded the presets", (js_await("import('/src/lib/agents.ts').then(m => m.agentPresets().length)") or 0) >= 20)
+    run.check("the app loaded the presets", (js_await("window.__erka.agents.agentPresets().length") or 0) >= 20)
     yolo = js_await(f"(async () => {{ {S}.setSettings({{ agentPermissions: 'yolo' }}); const a = {S}.profileLaunch('claude').args; {S}.setSettings({{ agentPermissions: 'manual' }}); return [a, {S}.profileLaunch('claude').args]; }})()")
     run.check("yolo adds the skip-permission flag; manual removes it", "--dangerously-skip-permissions" in yolo[0] and "--dangerously-skip-permissions" not in yolo[1], str(yolo))
 
@@ -164,6 +164,20 @@ try:
     run.check("erkad terminal read", code == 0 and "cli-sent-ok" in out, err.strip())
     code, out, err = cli("terminal", "wait", str(sh["handle"]), "--timeout-ms", "20000")
     run.check("erkad terminal wait returns once idle", code == 0 and out.strip() in ("idle", "waiting"), out.strip() + err.strip())
+
+    # ---------- Ctrl+C reaches programs, also when the app started the daemon ----------
+    # The app starts erkad in a new process group, which Windows marks as ignoring Ctrl+C;
+    # sessions must not inherit that.
+    restart_daemon(d, erkad)
+    cc = js_await(f"{S}.newSession(arguments[0], 'shell')", pid)
+    time.sleep(4)
+    daemon(d, "session.input", {"handle": cc["handle"], "data": ("ping -n 30 127.0.0.1" if os.name == "nt" else "sleep 30") + "\r"})
+    time.sleep(1.5)
+    daemon(d, "session.input", {"handle": cc["handle"], "data": "\x03"})
+    time.sleep(1)
+    daemon(d, "session.input", {"handle": cc["handle"], "data": "echo after-ctrl-c\r"})
+    run.check("Ctrl+C stops a running program", bool(wait_text(cc["handle"], "after-ctrl-c", 10)) and "after-ctrl-c" in screen(cc["handle"], 40).split("127.0.0.1")[-1])
+    daemon(d, "session.close", {"handle": cc["handle"]})
 
     # ---------- workspace comment from the CLI ----------
     p = subprocess.run([erkad, "worktree", "set", "--comment", "reproduced bug; testing fix", "--status", "progress"], cwd=os.path.join(repo, "src"), capture_output=True, text=True, timeout=30)
@@ -227,14 +241,14 @@ try:
     run.check("PR status is empty for a non-GitHub remote", pr is None, str(pr))
 
     # ---------- worktree: .worktreeinclude copy + .erka.yaml link ----------
-    res = js_await(f"import('/src/lib/worktrees.ts').then(async m => {{ const r = {S}.state.projects.find(p => p.id === arguments[0]); const cfg = await m.configAtRef(r, 'main'); const w = await m.createWorktree(r, {{ branch: 'wt/parity', base: 'main', path: arguments[1], config: cfg }}); return w.id; }})", pid, repo + "-worktrees\\parity" if os.name == "nt" else repo + "-worktrees/parity")
+    res = js_await(f"Promise.resolve(window.__erka.worktrees).then(async m => {{ const r = {S}.state.projects.find(p => p.id === arguments[0]); const cfg = await m.configAtRef(r, 'main'); const w = await m.createWorktree(r, {{ branch: 'wt/parity', base: 'main', path: arguments[1], config: cfg }}); return w.id; }})", pid, repo + "-worktrees\\parity" if os.name == "nt" else repo + "-worktrees/parity")
     wt = repo + "-worktrees" + os.sep + "parity"
     run.check("worktree created", isinstance(res, str), str(res))
     run.check(".worktreeinclude copied .env", os.path.isfile(os.path.join(wt, ".env")))
     nm = os.path.join(wt, "node_modules")
     run.check(".erka.yaml link shares node_modules", os.path.isfile(os.path.join(nm, "pkg", "index.js")) and (os.path.islink(nm) or (os.name == "nt" and bool(os.stat(nm, follow_symlinks=False).st_file_attributes & 0x400))))
     run.check("worktree creation lands in the inbox", d.js(f"return {S}.state.inbox.some(i => i.kind === 'worktree' && i.title.includes('wt/parity'))"))
-    removed = js_await(f"import('/src/lib/worktrees.ts').then(m => m.removeWorktree({S}.state.projects.find(p => p.id === arguments[0]), {{ force: true }}))", res)
+    removed = js_await(f"Promise.resolve(window.__erka.worktrees).then(m => m.removeWorktree({S}.state.projects.find(p => p.id === arguments[0]), {{ force: true }}))", res)
     run.check("worktree with a linked folder removes cleanly", not os.path.exists(wt), str(removed))
     run.check("removing it keeps the shared folder's files", os.path.isfile(os.path.join(repo, "node_modules", "pkg", "index.js")))
     git(repo, "branch", "parity-tmp")
@@ -258,7 +272,7 @@ try:
     d.js(f"{S}.addNote(arguments[0], {{ path: 'README.md', line: 2, side: 'new', text: 'second line', note: 'Say what this line is for' }})", pid)
     run.check("notes bar appears", d.wait("return document.querySelector('.notes-bar')?.textContent.includes('1 review note') || null", 5))
     run.check("note marker in the gutter", d.wait("return document.querySelector('.cm-note-mark.has') || null", 5))
-    prompt = js_await(f"import('/src/components/diff-view.tsx').then(m => m.notesPrompt({S}.notesFor(arguments[0])))", pid)
+    prompt = js_await(f"Promise.resolve(window.__erka.diffView).then(m => m.notesPrompt({S}.notesFor(arguments[0])))", pid)
     run.check("notes prompt names file, line and note", "README.md" in prompt and "line 2" in prompt and "Say what this line is for" in prompt, prompt[:160])
     d.js("document.querySelector('.cm-note-gutter .cm-gutterElement:nth-child(3)')?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientX: 300, clientY: 200 }))")
     run.check("gutter click opens the note editor", d.wait("return document.querySelector('.note-draft textarea') || null", 5))
@@ -380,7 +394,7 @@ try:
 
     # ---------- one-shot AI (optional, real model call) ----------
     if with_ai:
-        text = js_await("window.__erka ? import('/src/lib/ipc.ts').then(m => m.agentRun('claude', 'Reply with exactly: parity-ok', arguments[0])) : null", repo)
+        text = js_await("window.__erka ? Promise.resolve(window.__erka.ipc).then(m => m.agentRun('claude', 'Reply with exactly: parity-ok', arguments[0])) : null", repo)
         run.check("one-shot agent run answers", isinstance(text, str) and "parity-ok" in text, str(text)[:120])
 
     for s in daemon(d, "session.list"):

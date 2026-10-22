@@ -1,9 +1,12 @@
 // Status-bar meters: Claude / Codex subscription windows (5 h, week) and Erka's memory use.
-import { For, Show, createSignal, onCleanup, onMount } from "solid-js";
+import { For, Show, createEffect, createSignal, on, onCleanup, onMount } from "solid-js";
 import { store } from "../lib/store";
 import { daemon, memoryStats, onEvent, usageFetch } from "../lib/ipc";
 import { KindGlyph } from "./icons";
+import { openContextMenu, type MenuItem } from "./context-menu";
+import { accountsOf, activeAccount, setActiveAccount, type AccountAgent } from "../lib/accounts";
 import type { MemoryStats, ProviderUsage, UsageReport, UsageWindow } from "../lib/types";
+import { t, formatDateTime, formatDuration, formatTime } from "../lib/i18n";
 
 const USAGE_EVERY = 5 * 60_000;
 /** Clicks refresh at most this often: the usage endpoints are strictly rate limited. */
@@ -25,9 +28,7 @@ const level = (pct: number) => (pct >= 100 ? " full" : pct >= 80 ? " high" : "")
 
 function resetText(at: number | null): string {
   if (!at) return "";
-  const mins = Math.max(0, Math.round((at - Date.now()) / 60_000));
-  const rel = mins < 60 ? `${mins}m` : mins < 48 * 60 ? `${Math.floor(mins / 60)}h ${mins % 60}m` : `${Math.round(mins / 1440)}d`;
-  return `resets in ${rel} (${new Date(at).toLocaleString(undefined, { weekday: "short", hour: "2-digit", minute: "2-digit" })})`;
+  return t("resets in {rel} ({when})", { rel: formatDuration(at - Date.now()), when: formatDateTime(at, { weekday: "short", hour: "2-digit", minute: "2-digit" }) });
 }
 
 /** One toast per window and reset period when a limit is reached. */
@@ -37,11 +38,13 @@ const warned = new Set<string>();
 type Shown = ProviderUsage & { stale?: string; at?: number };
 type ProviderId = "claude" | "codex";
 
-/** Last successful windows per provider, kept across launches: a failed refresh (rate limit,
- *  network) keeps showing them, marked stale, instead of a bare "!". */
+/** Last successful windows per provider and account, kept across launches: a failed refresh
+ *  (rate limit, network) keeps showing them, marked stale, instead of a bare "!". */
 const CACHE_KEY = "erka-usage";
+const accountKey = (p: ProviderId) => activeAccount(p)?.id ?? "default";
 const CACHE_MAX_AGE = 12 * 3600_000;
-type Cache = Partial<Record<ProviderId, { windows: UsageWindow[]; at: number }>>;
+type Cache = Partial<Record<string, { windows: UsageWindow[]; at: number }>>;
+const cacheKey = (p: ProviderId) => (accountKey(p) === "default" ? p : `${p}:${accountKey(p)}`);
 
 function loadCache(): Cache {
   try {
@@ -59,7 +62,7 @@ function saveCache(c: Cache) {
   }
 }
 
-function shown(fresh: ProviderUsage | null, cached: Cache[ProviderId]): Shown | null {
+function shown(fresh: ProviderUsage | null, cached: Cache[string]): Shown | null {
   if (fresh?.windows.length) return fresh;
   const usable = cached && Date.now() - cached.at < CACHE_MAX_AGE;
   if (usable && (!fresh || (fresh.error && !fresh.error.startsWith("not signed in")))) {
@@ -68,23 +71,37 @@ function shown(fresh: ProviderUsage | null, cached: Cache[ProviderId]): Shown | 
   return fresh;
 }
 
+/** Right-click: which account new sessions of this agent use. */
+function accountMenu(e: MouseEvent, agent: AccountAgent) {
+  const current = activeAccount(agent)?.id ?? null;
+  const items: MenuItem[] = [
+    { label: `${current === null ? "● " : ""}${t("Default")}`, run: () => setActiveAccount(agent, null) },
+    ...accountsOf(agent).map((a): MenuItem => ({ label: `${current === a.id ? "● " : ""}${a.label}`, run: () => setActiveAccount(agent, a.id) })),
+    null,
+    { label: t("Manage accounts…"), run: () => store.openSettings("accounts") },
+  ];
+  openContextMenu(e, items);
+}
+
 function Provider(props: { kind: ProviderId; name: string; usage: Shown | null }) {
   const u = (): Shown => props.usage ?? { windows: [], error: null };
+  const who = () => (accountsOf(props.kind).length ? ` · ${activeAccount(props.kind)?.label ?? t("Default")}` : "");
+  const hint = () => "\n" + t("Click to refresh · right-click to switch account");
   const title = () => {
-    if (u().error) return `${props.name} usage: ${u().error}`;
-    const lines = u().windows.map((w) => `${w.label}: ${Math.round(w.used_percent)}% ${resetText(w.resets_at)}`);
-    const stale = u().stale ? `\nLast refresh failed (${u().stale}); showing data from ${new Date(u().at!).toLocaleTimeString()}.` : "";
-    return `${props.name} usage\n${lines.join("\n")}${stale}`;
+    if (u().error) return t("{name}{who} usage: {error}", { name: props.name, who: who(), error: u().error! }) + hint();
+    const lines = u().windows.map((w) => `${windowLabel(w.label)}: ${Math.round(w.used_percent)}% ${resetText(w.resets_at)}`);
+    const stale = u().stale ? "\n" + t("Last refresh failed ({reason}); showing data from {time}.", { reason: t(u().stale!), time: formatTime(u().at!) }) : "";
+    return t("{name}{who} usage", { name: props.name, who: who() }) + `\n${lines.join("\n")}${stale}${hint()}`;
   };
   return (
     <Show when={u().windows.length || (u().error && !u().error!.startsWith("not signed in"))}>
-      <span class={`item meter${u().stale ? " stale" : ""}`} title={title()} data-provider={props.kind}>
+      <span class={`item meter${u().stale ? " stale" : ""}`} title={title()} data-provider={props.kind} onContextMenu={(e) => accountMenu(e, props.kind)}>
         <KindGlyph kind={props.kind} size={12} />
         <Show when={!u().error} fallback={<span class="meter-err">!</span>}>
           <For each={u().windows}>
             {(w: UsageWindow) => (
               <span class={`meter-win${level(w.used_percent)}`}>
-                <span class="meter-label">{w.label}</span>
+                <span class="meter-label">{windowLabel(w.label)}</span>
                 <span class="meter-bar"><span style={{ width: `${Math.min(100, w.used_percent)}%` }} /></span>
                 {Math.round(w.used_percent)}%
               </span>
@@ -96,10 +113,17 @@ function Provider(props: { kind: ProviderId; name: string; usage: Shown | null }
   );
 }
 
+/** "5h" / "week" / "2w" as the usage endpoint names its windows, in the interface language. */
+function windowLabel(label: string) {
+  if (label === "week") return t("week");
+  const m = /^(\d+)([hdw])$/.exec(label);
+  return m ? t(m[2] === "h" ? "{n}h" : m[2] === "d" ? "{n}d" : "{n}w", { n: m[1] }) : label;
+}
+
 export function UsageMeters() {
   const cache = loadCache();
   const [report, setReport] = createSignal<UsageReport | null>(null);
-  const view = (p: ProviderId) => shown(report()?.[p] ?? null, cache[p]);
+  const view = (p: ProviderId) => shown(report()?.[p] ?? null, cache[cacheKey(p)]);
   let last = 0;
   const refresh = () => {
     if (Date.now() - last < USAGE_MIN_GAP) return;
@@ -107,9 +131,9 @@ export function UsageMeters() {
     fetchUsage();
   };
   const fetchUsage = () =>
-    void usageFetch()
+    void usageFetch(activeAccount("claude")?.dir, activeAccount("codex")?.dir)
       .then((r) => {
-        for (const p of ["claude", "codex"] as const) if (r[p].windows.length) cache[p] = { windows: r[p].windows, at: Date.now() };
+        for (const p of ["claude", "codex"] as const) if (r[p].windows.length) cache[cacheKey(p)] = { windows: r[p].windows, at: Date.now() };
         saveCache(cache);
         setReport(r);
         for (const [name, u] of [["Claude", r.claude], ["Codex", r.codex]] as const) {
@@ -117,16 +141,22 @@ export function UsageMeters() {
             const key = `${name}:${w.label}:${w.resets_at ?? ""}`;
             if (w.used_percent >= 100 && !warned.has(key)) {
               warned.add(key);
-              store.notify(`${name} ${w.label} limit reached — ${resetText(w.resets_at)}`, undefined, 8000);
+              store.notify(t("{name} {window} limit reached — {reset}", { name, window: windowLabel(w.label), reset: resetText(w.resets_at) }), undefined, 8000);
             }
           }
         }
       })
       .catch(() => {});
   poll(refresh, USAGE_EVERY);
+  // Another active account: fetch its own numbers at once.
+  createEffect(on(() => `${accountKey("claude")}|${accountKey("codex")}`, () => {
+    setReport(null);
+    last = Date.now();
+    fetchUsage();
+  }, { defer: true }));
   return (
     <Show when={view("claude") || view("codex")}>
-      <span class="meters clickable" onClick={refresh} title="Click to refresh">
+      <span class="meters clickable" onClick={refresh} title={t("Click to refresh")}>
         <Provider kind="claude" name="Claude" usage={view("claude")} />
         <Provider kind="codex" name="Codex" usage={view("codex")} />
       </span>
@@ -153,9 +183,14 @@ export function MemoryMeter() {
       <span
         class="item"
         data-meter="memory"
-        title={`Memory\nErka app + WebView: ${gb(stats()!.app)}\nSession daemon: ${gb(stats()!.daemon)}\nSessions (${stats()!.session_processes} processes): ${gb(stats()!.sessions)}`}
+        title={[
+          t("Memory"),
+          t("Erka app + WebView: {size}", { size: gb(stats()!.app) }),
+          t("Session daemon: {size}", { size: gb(stats()!.daemon) }),
+          t("Sessions ({n} processes): {size}", { n: stats()!.session_processes, size: gb(stats()!.sessions) }),
+        ].join("\n")}
       >
-        RAM {gb(total())}
+        {t("RAM {size}", { size: gb(total()) })}
       </span>
     </Show>
   );

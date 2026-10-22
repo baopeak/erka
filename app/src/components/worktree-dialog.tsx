@@ -6,12 +6,16 @@ import { store } from "../lib/store";
 import { configAtRef, configApproved, createWorktree, validBranch, worktreeFolder, type ErkaConfig } from "../lib/worktrees";
 import { gitRefs } from "../lib/ipc";
 import { KeyHints } from "./key-hints";
+import { t, errorText } from "../lib/i18n";
 
 const [repoId, setRepoId] = createSignal<string | null>(null);
 const [initialBranch, setInitialBranch] = createSignal<string | null>(null);
+/** Runs once the worktree exists (e.g. start an agent on the issue it was made for). */
+let afterCreate: ((project: import("../lib/types").Project) => void) | null = null;
 
 /** `branch`: a name typed elsewhere (search), turned into a valid branch name. */
-export function openWorktreeDialog(repo: string, branch?: string) {
+export function openWorktreeDialog(repo: string, branch?: string, then?: (project: import("../lib/types").Project) => void) {
+  afterCreate = then ?? null;
   setRepoId(repo);
   setInitialBranch(branch ? branch.trim().replace(/\s+/g, "-").replace(/[^A-Za-z0-9._/-]/g, "").replace(/^[-./]+|[./]+$/g, "") || null : null);
   store.setOverlay("worktree");
@@ -66,12 +70,15 @@ export function WorktreeDialog() {
   const create = async () => {
     const r = repo();
     if (!r || busy()) return;
-    if (!validBranch(branch())) return setError(`"${branch()}" is not a valid branch name`);
+    if (!validBranch(branch())) return setError(t("\"{branch}\" is not a valid branch name", { branch: branch() }));
     setBusy(true);
     setError(null);
     try {
-      await createWorktree(r, { branch: branch(), base: base(), path: folder(), config: runConfig() ? loaded() : null });
+      const project = await createWorktree(r, { branch: branch(), base: base(), path: folder(), config: runConfig() ? loaded() : null });
       if (store.overlay() === "worktree") store.setOverlay(null);
+      const then = afterCreate;
+      afterCreate = null;
+      then?.(project);
     } catch (e) {
       setError(String(e).replace(/^Error: /, ""));
     } finally {
@@ -85,20 +92,20 @@ export function WorktreeDialog() {
         if (e.key === "Escape" && !busy()) store.setOverlay(null);
         if (e.key === "Enter" && !(e.target as HTMLElement).matches("textarea, input[type=checkbox]")) void create();
       }}>
-        <h2>New worktree of {repo()?.name}</h2>
+        <h2>{t("New worktree of {name}", { name: repo()?.name ?? "" })}</h2>
         <div class="form-row">
-          <label>Branch</label>
+          <label>{t("Branch")}</label>
           <input ref={input} class="text-input" value={branch()} onInput={(e) => setBranch(e.currentTarget.value.trim())} />
         </div>
         <div class="form-row">
-          <label>From</label>
-          <input class="text-input" list="wt-refs" value={base()} placeholder="HEAD, a branch, origin/branch, a tag or a commit" onInput={(e) => setBase(e.currentTarget.value)} />
+          <label>{t("From")}</label>
+          <input class="text-input" list="wt-refs" value={base()} placeholder={t("HEAD, a branch, origin/branch, a tag or a commit")} onInput={(e) => setBase(e.currentTarget.value)} />
           <datalist id="wt-refs">
             <For each={refs() ?? []}>{(r) => <option value={r.name}>{r.kind}</option>}</For>
           </datalist>
         </div>
         <div class="form-row">
-          <label>Folder</label>
+          <label>{t("Folder")}</label>
           <input class="text-input mono" value={folder()} onInput={(e) => setFolderEdited(e.currentTarget.value)} />
         </div>
         <Show when={config()}>
@@ -109,11 +116,11 @@ export function WorktreeDialog() {
                   <div class="erka-config">
                     <label class="form-check">
                       <input type="checkbox" checked={runConfig()} onChange={(e) => setRunConfig(e.currentTarget.checked)} />
-                      Run .erka.yaml from {baseRef()}
+                      {t("Run .erka.yaml from {ref}", { ref: baseRef() })}
                     </label>
                     <div class="erka-config-body">
                       <For each={cfg().setup}>{(cmd) => <div class="mono">$ {cmd}</div>}</For>
-                      <For each={cfg().tabs}>{(t) => <div class="mono">+ tab: {"kind" in t ? t.kind : t.command}</div>}</For>
+                      <For each={cfg().tabs}>{(tab) => <div class="mono">+ tab: {"kind" in tab ? tab.kind : tab.command}</div>}</For>
                       <For each={cfg().copy}>{(f) => <div class="mono">copy: {f}</div>}</For>
                       <For each={cfg().link}>{(f) => <div class="mono">link: {f}</div>}</For>
                     </div>
@@ -123,12 +130,12 @@ export function WorktreeDialog() {
             </Show>
           )}
         </Show>
-        <Show when={error()}><div class="form-note error">{error()}</div></Show>
+        <Show when={error()}><div class="form-note error">{errorText(error())}</div></Show>
         <div class="footer">
-          <KeyHints items={[["Enter", "Create"], ["Esc", "Cancel"]]} />
+          <KeyHints items={[["Enter", t("Create")], ["Esc", t("Cancel")]]} />
           <span style={{ flex: 1 }} />
-          <button class="btn" disabled={busy()} onClick={() => store.setOverlay(null)}>Cancel</button>
-          <button class="btn primary" disabled={busy()} onClick={() => void create()}>{busy() ? "Creating…" : "Create worktree"}</button>
+          <button class="btn" disabled={busy()} onClick={() => store.setOverlay(null)}>{t("Cancel")}</button>
+          <button class="btn primary" disabled={busy()} onClick={() => void create()}>{busy() ? t("Creating…") : t("Create worktree")}</button>
         </div>
       </div>
     </div>

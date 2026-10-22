@@ -12,6 +12,7 @@ import { isMac, joinPath } from "../lib/platform";
 import { peekView } from "../lib/terminal-host";
 import type { DirEntry, Project } from "../lib/types";
 import { openContextMenu, type MenuItem } from "./context-menu";
+import { t } from "../lib/i18n";
 
 const ROW_H = 24;
 
@@ -145,29 +146,29 @@ export function FileTree(props: { project: Project; api?: (api: FileTreeApi) => 
   const menuItems = (entry: DirEntry | null) => {
     const dir = entry ? (entry.is_dir ? entry.path : parentOf(entry.path)) : "";
     const items: MenuItem[] = [
-      { label: "New File…", run: () => { setExpanded(dir, true); setEditing({ dir, kind: "file" }); } },
-      { label: "New Folder…", run: () => { setExpanded(dir, true); setEditing({ dir, kind: "dir" }); } },
+      { label: t("New File…"), run: () => { setExpanded(dir, true); setEditing({ dir, kind: "file" }); } },
+      { label: t("New Folder…"), run: () => { setExpanded(dir, true); setEditing({ dir, kind: "dir" }); } },
     ];
     if (entry) {
       items.push(
         null,
-        { label: "Insert Path into Terminal", run: () => { const v = focusedTerminal(); if (v) { v.paste(entry.path.includes(" ") ? `"${entry.path}" ` : entry.path + " "); v.focus(); } } },
-        ...(entry.is_dir ? [{ label: "Find in Folder…", run: () => { setSearchFolder(entry.path); store.showRightPanel("search"); } }] : []),
-        { label: "Copy Relative Path", run: () => void writeText(entry.path) },
-        { label: "Copy Path", run: () => void writeText(joinPath(root(), entry.path)) },
-        { label: isMac ? "Reveal in Finder" : "Reveal in Explorer", run: () => void revealEntry(root(), entry.path) },
+        { label: t("Insert Path into Terminal"), run: () => { const v = focusedTerminal(); if (v) { v.paste(entry.path.includes(" ") ? `"${entry.path}" ` : entry.path + " "); v.focus(); } } },
+        ...(entry.is_dir ? [{ label: t("Find in Folder…"), run: () => { setSearchFolder(entry.path); store.showRightPanel("search"); } }] : []),
+        { label: t("Copy Relative Path"), run: () => void writeText(entry.path) },
+        { label: t("Copy Path"), run: () => void writeText(joinPath(root(), entry.path)) },
+        { label: isMac ? t("Reveal in Finder") : t("Reveal in Explorer"), run: () => void revealEntry(root(), entry.path) },
         null,
-        { label: "Rename…", run: () => setEditing({ dir: parentOf(entry.path), kind: "rename", entry }) },
+        { label: t("Rename…"), run: () => setEditing({ dir: parentOf(entry.path), kind: "rename", entry }) },
         {
-          label: "Move to Trash", danger: true,
+          label: t("Move to Trash"), danger: true,
           run: async () => {
-            if (!confirm(`Move "${entry.name}" to the trash?`)) return;
+            if (!confirm(t("Move \"{name}\" to the trash?", { name: entry.name }))) return;
             try { await deleteEntry(root(), entry.path); await load(parentOf(entry.path)); } catch (e) { store.notify(String(e)); }
           },
         },
       );
     }
-    items.push(null, { label: "Refresh", run: () => { for (const d of Object.keys(children)) void load(d); void gitState.refresh(); } });
+    items.push(null, { label: t("Refresh"), run: () => { for (const d of Object.keys(children)) void load(d); void gitState.refresh(); } });
     return items;
   };
 
@@ -205,7 +206,7 @@ export function FileTree(props: { project: Project; api?: (api: FileTreeApi) => 
           <Show when={editing() && editing()!.kind !== "rename"}>
             <div class="tree-row" style={{ top: `${rows().length * ROW_H}px`, "padding-left": "8px" }}>
               <span class="ficon">{editing()!.kind === "dir" ? "▸" : "·"}</span>
-              <InlineInput initial="" placeholder={`${editing()!.kind === "dir" ? "folder" : "file"} name in /${editing()!.dir}`} onDone={(v) => void commit(v)} />
+              <InlineInput initial="" placeholder={editing()!.kind === "dir" ? t("folder name in /{dir}", { dir: editing()!.dir }) : t("file name in /{dir}", { dir: editing()!.dir })} onDone={(v) => void commit(v)} />
             </div>
           </Show>
         </div>
