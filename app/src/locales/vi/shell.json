@@ -282,6 +282,8 @@
   "Command palette": "Bảng lệnh",
   "Your default shell": "Shell mặc định của bạn",
   "on {host}": "trên {host}",
+  "Terminal on a saved host": "Terminal trên một host đã lưu",
+  "Add an SSH host": "Thêm SSH host",
   "{bin} CLI": "{bin} CLI",
   "Saved layouts": "Bố cục đã lưu",
   "empty": "trống",

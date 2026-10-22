@@ -1,13 +1,16 @@
-import { For, Show } from "solid-js";
+import { For, Show, createSignal } from "solid-js";
 import { allLayouts } from "../lib/plugins";
 import { store } from "../lib/store";
 import { pickProjectFolder, chordOf, commands } from "../lib/commands";
 import { chordLabel } from "../lib/platform";
-import { KindGlyph } from "./icons";
+import { Icon, KindGlyph } from "./icons";
+import { openContextMenu, type MenuItem } from "./context-menu";
 import { TemplateThumb } from "./layout-menu";
 import { templateKinds } from "../lib/layout";
-import { kindInfo, presetFor, projectAgents } from "../lib/agents";
+import { kindInfo, presetFor } from "../lib/agents";
 import { hostLabel } from "../lib/remote";
+import { hostById, projectHosts, vault } from "../lib/ssh-hosts";
+import { RunOnPicker, resolveRunOn, runOnAgents, type RunOn } from "./host-target";
 import type { Project, SessionKind } from "../lib/types";
 import { t, msg } from "../lib/i18n";
 import { openHosts } from "./hosts-page";
@@ -46,21 +49,48 @@ const SUBTITLES: Record<string, string> = {
   shell: msg("Your default shell"),
 };
 
-/** Core agents, installed preset agents (Settings → Agents can hide them), then the shell. */
-const choices = (project: Project): { kind: SessionKind; sub: string }[] =>
-  [...projectAgents(project, store.state.settings.hiddenAgents), "shell"].map((kind) => ({ kind, sub: project.remote ? t("on {host}", { host: hostLabel(project) }) : SUBTITLES[kind] ? t(SUBTITLES[kind]) : t("{bin} CLI", { bin: presetFor(kind)?.bin ?? kind }) }));
+/** Core agents, installed preset agents (Settings → Agents can hide them), then the shell; on a
+ *  chosen host, the agents that host has. */
+const choices = (project: Project, run: RunOn): { kind: SessionKind; sub: string }[] => {
+  const host = run.hostId ? hostById(run.hostId)?.label : project.remote ? hostLabel(project) : undefined;
+  return [...runOnAgents(project, run, store.state.settings.hiddenAgents), "shell"].map((kind) => ({ kind, sub: host ? t("on {host}", { host }) : SUBTITLES[kind] ? t(SUBTITLES[kind]) : t("{bin} CLI", { bin: presetFor(kind)?.bin ?? kind }) }));
+};
 
-/** Shown in a project with no tabs: one click starts an agent. */
+/** Shown in a project with no tabs: pick the machine ("Run on"), then one click starts an agent. */
 export function Launcher(props: { project: Project }) {
+  const [runOn, setRunOn] = createSignal<RunOn>({ hostId: null, path: "" });
+  // One start at a time: a double click must not start a second session.
+  let starting = false;
+  const start = async (kind: SessionKind, run = runOn()) => {
+    if (starting) return;
+    starting = true;
+    const projectId = props.project.id;
+    const target = await resolveRunOn(props.project, run);
+    if (target !== null) await store.newSession(projectId, kind, { target });
+    starting = false;
+  };
+  /** The SSH card: a shell on a saved host (linked hosts first, in their linked folder). */
+  const sshMenu = (e: MouseEvent) => {
+    const links = projectHosts(props.project);
+    if (!vault().hosts.length) return openHosts();
+    const hosts = [...links.map((l) => l.host), ...vault().hosts.filter((h) => !links.some((l) => l.host.id === h.id))];
+    const items: MenuItem[] = hosts.map((h) => {
+      const path = links.find((l) => l.host.id === h.id)?.path ?? "";
+      return { label: h.group ? `${h.label} · ${h.group}` : h.label, hint: path || undefined, run: () => void start("shell", { hostId: h.id, path }) };
+    });
+    items.push(null, { label: t("Manage SSH hosts…"), run: () => openHosts() });
+    openContextMenu(e, items);
+  };
   return (
     <div class="empty">
       <div class="welcome">
         <h1>{props.project.name}</h1>
         <div style={{ color: "var(--text-faint)", "font-family": "var(--font-mono)", "font-size": "12px" }}>{props.project.path}</div>
+        <RunOnPicker project={props.project} value={runOn()} onChange={setRunOn} />
         <div class="launcher">
-          <For each={choices(props.project)}>
+          <For each={choices(props.project, runOn())}>
             {(c) => (
-              <div class="launch-card" onClick={() => void store.newSession(props.project.id, c.kind)}>
+              <div class="launch-card" onClick={() => void start(c.kind)}>
                 <KindGlyph kind={c.kind} size={34} />
                 <div>
                   <div>{kindInfo(c.kind).label}</div>
@@ -69,6 +99,13 @@ export function Launcher(props: { project: Project }) {
               </div>
             )}
           </For>
+          <div class="launch-card" data-launch="ssh" onClick={sshMenu}>
+            <span class="ssh-glyph"><Icon name="server" size={18} /></span>
+            <div>
+              <div>SSH</div>
+              <div class="sub">{vault().hosts.length ? t("Terminal on a saved host") : t("Add an SSH host")}</div>
+            </div>
+          </div>
         </div>
         <Show when={allLayouts().length}>
           <div class="launcher-layouts">

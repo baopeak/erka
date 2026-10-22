@@ -287,6 +287,7 @@ input, textarea, select { font: inherit; color: var(--text); }
 .launch-card:hover { border-color: var(--accent); background: var(--bg-hover); }
 .launch-card .glyph { width: 34px; height: 34px; border-radius: 9px; display: grid; place-items: center; font-weight: 700; color: #141823; }
 .launch-card .sub { font-size: 11.5px; color: var(--text-faint); }
+.launch-card .ssh-glyph { width: 34px; height: 34px; border-radius: 5px; display: grid; place-items: center; flex: none; background: var(--accent); color: #fff; }
 
 /* ---------- right panel ---------- */
 .rightpanel { width: var(--right-w, 300px); flex: none; display: flex; flex-direction: column; background: var(--bg-elev); border-left: 1px solid var(--border); min-width: 200px; position: relative; }

@@ -122,9 +122,7 @@ export function RunOnPicker(props: { project: Project; value: RunOn; onChange: (
             </button>
           )}
         </For>
-        <Show when={vault().hosts.length}>
-          <button class="toggle" data-action="other-host" onClick={others}>{t("Other host…")}</button>
-        </Show>
+        <button class="toggle" data-action="other-host" onClick={others}>{t("Other host…")}</button>
       </div>
       <Show when={host()}>
         {(h) => (
