@@ -27,6 +27,9 @@ pub const MIN_WORK_FOR_UNREAD: Duration = Duration::from_secs(3);
 const ACTIVE_WINDOW: Duration = Duration::from_millis(1500);
 /// Output this soon after input is treated as echo, not work.
 const ECHO_WINDOW: Duration = Duration::from_millis(300);
+/// A bell this soon after input is the program reacting to that key (no completion, start of
+/// line), not asking for the user. Wider than the echo window: over SSH it takes a round trip.
+const BELL_REACTION_WINDOW: Duration = Duration::from_secs(1);
 /// A hook state older than this, while output keeps flowing, stops overriding activity.
 const HOOK_STALE: Duration = Duration::from_secs(120);
 
@@ -56,6 +59,12 @@ impl Activity {
             self.burst_start = Some(now);
         }
         self.last_output = Some(now);
+    }
+
+    pub fn on_bell(&mut self, now: Instant) {
+        if self.last_input.is_none_or(|i| now.duration_since(i) >= BELL_REACTION_WINDOW) {
+            self.bell = Some(now);
+        }
     }
 
     /// Records an agent-reported state. A failed turn stays failed through later idle reports
@@ -162,6 +171,17 @@ mod tests {
         assert_eq!(a.status(t0), Status::Waiting);
         a.last_input = Some(t0 + Duration::from_millis(1));
         assert_eq!(a.status(t0 + Duration::from_secs(5)), Status::Idle);
+    }
+
+    #[test]
+    fn bell_answering_a_key_is_not_waiting() {
+        let t0 = Instant::now();
+        let mut a = Activity { last_input: Some(t0), ..Default::default() };
+        // Tab with no completion over a slow link.
+        a.on_bell(t0 + Duration::from_millis(400));
+        assert_eq!(a.status(t0 + Duration::from_secs(5)), Status::Idle);
+        a.on_bell(t0 + Duration::from_secs(30));
+        assert_eq!(a.status(t0 + Duration::from_secs(31)), Status::Waiting);
     }
 
     #[test]

@@ -390,7 +390,7 @@ impl Session {
                         let _ = pty.ctl.send(Ctl::Input(reply.into_bytes()));
                     }
                 }
-                VtEvent::Bell => g.activity.bell = Some(now),
+                VtEvent::Bell => g.activity.on_bell(now),
                 VtEvent::Clipboard(text) => {
                     let msg = json!({"event": "session.clipboard", "params": {"handle": handle, "text": text}});
                     for s in g.subs.iter().filter(|s| s.interactive) {
