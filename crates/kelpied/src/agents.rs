@@ -236,7 +236,15 @@ pub fn build_remote_launch(kind: &str, user_args: &[String], resume: Resume, pro
         None => r#""${SHELL:-/bin/sh}" -l"#.to_string(),
     };
     let dir = sh_quote(cwd);
-    let direct = format!("cd {dir} && exec {run}");
+    // sshd prints the login banner (MOTD) only when it runs no command, so a plain shell prints
+    // it itself; `~/.hushlogin` silences it as it does for sshd. Agents start without it.
+    let banner = (kind == "shell" && program.is_none()).then_some(r#"[ -e "$HOME/.hushlogin" ] || cat /run/motd.dynamic /etc/motd 2>/dev/null"#);
+    let direct = match banner {
+        Some(b) => format!("cd {dir} && {{ {b}; exec {run}; }}"),
+        None => format!("cd {dir} && exec {run}"),
+    };
+    // tmux runs this only when it starts the session: re-attaching shows the screen as it was.
+    let in_tmux = banner.map_or_else(|| run.clone(), |b| format!("{b}; exec {run}"));
     let body = if remote.tmux {
         let id: String = session_id.chars().filter(|c| c.is_ascii_alphanumeric()).take(12).collect();
         // Sessions started before the rename to Kelpie run in `erka-<id>`: re-attach to that one
@@ -247,7 +255,7 @@ pub fn build_remote_launch(kind: &str, user_args: &[String], resume: Resume, pro
             sh_quote(&name),
             sh_quote(&format!("={legacy}")),
             sh_quote(&legacy),
-            sh_quote(&run)
+            sh_quote(&in_tmux)
         )
     } else {
         direct
@@ -625,9 +633,10 @@ mod remote_tests {
         let l = build_remote_launch("shell", &[], Resume::None, None, &remote(false), "/srv/my app", "abc").unwrap();
         let j = command_line(&l.argv);
         assert!(j.contains("-t") && j.contains("-p 2222") && j.contains("me@box --"), "{j}");
-        assert!(j.ends_with(r#"exec "${SHELL:-/bin/sh}" -lc 'cd '\''/srv/my app'\'' && exec "${SHELL:-/bin/sh}" -l'"#), "{j}");
+        assert!(j.ends_with(r#"exec "${SHELL:-/bin/sh}" -lc 'cd '\''/srv/my app'\'' && { [ -e "$HOME/.hushlogin" ] || cat /run/motd.dynamic /etc/motd 2>/dev/null; exec "${SHELL:-/bin/sh}" -l; }'"#), "{j}");
         let l = build_remote_launch("claude", &["--model".into(), "haiku".into()], Resume::Latest, None, &remote(false), "/srv/x", "abc").unwrap();
         let j = command_line(&l.argv);
+        assert!(!j.contains("motd"), "agents start without the login banner: {j}");
         assert!(j.contains("exec '\\''claude'\\'' '\\''--continue'\\'' '\\''--model'\\'' '\\''haiku'\\''"), "{j}");
         assert!(!j.contains("--settings"), "no local hook settings on a remote host: {j}");
     }
@@ -642,6 +651,18 @@ mod remote_tests {
         assert!(j.contains(r"tmux has-session -t '\''=erka-12345678abcd'\'' 2>/dev/null && n='\''erka-12345678abcd'\''"), "re-attaches a pre-rename session: {j}");
         assert!(j.contains("command -v tmux"), "{j}");
         assert!(j.contains("fix it"), "{j}");
+        assert!(!j.contains("motd"), "{j}");
+    }
+
+    #[test]
+    fn remote_shell_shows_the_login_banner_once() {
+        let l = build_remote_launch("shell", &[], Resume::None, None, &remote(true), "/srv/x", "abc").unwrap();
+        let j = command_line(&l.argv);
+        // Both as the tmux session's first command and in the no-tmux fallback.
+        assert_eq!(j.matches("cat /run/motd.dynamic /etc/motd").count(), 2, "{j}");
+        assert!(j.contains("hushlogin"), "{j}");
+        let l = build_remote_launch("shell", &["htop".into()], Resume::None, None, &remote(true), "/srv/x", "abc").unwrap();
+        assert!(!command_line(&l.argv).contains("motd"), "a shell running a command has no banner");
     }
 
     #[test]
