@@ -427,11 +427,16 @@ fn rewrite_legacy_refs(text: &str, legacy: &std::path::Path, dir: &std::path::Pa
     let mut out = text.to_string();
     // The folder as JSON stores it: escaped backslashes, or forward slashes. The binaries of the
     // old install lived in it on Windows; the new install puts its own in the new folder.
-    for (old_dir, new_dir, sep) in [(old.replace('\\', "\\\\"), new.replace('\\', "\\\\"), "\\\\"), (old.replace('\\', "/"), new.replace('\\', "/"), "/")] {
+    // Binaries first, for every form: off Windows both forms are the same string, so renaming the
+    // folder inside the loop would hide the binary paths from the next form.
+    let forms = [(old.replace('\\', "\\\\"), new.replace('\\', "\\\\"), "\\\\"), (old.replace('\\', "/"), new.replace('\\', "/"), "/")];
+    for (old_dir, new_dir, sep) in &forms {
         for (bin_old, bin_new) in [("erkad.exe", "kelpied.exe"), ("erka-stt.exe", "kelpie-stt.exe"), ("erka.exe", "kelpie.exe")] {
             out = replace_ignore_case(&out, &format!("{old_dir}{sep}{bin_old}"), &format!("{new_dir}{sep}{bin_new}"));
         }
-        out = replace_ignore_case(&out, &old_dir, &new_dir);
+    }
+    for (old_dir, new_dir, _) in &forms {
+        out = replace_ignore_case(&out, old_dir, new_dir);
     }
     // macOS keeps the binaries in the app bundle.
     for (o, n) in [("Erka.app/Contents/MacOS/erkad", "Kelpie.app/Contents/MacOS/kelpied"), ("Erka.app/Contents/MacOS/erka-stt", "Kelpie.app/Contents/MacOS/kelpie-stt")] {
@@ -619,6 +624,13 @@ mod tests {
         assert!(!migrate_data(&legacy, &dir, &|| panic!("nothing to stop")).unwrap());
         assert_eq!(std::fs::read_to_string(dir.join("app-state.json")).unwrap(), "{\"mine\":1}");
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn slash_paths_get_the_new_folder_and_binary_names() {
+        let (legacy, dir) = (std::path::Path::new("/h/Erka"), std::path::Path::new("/h/Kelpie"));
+        let out = rewrite_legacy_refs(r#"{"askpass":"/h/Erka/erkad.exe","home":"/h/Erka/accounts/a"}"#, legacy, dir);
+        assert_eq!(out, r#"{"askpass":"/h/Kelpie/kelpied.exe","home":"/h/Kelpie/accounts/a"}"#);
     }
 
     #[test]
