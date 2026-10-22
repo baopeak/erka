@@ -5,6 +5,7 @@ import { store } from "../../lib/store";
 import { t } from "../../lib/i18n";
 import { daemon, platformInfo, revealEntry } from "../../lib/ipc";
 import { SettingRow } from "./setting-row";
+import { BrandMark, BrandWordmark, Kip } from "../brand";
 
 interface DaemonInfo {
   version: string;
@@ -58,6 +59,13 @@ export function AboutSettings() {
   const [version] = createResource(() => getVersion().catch(() => "?"));
   return (
     <SettingRow id="version">
+      <div style={{ display: "flex", "align-items": "center", gap: "12px", "margin-bottom": "12px" }}>
+        <Kip mood="peek" size={72} />
+        <div style={{ display: "flex", "align-items": "center", gap: "8px" }}>
+          <BrandMark />
+          <BrandWordmark height={18} />
+        </div>
+      </div>
       <div class="kv">
         <span>Kelpie</span><span>{version()}</span>
         <span>{t("Platform")}</span><span>{platform()?.os ?? ""}</span>
