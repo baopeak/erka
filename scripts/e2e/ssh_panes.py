@@ -258,6 +258,10 @@ try:
         run.check("the host is saved from the drawer", bool(host) and host["label"] == LABEL, str(host))
         time.sleep(0.5)
         run.shot("02b-hosts-after-save")
+        # Saved from the typed address: the box is cleared, so the new host is listed instead of "Add …".
+        run.check("saving from the quick-connect box clears it", d.js("return document.querySelector('[data-field=quick-connect]').value === ''"))
+        run.check("the saved host is listed in the hosts page", wait(lambda: d.js(f"const el = document.querySelector('.host-item[data-host={ALIAS}]'); return !!el && el.getBoundingClientRect().height > 0;"), 5))
+        run.check("the add-typed row is gone after saving", not exists("[data-action=add-typed-host]"))
         run.check("its password is in the credential store", host and invoke("ssh_secret_has", {"kind": "password", "target": host["id"]}))
     step("quick connect", quick_connect)
 

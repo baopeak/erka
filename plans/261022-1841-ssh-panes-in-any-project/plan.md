@@ -1,6 +1,6 @@
 # SSH panes in any project + Termius-style host UX
 
-Status: implemented, verified, not committed · Branch `rebrand/kelpie` (on top of rename af10e12). Verification 2026-10-22: tsc, i18n, vite build, cargo tests (app crate 37 + ssh_hosts incl. new fields) pass; e2e on a rebuilt app: ssh_panes 40/40 (new), ssh_hosts 25/25, split_picker 46/46. Review: plans/reports/code-reviewer-261022-1841-ssh-panes.md (12 findings, all fixed); test: plans/reports/tester-261022-1841-ssh-panes.md (1 UX bug, fixed after the run).
+Status: implemented, verified, not committed · Branch `rebrand/kelpie` (on top of rename af10e12). Verification 2026-10-22: tsc, i18n, vite build, cargo tests (app crate 37 + ssh_hosts incl. new fields) pass; e2e on a rebuilt app: ssh_panes 40/40 (new), ssh_hosts 25/25, split_picker 46/46. Review: plans/reports/code-reviewer-261022-1841-ssh-panes.md (12 findings, all fixed); test: plans/reports/tester-261022-1841-ssh-panes.md (1 UX bug, fixed after the run). Rerun on a rebuilt app after that fix: ssh_panes 43/43 (3 new checks for it), ssh_hosts 25/25 — plans/reports/tester-261022-2049-ssh-panes-rerun.md.
 Research: [../reports/research-261022-1811-multi-ssh-sessions-in-project.md](../reports/research-261022-1811-multi-ssh-sessions-in-project.md)
 
 ## Outcome
