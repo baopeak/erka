@@ -361,6 +361,14 @@ function createAppStore() {
   function addProject(path: string, opts: { parentId?: string; branch?: string; name?: string; open?: boolean; remote?: Project["remote"] } = {}): string {
     const existing = state.projects.find((p) => samePath(p.path, path));
     if (existing) {
+      // Adding a remote project again takes what its host has now (tmux installed since, agents).
+      const remote = opts.remote;
+      if (remote && existing.remote) {
+        update((s) => {
+          const p = s.projects.find((x) => x.id === existing.id)!;
+          p.remote = { ...p.remote!, tmux: remote.tmux, agents: remote.agents ?? p.remote!.agents };
+        });
+      }
       if (opts.open !== false) switchProject(existing.id);
       return existing.id;
     }

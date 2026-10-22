@@ -41,6 +41,8 @@
   "Imported {n} host": "Đã nhập {n} host",
   "Imported {n} hosts": "Đã nhập {n} host",
   "Install Claude Code": "Cài Claude Code",
+  "Install tmux": "Cài tmux",
+  "Without tmux a session ends when its connection drops; with it, sessions keep running on the host.": "Không có tmux thì phiên kết thúc khi mất kết nối; có tmux thì phiên vẫn chạy trên host.",
   "Install on host…": "Cài lên host…",
   "Jump host": "Jump host",
   "Keep sessions in tmux": "Giữ phiên trong tmux",

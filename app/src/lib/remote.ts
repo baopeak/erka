@@ -15,7 +15,23 @@ export interface HostCheck {
   agents: string[];
 }
 
-export const remoteConfigure = (config: string | null) => invoke<void>("remote_configure", { config });
+/** Package-manager command per `/etc/os-release` ID, for hosts without tmux. */
+const TMUX_INSTALL: [RegExp, string][] = [
+  [/^(ubuntu|debian|raspbian|linuxmint|pop|kali)$/, "sudo apt-get update && sudo apt-get install -y tmux"],
+  [/^(fedora|rhel|centos|rocky|almalinux|ol|amzn)$/, "sudo dnf install -y tmux || sudo yum install -y tmux"],
+  [/^(arch|manjaro|endeavouros)$/, "sudo pacman -S --noconfirm tmux"],
+  [/^(opensuse.*|sles)$/, "sudo zypper install -y tmux"],
+  [/^alpine$/, "sudo apk add tmux"],
+];
+
+/** The command that installs tmux on a checked host (typed into a terminal there), or null when
+ *  its package manager is not known. */
+export function tmuxInstall(c: Pick<HostCheck, "os" | "distro">): string | null {
+  if (!c.distro && /^darwin/i.test(c.os)) return "brew install tmux";
+  return TMUX_INSTALL.find(([re]) => re.test(c.distro.toLowerCase()))?.[1] ?? null;
+}
+
+export const remoteConfigure =(config: string | null) => invoke<void>("remote_configure", { config });
 export const remoteHosts = () => invoke<string[]>("remote_hosts");
 export const remoteCheck = (dest: string, agents: string[]) => invoke<HostCheck>("remote_check", { dest, agents });
 export const remoteFolders = (dest: string, path: string) => invoke<string[]>("remote_folders", { dest, path });

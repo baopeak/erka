@@ -372,6 +372,31 @@ agent there too.
 The file tree, search and source control of the project stay those of this computer; use the
 host's *Files* or *Open as project* to work with its files.
 
+### Keeping sessions running on a server
+
+Install **tmux** on the server, and Kelpie runs every terminal and agent there inside it. A session
+then keeps running on the server when the connection drops, when you close Kelpie or when your
+computer sleeps or restarts; opening it again (or *Resume*) attaches to it as it was — an agent in
+the middle of a task carries on meanwhile. Without tmux, a session ends with its connection.
+
+The host's check (SSH hosts page, *Check connection*, or *Add Remote Project*) shows `tmux ✓` or
+*tmux not installed*; on a known system, **Install tmux** types the command into a terminal there:
+
+| Server | Command |
+|---|---|
+| Ubuntu, Debian | `sudo apt-get update && sudo apt-get install -y tmux` |
+| Fedora, RHEL, CentOS, Rocky, Alma, Amazon Linux | `sudo dnf install -y tmux` (older: `sudo yum install -y tmux`) |
+| Arch, Manjaro | `sudo pacman -S tmux` |
+| openSUSE | `sudo zypper install -y tmux` |
+| Alpine | `sudo apk add tmux` |
+| macOS | `brew install tmux` |
+
+Logged in as root, leave out `sudo`; without admin rights, ask the server's administrator. Then
+check the host again — *Check connection* on its page, or add a remote project of it again — and
+terminals and agents opened from then on run in tmux. *Keep sessions in tmux* on a host (on by
+default) turns it off for that host. Kelpie's sessions are named `kelpie-…` on the server
+(`tmux ls` lists them, `tmux attach -t <name>` opens one from any SSH client).
+
 ### Phone access
 
 Settings → Mobile turns on a small web app for your phone on your network (off by default;

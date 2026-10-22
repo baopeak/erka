@@ -231,6 +231,7 @@
   "No folders here.": "Không có thư mục nào ở đây.",
   "Name (optional)": "Tên (tùy chọn)",
   "tmux is not installed on this host": "Máy chủ này chưa cài tmux",
+  "To keep sessions running, install tmux on the host, then connect again.": "Để giữ phiên chạy, hãy cài tmux trên máy chủ rồi kết nối lại.",
   "Keep sessions running on the host with tmux (they survive dropped connections and restarts)": "Giữ phiên chạy trên máy chủ bằng tmux (phiên vẫn còn khi mất kết nối hoặc khởi động lại)",
   "Add project": "Thêm dự án",
   "Filter rows": "Lọc hàng",

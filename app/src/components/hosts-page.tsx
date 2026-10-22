@@ -9,7 +9,7 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { store } from "../lib/store";
 import * as ipc from "../lib/ipc";
 import { kindInfo } from "../lib/agents";
-import type { HostCheck } from "../lib/remote";
+import { tmuxInstall, type HostCheck } from "../lib/remote";
 import {
   CLAUDE_INSTALL, agentAdd, agentList, checkHost, connectHost, deleteKey, forwardStart, forwardStatus, forwardStop, generateKey, hasSecret, hostAddress, hostById, hostKeys,
   hostProject, importKey, importSshConfig, installKey, isHostKeyError, knownHosts, listKeys, loadVault, newForward, newHost, parseDestination, removeForward, removeHost, removeKnownHosts, runOnHosts,
@@ -326,10 +326,13 @@ function HostDetail(props: { host: SshHost; onEdit: () => void }) {
           <div class="remote-check" data-host-check>
             <span><Icon name="check" size={12} /> {c().os}</span>
             <span class={c().git ? "ok" : "warn"}>{c().git ? t("git ✓") : t("git missing")}</span>
-            <span class={c().tmux ? "ok" : "muted-inline"}>{c().tmux ? t("tmux ✓") : t("tmux not installed")}</span>
+            <span class={c().tmux ? "ok" : "muted-inline"} title={c().tmux ? "" : t("Without tmux a session ends when its connection drops; with it, sessions keep running on the host.")}>{c().tmux ? t("tmux ✓") : t("tmux not installed")}</span>
             <span>{agents().length ? t("agents: {list}", { list: agents().map((k) => kindInfo(k).label).join(", ") }) : t("no agent CLIs found on its PATH")}</span>
             <Show when={!hasClaude()}>
               <button class="btn" title={CLAUDE_INSTALL} onClick={() => void open("shell", CLAUDE_INSTALL)}>{t("Install Claude Code")}</button>
+            </Show>
+            <Show when={!c().tmux && tmuxInstall(c())}>
+              {(cmd) => <button class="btn" title={cmd()} onClick={() => void open("shell", cmd())}>{t("Install tmux")}</button>}
             </Show>
           </div>
         )}
