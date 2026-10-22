@@ -103,8 +103,8 @@ export function AutomationSettings() {
   const [editing, setEditing] = createSignal<Automation | null>(null);
   onMount(() => {
     const on = () => void refetch();
-    window.addEventListener("erka:automations", on);
-    onCleanup(() => window.removeEventListener("erka:automations", on));
+    window.addEventListener("kelpie:automations", on);
+    onCleanup(() => window.removeEventListener("kelpie:automations", on));
   });
   const toggle = (a: Automation, enabled: boolean) => void daemon("automation.save", { ...a, enabled }).catch((e) => store.notify(String(e)));
   const run = (a: Automation) => void daemon("automation.run", { id: a.id }).then(() => store.notify(t("Started {name}", { name: a.name })), (e) => store.notify(String(e)));

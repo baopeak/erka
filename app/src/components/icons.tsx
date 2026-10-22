@@ -74,7 +74,7 @@ export function KindGlyph(props: { kind: string; size?: number }) {
   const size = () => props.size ?? 18;
   return (
     <span
-      style={{ width: `${size()}px`, height: `${size()}px`, "border-radius": "5px", background: meta().color, color: "#0b0d12", display: "inline-grid", "place-items": "center", "font-size": `${Math.round(size() * 0.5)}px`, "font-weight": 700, flex: "none" }}
+      style={{ width: `${size()}px`, height: `${size()}px`, "border-radius": "5px", background: meta().color, color: "#141823", display: "inline-grid", "place-items": "center", "font-size": `${Math.round(size() * 0.5)}px`, "font-weight": 700, flex: "none" }}
     >
       {meta().glyph}
     </span>

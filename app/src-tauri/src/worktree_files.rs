@@ -1,7 +1,7 @@
 //! Brings gitignored files into a new worktree, which starts as a clean checkout:
-//! - **copy**: `.worktreeinclude` lines and `.erka.yaml` `copy:` entries (e.g. `.env`) get a
+//! - **copy**: `.worktreeinclude` lines and `.kelpie.yaml` `copy:` entries (e.g. `.env`) get a
 //!   private copy;
-//! - **link**: `.erka.yaml` `link:` directories (e.g. `node_modules`) are shared with the
+//! - **link**: `.kelpie.yaml` `link:` directories (e.g. `node_modules`) are shared with the
 //!   repository through a symlink (a junction on Windows: no admin rights needed).
 //!
 //! Only literal, repository-relative paths that exist in the repository and are ignored by
@@ -195,7 +195,7 @@ mod tests {
 
     #[test]
     fn copies_links_and_skips_tracked() {
-        let base = std::env::temp_dir().join(format!("erka-wtfiles-{}", std::process::id()));
+        let base = std::env::temp_dir().join(format!("kelpie-wtfiles-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
         // Forward slashes on purpose: the app passes such paths on Windows too.
         let repo = PathBuf::from(base.join("repo").to_string_lossy().replace('\\', "/"));

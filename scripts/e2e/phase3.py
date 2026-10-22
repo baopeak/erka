@@ -54,10 +54,10 @@ try:
     run.boot()
     for s in daemon(d, "session.list"):
         daemon(d, "session.close", {"handle": s["handle"]})
-    d.js("const s = window.__erka.store; for (const p of [...s.state.projects]) s.removeProject(p.id);")
-    d.js("window.__erka.store.addProject(arguments[0]);", REPO)
-    d.js("window.__erka.store.addProject(arguments[0]);", probe)
-    probe_id = d.js("return window.__erka.store.state.activeProject")
+    d.js("const s = window.__kelpie.store; for (const p of [...s.state.projects]) s.removeProject(p.id);")
+    d.js("window.__kelpie.store.addProject(arguments[0]);", REPO)
+    d.js("window.__kelpie.store.addProject(arguments[0]);", probe)
+    probe_id = d.js("return window.__kelpie.store.state.activeProject")
 
     # ---------- history scan ----------
     # count=false: measure the list itself, not its race with the background prompt count.
@@ -73,7 +73,7 @@ try:
     # build lists warm in ~30-60 ms (cargo test --release ... scan_real).
     run.check("warm history scan is fast (< 600 ms round trip, debug build)", warm < 0.6, f"{warm*1000:.0f} ms")
 
-    d.js("window.__erka.store.showRightPanel('history')")
+    d.js("window.__kelpie.store.showRightPanel('history')")
     d.wait("return document.querySelectorAll('.history-row').length > 0", 20)
     folder_rows = d.js("return document.querySelectorAll('.history-row').length")
     run.check("folder scope shows this folder's conversations", folder_rows >= 1, f"{folder_rows} rows")
@@ -103,7 +103,7 @@ try:
         d.js("""const id = arguments[0];
             const row = [...document.querySelectorAll('.history-row')].find(r => r.title.includes(arguments[1]));
             row.querySelector('.row-actions button').click();""", target["id"], target["first_prompt"][:30])
-        new = d.wait("return Object.values(window.__erka.store.sessions).find(s => s.agent_session_id === arguments[0]) || null", 15, 0.25, target["id"])
+        new = d.wait("return Object.values(window.__kelpie.store.sessions).find(s => s.agent_session_id === arguments[0]) || null", 15, 0.25, target["id"])
         run.check("resume starts the agent on that conversation", new["kind"] == "claude" and norm(new["cwd"]) == norm(probe), f"{new['kind']} {new['cwd']}")
         # The probe folder was only used non-interactively, so Claude first asks to trust it;
         # answering would change the user's global Claude config. Check the launch instead.
@@ -130,12 +130,12 @@ try:
     run.shot("p3-04-statusbar")
 
     # ---------- quick commands ----------
-    d.js("window.__erka.store.switchProject(arguments[0]);", probe_id)
-    shell = d.js_async("const done = arguments[arguments.length-1]; window.__erka.store.newSession(arguments[0], 'shell').then(done);", probe_id)
+    d.js("window.__kelpie.store.switchProject(arguments[0]);", probe_id)
+    shell = d.js_async("const done = arguments[arguments.length-1]; window.__kelpie.store.newSession(arguments[0], 'shell').then(done);", probe_id)
     d.wait("return !!document.querySelector('.pane .term-host .xterm')", 20)
     time.sleep(1.5)
-    d.js("""window.__erka.store.setSettings({ quickCommands: [
-        { id: 'qc1', label: 'Echo marker', text: 'echo erka-qc-' + 'ok', action: 'terminal', enter: true, projectId: null },
+    d.js("""window.__kelpie.store.setSettings({ quickCommands: [
+        { id: 'qc1', label: 'Echo marker', text: 'echo kelpie-qc-' + 'ok', action: 'terminal', enter: true, projectId: null },
         { id: 'qc2', label: 'Ask agent', text: 'Summarize', action: 'agent', enter: true, projectId: null },
     ] })""")
     d.keys("ctrl+shift+p")
@@ -144,13 +144,13 @@ try:
     d.wait("return [...document.querySelectorAll('.palette .item .label')].some(e => e.innerText.includes('Run: Echo marker'))", 5)
     run.shot("p3-05-quick-command-search")
     d.keys("enter")
-    run.check("quick command from search runs in the focused shell", wait_output_lines(shell["handle"], "erka-qc-ok", 1))
+    run.check("quick command from search runs in the focused shell", wait_output_lines(shell["handle"], "kelpie-qc-ok", 1))
 
     d.keys("ctrl+shift+n")
     d.wait("return document.querySelectorAll('.qc-chip').length === 2", 5)
     run.shot("p3-06-quick-command-menu")
     d.keys("ctrl+1")
-    run.check("Ctrl+1 in the + menu runs the first quick command", wait_output_lines(shell["handle"], "erka-qc-ok", 2))
+    run.check("Ctrl+1 in the + menu runs the first quick command", wait_output_lines(shell["handle"], "kelpie-qc-ok", 2))
     run.check("menu closes after running", not d.js("return !!document.querySelector('.qc-chip')"))
 
     d.keys("ctrl+shift+p")
@@ -161,7 +161,7 @@ try:
     toast = d.wait("return document.querySelector('.toast')?.innerText || null", 5)
     run.check("agent quick command refuses a shell target", "agent session" in toast, toast)
 
-    d.js("window.__erka.store.openSettings('commands')")
+    d.js("window.__kelpie.store.openSettings('commands')")
     d.wait("return document.querySelectorAll('.qc-row').length === 2", 5)
     d.js("document.querySelector('[data-section=commands]').scrollIntoView()")
     run.shot("p3-07-quick-command-settings")
@@ -178,7 +178,7 @@ try:
 
     for s in daemon(d, "session.list"):
         daemon(d, "session.close", {"handle": s["handle"]})
-    d.js("window.__erka.store.setSettings({ quickCommands: [] })")
+    d.js("window.__kelpie.store.setSettings({ quickCommands: [] })")
 except Exception:
     import traceback
     traceback.print_exc()

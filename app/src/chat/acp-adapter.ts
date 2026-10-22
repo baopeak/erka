@@ -6,8 +6,8 @@ import { t } from "../lib/i18n";
 
 export const ompAcpArgs = () => ["omp", "acp"];
 
-const INIT_ID = "erka-init";
-const SESSION_ID = "erka-session";
+const INIT_ID = "kelpie-init";
+const SESSION_ID = "kelpie-session";
 
 export function createAcpAdapter(ctx: AdapterContext): Adapter {
   let initialized = false;
@@ -23,7 +23,7 @@ export function createAcpAdapter(ctx: AdapterContext): Adapter {
   function prompt(text: string) {
     lastKind = null;
     ctx.set("busy", true);
-    rpc(`erka-prompt-${++seq}-${Date.now()}`, "session/prompt", { sessionId, prompt: [{ type: "text", text }] });
+    rpc(`kelpie-prompt-${++seq}-${Date.now()}`, "session/prompt", { sessionId, prompt: [{ type: "text", text }] });
   }
 
   const rpc = (id: string, method: string, params: unknown) => ctx.write({ jsonrpc: "2.0", id, method, params });
@@ -108,7 +108,7 @@ export function createAcpAdapter(ctx: AdapterContext): Adapter {
       if ("id" in m && !("method" in m)) {
         if (m.error) {
           ctx.upsert({ kind: "system", id: `e-${String(m.id)}`, text: t("Agent: {error}", { error: String(m.error.message ?? JSON.stringify(m.error)) }), tone: "error" });
-          if (String(m.id).startsWith("erka-prompt-")) ctx.set("busy", false);
+          if (String(m.id).startsWith("kelpie-prompt-")) ctx.set("busy", false);
           if (m.id === SESSION_ID && ctx.state.conversationId && !ctx.replaying()) {
             ctx.set("conversationId", null);
             openSession();
@@ -146,7 +146,7 @@ export function createAcpAdapter(ctx: AdapterContext): Adapter {
       }
       if ("id" in m && "method" in m) {
         // Unsupported client method: tell the agent rather than leaving it hanging.
-        if (!ctx.replaying()) ctx.write({ jsonrpc: "2.0", id: m.id, error: { code: -32601, message: `Erka does not implement ${m.method}` } });
+        if (!ctx.replaying()) ctx.write({ jsonrpc: "2.0", id: m.id, error: { code: -32601, message: `Kelpie does not implement ${m.method}` } });
       }
     },
     send(text) {

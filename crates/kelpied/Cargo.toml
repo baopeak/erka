@@ -1,0 +1,39 @@
+[package]
+name = "kelpied"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+kelpie-proto = { path = "../kelpie-proto" }
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+interprocess.workspace = true
+portable-pty.workspace = true
+alacritty_terminal.workspace = true
+parking_lot.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+dirs.workspace = true
+uuid.workspace = true
+base64.workspace = true
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+# Mobile companion (LAN web app). TLS uses the ring provider only: aws-lc needs NASM.
+axum = { version = "0.8", features = ["ws"] }
+hyper = "1"
+hyper-util = { version = "0.1", features = ["server-auto", "tokio", "service"] }
+tower = { version = "0.5", default-features = false, features = ["util"] }
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
+sha2 = "0.10"
+# SSH passwords / key passphrases saved by the app, read when ssh asks (askpass.rs).
+keyring = { version = "3.6", default-features = false, features = ["windows-native", "apple-native"] }
+if-addrs = "0.15"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Console", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_Security", "Win32_System_Power"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

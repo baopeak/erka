@@ -3,10 +3,10 @@
     python -X utf8 scripts/e2e/runs.py <screenshot-dir> <scratch-dir> [--ai]
 
 Without --ai the tasks are commands (no model calls) that report with the real
-`erkad run report` command from inside their session, or exit: dependencies, a task in its own
+`kelpied run report` command from inside their session, or exit: dependencies, a task in its own
 git worktree (shown as a worktree project with its session), an approval gate approved from the
 Runs page, a failing task that skips the tasks after it, retry, mark done, cancel (stops the
-running agent), delete, the `erkad run` CLI (create / list / show / wait), the activity inbox
+running agent), delete, the `kelpied run` CLI (create / list / show / wait), the activity inbox
 and the status-bar indicator. --ai: plans a run with an agent, and runs a real Claude Code task
 that does a small edit and reports back by itself.
 """
@@ -22,9 +22,9 @@ from smoke_support import REPO, Run, daemon  # noqa: E402
 
 shots, scratch = sys.argv[1], sys.argv[2]
 with_ai = "--ai" in sys.argv
-S = "window.__erka.store"
-R = "window.__erka.runs"
-erkad = os.path.join(REPO, "target", "release", "erkad.exe" if os.name == "nt" else "erkad")
+S = "window.__kelpie.store"
+R = "window.__kelpie.runs"
+kelpied = os.path.join(REPO, "target", "release", "kelpied.exe" if os.name == "nt" else "kelpied")
 py = sys.executable
 repo = os.path.join(scratch, "runs-repo")
 
@@ -45,7 +45,7 @@ def git(*args):
 
 
 def cli(*args, stdin=None):
-    p = subprocess.run([erkad, *args], capture_output=True, text=True, timeout=120, input=stdin)
+    p = subprocess.run([kelpied, *args], capture_output=True, text=True, timeout=120, input=stdin)
     return p.returncode, p.stdout, p.stderr
 
 
@@ -76,8 +76,8 @@ def task(r, tid):
 
 
 def report_task(tid, summary):
-    """A command task that reports done through the erkad CLI from inside its own session."""
-    return {"id": tid, "title": f"Task {tid}", "prompt": f"report {tid}", "kind": "custom", "args": [erkad, "run", "report", "done", summary]}
+    """A command task that reports done through the kelpied CLI from inside its own session."""
+    return {"id": tid, "title": f"Task {tid}", "prompt": f"report {tid}", "kind": "custom", "args": [kelpied, "run", "report", "done", summary]}
 
 
 try:
@@ -94,8 +94,8 @@ try:
     rm(repo + "-worktrees")
     os.makedirs(repo)
     subprocess.run(["git", "init", "-q", "-b", "main", repo], check=True)
-    git("config", "user.email", "e2e@erka.test")
-    git("config", "user.name", "Erka e2e")
+    git("config", "user.email", "e2e@kelpie.test")
+    git("config", "user.name", "Kelpie e2e")
     open(os.path.join(repo, "README.md"), "w").write("runs\n")
     git("add", ".")
     git("commit", "-q", "-m", "init")
@@ -117,7 +117,7 @@ try:
     rid = r["id"]
     run.check("run created with four pending tasks", r["status"] == "running" and [t["status"] for t in r["tasks"]] == ["pending"] * 4, str([t["status"] for t in r["tasks"]]))
     a = wait(lambda: (lambda t: t if t["status"] == "done" else None)(task(get_run(rid), "a")), 40)
-    run.check("task a ran in its own worktree and reported done with its summary", a and a["summary"] == "a built the parser" and a["branch"] and a["branch"].startswith("erka/"), str(a and {k: a[k] for k in ("status", "summary", "branch", "error")}))
+    run.check("task a ran in its own worktree and reported done with its summary", a and a["summary"] == "a built the parser" and a["branch"] and a["branch"].startswith("kelpie/"), str(a and {k: a[k] for k in ("status", "summary", "branch", "error")}))
     run.check("task a's worktree exists on its branch", a and os.path.isdir(a["cwd"]) and subprocess.run(["git", "-C", a["cwd"], "rev-parse", "--abbrev-ref", "HEAD"], capture_output=True, text=True).stdout.strip() == a["branch"])
     wt_project = wait(lambda: d.js(f"return {S}.state.projects.find(p => p.path === arguments[0])?.id ?? null", a["cwd"]), 10) if a else None
     run.check("the worktree appears as a project under the repository", bool(wt_project) and d.js(f"return {S}.state.projects.find(p => p.id === arguments[0]).parentId", wt_project) == pid)
@@ -133,7 +133,7 @@ try:
     run.check("status bar shows the running run", d.js("return [...document.querySelectorAll('.statusbar .item')].some(e => /1 run/.test(e.textContent))"))
 
     # Runs page: approve b from its card.
-    d.js("window.__erka.commands.find(c => c.id === 'runs').run()")
+    d.js("window.__kelpie.commands.find(c => c.id === 'runs').run()")
     d.wait("return !!document.querySelector('.runs-page .run-task')", 10)
     d.js("document.querySelector('.runs-item[data-run=\"' + arguments[0] + '\"]').click()", rid)
     d.wait("return !!document.querySelector('.run-task[data-task=\"b\"] .btn.primary')", 10)
@@ -159,16 +159,16 @@ try:
     # ---------- CLI ----------
     spec2 = {"name": "CLI run", "cwd": repo, "idle_done_secs": 0, "tasks": [report_task("x", "from the cli"), {**report_task("y", "after x"), "deps": ["x"]}]}
     code, out, err = cli("run", "create", "-", "--json", stdin=json.dumps(spec2))
-    run.check("`erkad run create -` creates a run", code == 0 and json.loads(out)["name"] == "CLI run", err[-300:])
+    run.check("`kelpied run create -` creates a run", code == 0 and json.loads(out)["name"] == "CLI run", err[-300:])
     rid2 = json.loads(out)["id"] if code == 0 else ""
     code, out, err = cli("run", "wait", rid2[:8], "--timeout-ms", "60000")
-    run.check("`erkad run wait` returns when the run is done", code == 0 and "from the cli" in out and "after x" in out, (out + err)[-400:])
+    run.check("`kelpied run wait` returns when the run is done", code == 0 and "from the cli" in out and "after x" in out, (out + err)[-400:])
     code, out, _ = cli("run", "list")
-    run.check("`erkad run list` shows both runs", "CLI run" in out and "E2E pipeline" in out and "2/2" in out, out[-300:])
+    run.check("`kelpied run list` shows both runs", "CLI run" in out and "E2E pipeline" in out and "2/2" in out, out[-300:])
     code, out, _ = cli("run", "show", rid2[:8])
-    run.check("`erkad run show` lists tasks with status and summary", "x" in out and "done" in out and "from the cli" in out)
+    run.check("`kelpied run show` lists tasks with status and summary", "x" in out and "done" in out and "from the cli" in out)
     code, out, err = cli("run", "report", "done", "outside")
-    run.check("`erkad run report` outside a task session explains itself", code != 0 and "task" in (out + err).lower())
+    run.check("`kelpied run report` outside a task session explains itself", code != 0 and "task" in (out + err).lower())
 
     # ---------- mark done, cancel (stops the agent), delete ----------
     spec3 = {"name": "Cancel me", "cwd": repo, "project_id": pid, "idle_done_secs": 0, "tasks": [
@@ -220,7 +220,7 @@ try:
         # A real agent task that reports back by itself.
         spec4 = {"name": "Real agent", "objective": "Small edit", "cwd": repo, "project_id": pid, "idle_done_secs": 0, "tasks": [
             {"id": "hello", "title": "Write hello.txt", "kind": "claude", "args": ["--model", "haiku", "--permission-mode", "bypassPermissions"],
-             "prompt": "Create a file named hello.txt in the current folder containing exactly the text: hi from erka"},
+             "prompt": "Create a file named hello.txt in the current folder containing exactly the text: hi from kelpie"},
         ]}
         r4 = js_await(f"{R}.createRun(arguments[0])", spec4)
         sid = wait(lambda: task(get_run(r4["id"]), "hello")["session_id"], 20)
@@ -231,7 +231,7 @@ try:
             time.sleep(0.4)
             daemon(d, "session.input", {"handle": sess()["handle"], "data": chr(13)})
         t = wait(lambda: (lambda x: x if x["status"] in ("done", "failed") else None)(task(get_run(r4["id"]), "hello")), 420, 2)
-        run.check("a real agent reports its task done with `erkad run report`", t and t["status"] == "done" and bool(t["summary"]), str(t and {k: t[k] for k in ("status", "summary", "error")}))
+        run.check("a real agent reports its task done with `kelpied run report`", t and t["status"] == "done" and bool(t["summary"]), str(t and {k: t[k] for k in ("status", "summary", "error")}))
         run.check("the agent did the work", os.path.isfile(os.path.join(repo, "hello.txt")))
         run.shot("04-real-agent-run")
         if sess():

@@ -1,6 +1,7 @@
-# Erka plugins
+# Kelpie plugins
 
-A plugin is a folder `<data>/plugins/<id>/` holding `erka-plugin.json`. It is declarative: it
+A plugin is a folder `<data>/plugins/<id>/` holding `kelpie-plugin.json` (a plugin from before
+the rename still works with its `erka-plugin.json`). It is declarative: it
 adds agents, palette commands, quick commands, terminal themes, layouts and status-bar items.
 Install, create, review and remove plugins in Settings → Plugins.
 
@@ -9,7 +10,7 @@ Install, create, review and remove plugins in Settings → Plugins.
 Nothing a plugin declares is used until you **Review & enable** it. The review lists every
 program it can run (agent launch commands, palette commands, quick commands, status-item
 commands, with how often status items run). The approval is bound to the manifest's SHA-256
-(kept in `<data>/plugins/approvals.json`): any change to `erka-plugin.json` turns the plugin off
+(kept in `<data>/plugins/approvals.json`): any change to `kelpie-plugin.json` turns the plugin off
 until you review it again. Programs run with your permissions, like commands you type.
 
 Git installs accept `https://`, `ssh://` and `git@` URLs (plain `http://` only for `localhost`

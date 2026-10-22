@@ -26,8 +26,8 @@ from smoke_support import Run, daemon  # noqa: E402
 
 shots, scratch = sys.argv[1], sys.argv[2]
 port = int(sys.argv[sys.argv.index("--port") + 1]) if "--port" in sys.argv else 47813
-S = "window.__erka.store"
-P = "window.__erka.plugins"
+S = "window.__kelpie.store"
+P = "window.__kelpie.plugins"
 proj = os.path.join(scratch, "plugproj")
 src = os.path.join(scratch, "plugin-src", "acme-tools")
 
@@ -72,7 +72,7 @@ MANIFEST = {
 
 
 def write_manifest(folder, m):
-    with open(os.path.join(folder, "erka-plugin.json"), "w", encoding="utf-8") as f:
+    with open(os.path.join(folder, "kelpie-plugin.json"), "w", encoding="utf-8") as f:
         json.dump(m, f, indent=2)
 
 
@@ -109,7 +109,7 @@ def info(pid):
 
 
 def plugin_command_ids():
-    return d.js("return window.__erka.commands.filter(c => c.id.startsWith('plugin.')).map(c => c.id)")
+    return d.js("return window.__kelpie.commands.filter(c => c.id.startsWith('plugin.')).map(c => c.id)")
 
 
 def presets():
@@ -135,7 +135,7 @@ def click_button(container_css, label):
 
 
 def active_sessions():
-    return d.js(f"const s = {S}; const p = s.state.activeProject; const t = s.activeTab(p); if (!t) return []; return window.__erka.layout.allPanes(t.root).map(x => x.sessionId ? s.sessions[x.sessionId] : null).filter(Boolean)")
+    return d.js(f"const s = {S}; const p = s.state.activeProject; const t = s.activeTab(p); if (!t) return []; return window.__kelpie.layout.allPanes(t.root).map(x => x.sessionId ? s.sessions[x.sessionId] : null).filter(Boolean)")
 
 
 try:
@@ -157,7 +157,7 @@ try:
     # ---------- install from a folder ----------
     r = js_await(f"{P}.pluginInstallFolder(arguments[0])", src)
     run.check("install from a folder returns the manifest id", r == "acme-tools", str(r))
-    run.check("plugin copied into the plugins folder", os.path.isfile(os.path.join(plugins_dir, "acme-tools", "erka-plugin.json")))
+    run.check("plugin copied into the plugins folder", os.path.isfile(os.path.join(plugins_dir, "acme-tools", "kelpie-plugin.json")))
     i = info("acme-tools")
     run.check("installed plugin is listed, valid and off", i and not i["error"] and not i["approved"] and not i["changed"] and len(i["hash"]) == 64, str(i))
     r = js_await(f"{P}.pluginInstallFolder(arguments[0])", src)
@@ -166,8 +166,8 @@ try:
     # ---------- nothing is used before approval ----------
     js_await(f"{P}.loadPlugins()")
     run.check("unapproved plugin adds no palette commands", plugin_command_ids() == [])
-    run.check("unapproved plugin adds no quick commands", not d.js("return window.__erka.plugins.pluginQuickCommands().length"))
-    run.check("unapproved plugin adds no layouts or themes", not d.js("return window.__erka.plugins.pluginLayouts().length") and not d.js("return document.querySelector('[data-status-item]')"))
+    run.check("unapproved plugin adds no quick commands", not d.js("return window.__kelpie.plugins.pluginQuickCommands().length"))
+    run.check("unapproved plugin adds no layouts or themes", not d.js("return window.__kelpie.plugins.pluginLayouts().length") and not d.js("return document.querySelector('[data-status-item]')"))
     run.check("unapproved plugin agent is not in the daemon", "acme-tools-echo" not in presets())
     r = js_await(f"{P}.pluginStatus('acme-tools', 'ok', arguments[0])", proj)
     run.check("unapproved status command is refused", isinstance(r, dict) and "not approved" in r.get("err", ""), str(r))
@@ -191,7 +191,7 @@ try:
     # ---------- contributions ----------
     ids = plugin_command_ids()
     run.check("palette commands added", ids == ["plugin.acme-tools.hello", "plugin.acme-tools.split"], str(ids))
-    run.check("command label carries the plugin name", d.js("return window.__erka.commands.find(c => c.id === 'plugin.acme-tools.hello').label") == "Acme Tools: Say hello")
+    run.check("command label carries the plugin name", d.js("return window.__kelpie.commands.find(c => c.id === 'plugin.acme-tools.hello').label") == "Acme Tools: Say hello")
     pr = wait(lambda: presets().get("acme-tools-echo"), 10)
     run.check("plugin agent is in the daemon's agent table and found installed", pr and pr["label"] == "Acme Echo" and pr["installed"], str(pr))
     run.check("plugin agent kept for daemon restarts", "acme-tools-echo" in open(os.path.join(data_dir, "custom-agents.json"), encoding="utf-8").read())
@@ -206,20 +206,20 @@ try:
     run.check("palette search lists the plugin command", found)
     d.js(f"{S}.setOverlay(null)")
 
-    d.js("window.__erka.commands.find(c => c.id === 'plugin.acme-tools.hello').run()")
+    d.js("window.__kelpie.commands.find(c => c.id === 'plugin.acme-tools.hello').run()")
     sh = wait(lambda: next((s for s in active_sessions() if s["kind"] == "shell"), None), 15)
     out = wait(lambda: sh and "HELLO-plugproj-plug-branch" in screen(sh["handle"]), 20)
     run.check("command runs in a terminal with ${projectName} and ${branch}", out, screen(sh["handle"]) if sh else "no shell")
     n = len(active_sessions())
-    d.js("window.__erka.commands.find(c => c.id === 'plugin.acme-tools.split').run()")
+    d.js("window.__kelpie.commands.find(c => c.id === 'plugin.acme-tools.split').run()")
     ok = wait(lambda: len(active_sessions()) == n + 1, 15)
     new = [s for s in active_sessions() if s["handle"] != sh["handle"]]
     run.check("split command opens a new terminal beside it and runs there", ok and new and wait(lambda: "SPLIT-plugproj" in screen(new[-1]["handle"]), 20))
     d.js(f"{S}.openFile(arguments[0], 'notes.txt')", pid)
-    exp = d.js("return window.__erka.plugins.expandVariables('${file}|${projectPath}|${unknown}')")
+    exp = d.js("return window.__kelpie.plugins.expandVariables('${file}|${projectPath}|${unknown}')")
     run.check("${file} is the focused file's full path; unknown variables stay", exp == f"{os.path.join(proj, 'notes.txt')}|{proj}|${{unknown}}", exp)
 
-    qc = d.js(f"return {S} && window.__erka.plugins.pluginQuickCommands()")
+    qc = d.js(f"return {S} && window.__kelpie.plugins.pluginQuickCommands()")
     run.check("quick command added for every project", qc and qc[0]["label"] == "Acme list" and qc[0]["projectId"] is None, str(qc))
     d.js(f"{S}.revealSession(arguments[0])", sh["id"])
     d.js(f"{S}.setOverlay('palette')")
@@ -247,7 +247,7 @@ try:
     run.shot("plugins-layout-menu")
     d.js("document.querySelector('[data-layout=\"plugin:acme-tools:0\"]').click()")
     ok = wait(lambda: d.js(f"return {S}.workspace(arguments[0]).tabs.length", pid) == tabs + 1, 10)
-    panes = d.js(f"const s = {S}; const t = s.activeTab(arguments[0]); return window.__erka.layout.allPanes(t.root).map(p => p.kind + ':' + (p.sessionId ? s.sessions[p.sessionId]?.kind : ''))", pid)
+    panes = d.js(f"const s = {S}; const t = s.activeTab(arguments[0]); return window.__kelpie.layout.allPanes(t.root).map(p => p.kind + ':' + (p.sessionId ? s.sessions[p.sessionId]?.kind : ''))", pid)
     run.check("plugin layout opens as a new tab: two terminals and an empty pane", ok and sorted(panes) == ["empty:", "terminal:shell", "terminal:shell"], str(panes))
 
     # Status items.

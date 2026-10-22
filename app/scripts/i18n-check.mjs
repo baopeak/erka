@@ -33,7 +33,7 @@ for (const f of fs.readdirSync(path.join(SRC, "locales", "vi")).filter((f) => f.
 }
 
 // Text that is the same in every language.
-const SAME = /^(Erka|erkad|Claude|Claude Code|Codex|OMP|Gemini|GitHub|GitLab|Linear|Jira|VS Code|Cursor|SSH|QR|PR|MR|CLI|URL|API|JSON|HTTPS?|TLS|Git|English|Tiếng Việt|OK|[\d\s%:.,·×+\-–—/()#|→←↑↓⌘⇧⌥⏎↩…]*|[A-Z]?[a-z]?\+?[A-Z0-9]?)$/;
+const SAME = /^(Kelpie|kelpied|Claude|Claude Code|Codex|OMP|Gemini|GitHub|GitLab|Linear|Jira|VS Code|Cursor|SSH|QR|PR|MR|CLI|URL|API|JSON|HTTPS?|TLS|Git|English|Tiếng Việt|OK|[\d\s%:.,·×+\-–—/()#|→←↑↓⌘⇧⌥⏎↩…]*|[A-Z]?[a-z]?\+?[A-Z0-9]?)$/;
 
 const placeholders = (s) => [...s.matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort().join(",");
 const KEY = /\b(?:t|msg)\(\s*("(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*')/g;

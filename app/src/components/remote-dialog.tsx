@@ -76,12 +76,12 @@ export function RemoteDialog() {
         <div class="form-row">
           <label>{t("SSH host")}</label>
           <div class="inline-fields">
-            <input ref={hostInput} class="text-input" list="erka-ssh-hosts" placeholder={t("Alias from ~/.ssh/config, or user@host[:port]")} value={host()}
+            <input ref={hostInput} class="text-input" list="kelpie-ssh-hosts" placeholder={t("Alias from ~/.ssh/config, or user@host[:port]")} value={host()}
               onInput={(e) => { setHost(e.currentTarget.value); setCheck(null); setFolders(null); }} onKeyDown={(e) => e.key === "Enter" && void connect()} />
-            <datalist id="erka-ssh-hosts"><For each={hosts() ?? []}>{(h) => <option value={h} />}</For></datalist>
+            <datalist id="kelpie-ssh-hosts"><For each={hosts() ?? []}>{(h) => <option value={h} />}</For></datalist>
             <button class="btn primary" disabled={!host().trim() || checking()} onClick={() => void connect()}>{checking() ? t("Connecting…") : t("Connect")}</button>
           </div>
-          <div class="form-note">{t("Erka uses your OpenSSH client and its config, keys and agent. Hosts that log in with a password: save them on the SSH hosts page.")} <a href="#" onClick={(e) => { e.preventDefault(); openHosts(); }}>{t("SSH hosts")}</a></div>
+          <div class="form-note">{t("Kelpie uses your OpenSSH client and its config, keys and agent. Hosts that log in with a password: save them on the SSH hosts page.")} <a href="#" onClick={(e) => { e.preventDefault(); openHosts(); }}>{t("SSH hosts")}</a></div>
         </div>
         <Show when={check()}>
           {(c) => (

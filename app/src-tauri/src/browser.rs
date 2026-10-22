@@ -1,6 +1,6 @@
 //! Browser panes: a child webview of the main window per pane, placed over the pane's DOM
 //! area by the UI (`browser_bounds`). Pages get no IPC (the app capability covers the main
-//! webview only); what Erka needs from them comes through `browser_picker.js`, whose reports
+//! webview only); what Kelpie needs from them comes through `browser_picker.js`, whose reports
 //! arrive as cancelled `window.open` calls of a sentinel URL carrying a per-page nonce.
 //!
 //! Events to the UI (`browser-event`): `{label, kind: "nav" | "load" | "title" | "pick" |
@@ -18,7 +18,7 @@ use tauri::{AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Url, Webv
 use crate::fs_ops::{err, CmdResult};
 
 const PICKER: &str = include_str!("browser_picker.js");
-const SENTINEL_HOST: &str = "erka-pick.invalid";
+const SENTINEL_HOST: &str = "kelpie-pick.invalid";
 
 /// Nonce of each browser webview (by label); reports carrying another one are ignored.
 #[derive(Default)]
@@ -122,7 +122,7 @@ pub async fn browser_open(app: AppHandle, state: tauri::State<'_, Browsers>, lab
     let (nav_label, load_label, title_label, popup_label) = (label.clone(), label.clone(), label.clone(), label.clone());
     let popup_nonce = nonce.clone();
     let builder = WebviewBuilder::new(&label, WebviewUrl::External(url))
-        .initialization_script(PICKER.replace("__ERKA_NONCE__", &nonce))
+        .initialization_script(PICKER.replace("__KELPIE_NONCE__", &nonce))
         .on_navigation(move |u| {
             if u.host_str() == Some(SENTINEL_HOST) {
                 return false;
@@ -189,7 +189,7 @@ pub async fn browser_go(app: AppHandle, label: String, delta: i32) -> CmdResult<
 #[tauri::command]
 pub async fn browser_design(app: AppHandle, label: String, on: bool) -> CmdResult<()> {
     let wv = webview(&app, &label)?;
-    wv.eval(format!("window.__erkaDesign && window.__erkaDesign.set({on})")).map_err(err)
+    wv.eval(format!("window.__kelpieDesign && window.__kelpieDesign.set({on})")).map_err(err)
 }
 
 #[tauri::command]
@@ -224,7 +224,7 @@ pub async fn browser_close(app: AppHandle, state: tauri::State<'_, Browsers>, la
 pub async fn browser_screenshot(app: AppHandle, label: String, clip: Option<Rect>) -> CmdResult<Value> {
     let wv = webview(&app, &label)?;
     let png = capture(&wv, clip).await?;
-    let dir = erka_proto::data_dir().join("browser-shots");
+    let dir = kelpie_proto::data_dir().join("browser-shots");
     std::fs::create_dir_all(&dir).map_err(err)?;
     prune_shots(&dir);
     let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis());
@@ -291,13 +291,13 @@ async fn devtools(wv: &tauri::Webview, method: &'static str, params: Value) -> C
     serde_json::from_str(&json).map_err(err)
 }
 
-/// End-to-end tests only (dev builds or ERKA_E2E): trusted mouse / key input into the page
+/// End-to-end tests only (dev builds or KELPIE_E2E): trusted mouse / key input into the page
 /// through the DevTools protocol, which works whether or not the window is on screen —
 /// unlike synthetic OS input, which needs a visible, focused window on an idle desktop.
 /// `events`: `[{"method": "Input.dispatchMouseEvent" | "Input.dispatchKeyEvent", "params": {…}}]`.
 #[tauri::command]
 pub async fn browser_test_input(app: AppHandle, label: String, events: Vec<Value>) -> CmdResult<()> {
-    if !(cfg!(debug_assertions) || std::env::var_os("ERKA_E2E").is_some()) {
+    if !(cfg!(debug_assertions) || std::env::var_os("KELPIE_E2E").is_some()) {
         return Err("only available to the end-to-end tests".into());
     }
     let wv = webview(&app, &label)?;
@@ -343,7 +343,7 @@ mod tests {
     #[test]
     fn reports_need_the_nonce() {
         let body = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(r##"{"kind":"pick","data":{"selector":"#a"}}"##);
-        let u = Url::parse(&format!("http://erka-pick.invalid/#n1.{body}")).unwrap();
+        let u = Url::parse(&format!("http://kelpie-pick.invalid/#n1.{body}")).unwrap();
         let (kind, data) = decode_report(&u, "n1").unwrap();
         assert_eq!((kind.as_str(), data["selector"].as_str()), ("pick", Some("#a")));
         assert!(decode_report(&u, "other").is_none());

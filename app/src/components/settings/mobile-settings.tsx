@@ -1,4 +1,4 @@
-// Settings → Mobile: the daemon's web app for phones (crates/erkad/src/mobile.rs). Off by default;
+// Settings → Mobile: the daemon's web app for phones (crates/kelpied/src/mobile.rs). Off by default;
 // pairing shows a one-time QR code and each phone must be approved here.
 import { For, Show, createResource, createSignal, onCleanup, onMount } from "solid-js";
 import { store } from "../../lib/store";

@@ -10,12 +10,12 @@ REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
 
 def default_app():
-    # ERKA_E2E_APP: test another build, e.g. the release executable that goes into the installer
-    # (start tauri-driver with ERKA_E2E=1 so it exposes its internals to the tests).
-    if os.environ.get("ERKA_E2E_APP"):
-        return os.environ["ERKA_E2E_APP"]
+    # KELPIE_E2E_APP: test another build, e.g. the release executable that goes into the installer
+    # (start tauri-driver with KELPIE_E2E=1 so it exposes its internals to the tests).
+    if os.environ.get("KELPIE_E2E_APP"):
+        return os.environ["KELPIE_E2E_APP"]
     meta = json.loads(subprocess.check_output(["cargo", "metadata", "--format-version", "1", "--no-deps"], cwd=REPO))
-    return os.path.join(meta["target_directory"], "debug", "erka.exe" if os.name == "nt" else "erka")
+    return os.path.join(meta["target_directory"], "debug", "kelpie.exe" if os.name == "nt" else "kelpie")
 
 
 def daemon(d, method, params=None):
@@ -25,9 +25,9 @@ def daemon(d, method, params=None):
     return r["ok"]
 
 
-def restart_daemon(d, erkad, kill=False):
+def restart_daemon(d, kelpied, kill=False):
     """Stops the daemon (its sessions keep running unless `kill`) and waits for a new one: the app
-    starts it itself when ERKA_DAEMON_PATH is set, otherwise this starts `erkad serve`."""
+    starts it itself when KELPIE_DAEMON_PATH is set, otherwise this starts `kelpied serve`."""
     import time
     old = daemon(d, "daemon.info")["pid"]
     try:
@@ -37,7 +37,7 @@ def restart_daemon(d, erkad, kill=False):
 
     def new_pid():
         try:
-            return d.js("return window.__erka.store.connected()") and daemon(d, "daemon.info")["pid"] != old
+            return d.js("return window.__kelpie.store.connected()") and daemon(d, "daemon.info")["pid"] != old
         except Exception:
             return False
 
@@ -49,7 +49,7 @@ def restart_daemon(d, erkad, kill=False):
 
     if not wait(8):
         flags = 0x08000000 | 0x00000008 if os.name == "nt" else 0  # CREATE_NO_WINDOW | DETACHED_PROCESS
-        subprocess.Popen([erkad, "serve"], env=os.environ.copy(), creationflags=flags, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.Popen([kelpied, "serve"], env=os.environ.copy(), creationflags=flags, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         if not wait(40):
             raise TimeoutError("no new session daemon")
 
@@ -62,18 +62,18 @@ class Run:
         self.d = Driver(app or default_app())
 
     def boot(self, tips=False):
-        self.d.wait("return !!(window.__erka && window.__erka.store.loaded())", 60)
-        self.d.wait("return window.__erka.store.connected()", 30)
+        self.d.wait("return !!(window.__kelpie && window.__kelpie.store.loaded())", 60)
+        self.d.wait("return window.__kelpie.store.connected()", 30)
         # Scenarios close sessions and remove projects: never against the user's real data.
         data_dir = self.d.js_async("const done = arguments[arguments.length-1]; window.__TAURI_INTERNALS__.invoke('platform_info').then(i => done(i.data_dir));")
-        real = os.path.join(os.environ.get("LOCALAPPDATA", ""), "Erka")
-        if not os.environ.get("ERKA_DATA_DIR") and os.path.normcase(os.path.normpath(data_dir)) == os.path.normcase(os.path.normpath(real)):
-            raise SystemExit(f"refusing to run e2e against the real data folder {data_dir}; start tauri-driver with ERKA_DATA_DIR set")
+        real = os.path.join(os.environ.get("LOCALAPPDATA", ""), "Kelpie")
+        if not os.environ.get("KELPIE_DATA_DIR") and os.path.normcase(os.path.normpath(data_dir)) == os.path.normcase(os.path.normpath(real)):
+            raise SystemExit(f"refusing to run e2e against the real data folder {data_dir}; start tauri-driver with KELPIE_DATA_DIR set")
         # First-run tips would float over whatever a scenario clicks.
         if not tips:
-            self.d.js("window.__erka.store.setSettings({ tips: false })")
+            self.d.js("window.__kelpie.store.setSettings({ tips: false })")
         # Scenarios read English labels; the OS may well prefer Vietnamese.
-        self.d.js("window.__erka.store.setSettings({ language: 'en' })")
+        self.d.js("window.__kelpie.store.setSettings({ language: 'en' })")
 
     def check(self, name, ok, detail=""):
         self.results.append((name, bool(ok), detail))

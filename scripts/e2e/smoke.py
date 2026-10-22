@@ -1,7 +1,7 @@
-"""End-to-end smoke test of the Erka app (Windows dev setup).
+"""End-to-end smoke test of the Kelpie app (Windows dev setup).
 
 Prereqs: dev daemon (scripts/dev-daemon.sh), `pnpm dev` (vite :1427), tauri-driver :4444
-with ERKA_ENDPOINT/ERKA_DATA_DIR set, debug app built (`cargo build -p erka`).
+with KELPIE_ENDPOINT/KELPIE_DATA_DIR set, debug app built (`cargo build -p kelpie`).
 
     python scripts/e2e/smoke.py <screenshot-dir> <scratch-project-dir> [app.exe]
 """
@@ -36,7 +36,7 @@ def daemon(d, method, params=None):
 # Text of the mounted terminal buffers; WebGL draws to a canvas, so read xterm itself.
 BUFFER_JS = r"""
 const out = [];
-for (const v of window.__erka.views()) {
+for (const v of window.__kelpie.views()) {
   if (!v.visible) continue;
   const b = v.term.buffer.active;
   for (let i = 0; i < b.length; i++) out.push(b.getLine(i)?.translateToString(true) ?? '');
@@ -52,23 +52,23 @@ def screen_text(d, handle):
 d = Driver(app)
 handles, ids = {}, []
 try:
-    d.wait("return !!(window.__erka && window.__erka.store.loaded())", 60)
-    d.wait("return window.__erka.store.connected()", 30)
-    check("app boots and connects to erkad", True)
+    d.wait("return !!(window.__kelpie && window.__kelpie.store.loaded())", 60)
+    d.wait("return window.__kelpie.store.connected()", 30)
+    check("app boots and connects to kelpied", True)
 
     # Fresh state: drop projects from earlier runs (sessions stay in the daemon).
-    d.js("const s = window.__erka.store; for (const p of [...s.state.projects]) s.removeProject(p.id);")
+    d.js("const s = window.__kelpie.store; for (const p of [...s.state.projects]) s.removeProject(p.id);")
     projects = [REPO, os.path.join(os.path.dirname(REPO), "orca-ref", "orca"), scratch]
     for p in projects:
-        d.js("window.__erka.store.addProject(arguments[0]);", p)
-    ids = d.js("return window.__erka.store.state.projects.map(p => p.id);")
+        d.js("window.__kelpie.store.addProject(arguments[0]);", p)
+    ids = d.js("return window.__kelpie.store.state.projects.map(p => p.id);")
     check("3 projects added", len(ids) == 3, str(len(ids)))
 
     # One shell per project.
     handles = {}
     for pid in ids:
-        d.js("window.__erka.store.switchProject(arguments[0]);", pid)
-        info = d.js_async("const done = arguments[arguments.length-1]; window.__erka.store.newSession(arguments[0], 'shell').then(i => done(i));", pid)
+        d.js("window.__kelpie.store.switchProject(arguments[0]);", pid)
+        info = d.js_async("const done = arguments[arguments.length-1]; window.__kelpie.store.newSession(arguments[0], 'shell').then(i => done(i));", pid)
         handles[pid] = info["handle"]
     d.wait("return document.querySelectorAll('.pane .xterm-screen').length > 0", 20)
     check("terminal rendered", True)
@@ -87,24 +87,24 @@ try:
     active = ids[-1]
     d.click(".pane .xterm")
     time.sleep(1.5)
-    d.keys("echo erka-e2e-ok", "enter")
+    d.keys("echo kelpie-e2e-ok", "enter")
     ok = False
     for _ in range(40):
         # The output line itself: a long prompt may wrap the typed command across lines.
-        if "erka-e2e-ok" in [l.strip() for l in screen_text(d, handles[active]).splitlines()]:
+        if "kelpie-e2e-ok" in [l.strip() for l in screen_text(d, handles[active]).splitlines()]:
             ok = True
             break
         time.sleep(0.25)
     check("keyboard input reaches PTY and output renders", ok)
     if not ok:  # what the views looked like, for diagnosis
-        print("views:", d.js("return window.__erka.views().map(v => [v.sessionId.slice(0, 6), v.visible, v.handle, v.hasWebgl, v.el.parentElement?.className])"))
+        print("views:", d.js("return window.__kelpie.views().map(v => [v.sessionId.slice(0, 6), v.visible, v.handle, v.hasWebgl, v.el.parentElement?.className])"))
         info = [x for x in daemon(d, "session.list") if x["handle"] == handles[active]]
         print("session:", [(x["alive"], x["status"], x["pid"]) for x in info], repr(screen_text(d, handles[active])[-300:]))
         print("active element:", d.js("return document.activeElement?.className + ' in ' + (document.activeElement?.closest('[data-session]')?.dataset.session || '-').slice(0, 6)"))
     # The view gets output a few ms after the daemon (batched IPC); allow it to arrive.
     in_view = False
     for _ in range(25):
-        if "erka-e2e-ok" in [l.strip() for l in d.js(BUFFER_JS).splitlines()]:
+        if "kelpie-e2e-ok" in [l.strip() for l in d.js(BUFFER_JS).splitlines()]:
             in_view = True
             break
         time.sleep(0.2)
@@ -126,8 +126,8 @@ try:
     times = []
     for i in range(30):
         pid = ids[i % 3]
-        d.js("window.__erka.store.switchProject(arguments[0]);", pid)
-        t = d.wait("return window.__erka.store.state.activeProject === arguments[0] && document.querySelector('.pane .term-host .xterm') ? window.__erka.store.lastSwitchMs() : null", 10, 0.05, pid)
+        d.js("window.__kelpie.store.switchProject(arguments[0]);", pid)
+        t = d.wait("return window.__kelpie.store.state.activeProject === arguments[0] && document.querySelector('.pane .term-host .xterm') ? window.__kelpie.store.lastSwitchMs() : null", 10, 0.05, pid)
         times.append(t)
     order = list(times)  # in switch order, to tell first visits from steady state
     times.sort()
@@ -139,18 +139,18 @@ try:
     check("all sessions still alive after 30 switches", len(alive) == len(handles), f"{len(alive)}/{len(handles)}")
 
     # Re-attach after switching shows previous output (delta replay or snapshot).
-    d.js("window.__erka.store.switchProject(arguments[0]);", active)
+    d.js("window.__kelpie.store.switchProject(arguments[0]);", active)
     time.sleep(1)
-    check("terminal content restored after project switch", "erka-e2e-ok" in d.js(BUFFER_JS).split("echo erka-e2e-ok", 1)[-1])
+    check("terminal content restored after project switch", "kelpie-e2e-ok" in d.js(BUFFER_JS).split("echo kelpie-e2e-ok", 1)[-1])
 
-    # Quick open in the Erka repo project.
-    d.js("window.__erka.store.switchProject(arguments[0]);", ids[0])
+    # Quick open in the Kelpie repo project.
+    d.js("window.__kelpie.store.switchProject(arguments[0]);", ids[0])
     time.sleep(0.5)
     d.keys("ctrl+shift+o")
     d.wait("return !!document.querySelector('.palette input')", 5)
     d.keys("session.rs")
     d.wait("return [...document.querySelectorAll('.palette .item .hint')].some(e => e.textContent.includes('session.rs'))", 15)
-    check("quick open finds crates/erkad/src/session.rs", True)
+    check("quick open finds crates/kelpied/src/session.rs", True)
     d.keys("enter")
     d.wait("return !!document.querySelector('.cm-editor .cm-content')", 15)
     time.sleep(1)
@@ -158,11 +158,11 @@ try:
     d.screenshot(os.path.join(shots, "03-file-viewer.png"))
 
     # Explorer + git panel.
-    d.js("const s = window.__erka.store; if (s.workspace(s.state.activeProject).rightPanel !== 'files') s.setRightPanel('files');")
+    d.js("const s = window.__kelpie.store; if (s.workspace(s.state.activeProject).rightPanel !== 'files') s.setRightPanel('files');")
     d.wait("return document.querySelectorAll('.tree-row').length > 3", 15)
     check("file tree lists project root", True)
     d.screenshot(os.path.join(shots, "04-explorer.png"))
-    d.js("const s = window.__erka.store; if (s.workspace(s.state.activeProject).rightPanel !== 'git') s.setRightPanel('git');")
+    d.js("const s = window.__kelpie.store; if (s.workspace(s.state.activeProject).rightPanel !== 'git') s.setRightPanel('git');")
     d.wait("return !!document.querySelector('.git-head .branch')", 10)
     time.sleep(1.5)
     d.screenshot(os.path.join(shots, "05-git.png"))

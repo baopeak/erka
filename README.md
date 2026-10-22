@@ -1,13 +1,15 @@
-# Erka
+<p align="center"><img src="app/src/assets/brand/kip-peek.svg" alt="Kip, the Kelpie mascot, peeking out of a terminal" width="160"></p>
+
+# Kelpie
 
 **A fast desktop workbench for running many coding-agent CLIs — Claude Code, Codex, OMP, Gemini, Cursor, OpenCode, Copilot and 16 more, plus plain shells — across many projects at once.**
 
 Agents live in a background session daemon, so switching projects, closing the window or a UI crash never stops them. Only what is on screen is rendered: 20 agents in the background cost the UI almost nothing, and switching between projects takes ~30 ms.
 
-![Erka workspace: projects with their sessions, git worktrees and worktree comments in the sidebar, split terminals, file explorer and usage meters](docs/screenshots/workspace.png)
+![Kelpie workspace: projects with their sessions, git worktrees and worktree comments in the sidebar, split terminals, file explorer and usage meters](docs/screenshots/workspace.png)
 
 - **Windows 10 1809+ / 11** (tested) and **macOS 12+** (built in CI).
-- Tauri 2 · SolidJS · xterm.js (WebGL) · CodeMirror 6 · a Rust session daemon (`erkad`) built on `alacritty_terminal` and ConPTY / Unix PTYs.
+- Tauri 2 · SolidJS · xterm.js (WebGL) · CodeMirror 6 · a Rust session daemon (`kelpied`) built on `alacritty_terminal` and ConPTY / Unix PTYs.
 
 ---
 
@@ -41,11 +43,11 @@ Agents live in a background session daemon, so switching projects, closing the w
 
 ### Sessions and agents
 
-- **Sessions that never stop.** Every PTY and agent process is owned by `erkad`, a per-user daemon. The window can close, crash or restart; sessions keep running and re-attach with the same screen. If the daemon itself stops, sessions come back as *exited* with their last screen and agents resume their conversation (`claude --resume`, `codex resume`, `omp --resume`, and each preset's own resume flag).
+- **Sessions that never stop.** Every PTY and agent process is owned by `kelpied`, a per-user daemon. The window can close, crash or restart; sessions keep running and re-attach with the same screen. If the daemon itself stops, sessions come back as *exited* with their last screen and agents resume their conversation (`claude --resume`, `codex resume`, `omp --resume`, and each preset's own resume flag).
 - **Live status** from hooks (Claude Code, Codex) or output activity: *working*, *needs you*, *done (unread)*, *idle* — in the sidebar, on tabs, in the dashboard, with desktop notifications for sessions you are not looking at.
-- **23 agent CLIs preset**: Claude Code, Codex, OMP, Gemini, Cursor CLI, OpenCode, GitHub Copilot, Grok, Qwen Code, Droid, Aider, Amp, Goose, Kimi, Crush, Cline, Kiro, Continue, Devin, Auggie, CodeBuddy, Mistral Vibe and Pi. Erka finds the installed ones; they appear in the launchers, the others can be hidden. Arguments and environment per agent.
+- **23 agent CLIs preset**: Claude Code, Codex, OMP, Gemini, Cursor CLI, OpenCode, GitHub Copilot, Grok, Qwen Code, Droid, Aider, Amp, Goose, Kimi, Crush, Cline, Kiro, Continue, Devin, Auggie, CodeBuddy, Mistral Vibe and Pi. Kelpie finds the installed ones; they appear in the launchers, the others can be hidden. Arguments and environment per agent.
 - **Permissions**: one *Manual / Yolo* switch adds or removes each agent's skip-permission flag; Claude Code and Codex keep their own permission mode / approval policy.
-- **First prompt at launch**: type the task in the new-session menu; Erka passes it on the command line or types it once the agent is ready (long prompts are pasted).
+- **First prompt at launch**: type the task in the new-session menu; Kelpie passes it on the command line or types it once the agent is ready (long prompts are pasted).
 - **Hand-off**: start another agent seeded with a bounded transcript of the current session (terminal context menu).
 - **Hibernation** (opt-in): finished agents idle in background projects are stopped and resume their conversation when you show them again; *Sleep* a project or worktree on demand.
 - **Keep the computer awake**: off, while agents are working, or always — from the coffee cup in the status bar.
@@ -63,7 +65,7 @@ Agents live in a background session daemon, so switching projects, closing the w
 - **Context menu**: copy, paste, select all, *Copy Context* (the transcript, ready to paste into another agent), find, clear, split, insert a quick command, hand off to another agent.
 - **Nine terminal colour themes** (Dracula, Nord, One Dark, Tokyo Night, Catppuccin Mocha, Gruvbox, Solarized dark / light, GitHub Light) on top of the dark and light app themes; the daemon's snapshots use the same palette.
 - **Floating terminal**: a global shell over everything, one shortcut away (`Ctrl+Shift+`` ` / `⌘⌥A`); it keeps running when hidden.
-- App shortcuts stay off the keys agent TUIs need (`Ctrl+Shift` on Windows); when Erka does keep a key from a terminal it says so once.
+- App shortcuts stay off the keys agent TUIs need (`Ctrl+Shift` on Windows); when Kelpie does keep a key from a terminal it says so once.
 
 | | |
 |---|---|
@@ -71,7 +73,7 @@ Agents live in a background session daemon, so switching projects, closing the w
 
 ### Chat view and past conversations
 
-- Any Claude Code, Codex or OMP session can continue in a chat UI — messages, tool cards with diffs, Allow / Deny prompts, cost — and switch back to the TUI. Erka stops one front-end before starting the other, so a conversation never has two writers.
+- Any Claude Code, Codex or OMP session can continue in a chat UI — messages, tool cards with diffs, Allow / Deny prompts, cost — and switch back to the TUI. Kelpie stops one front-end before starting the other, so a conversation never has two writers.
 - **Past conversations**: the Sessions panel lists earlier Claude, Codex and OMP conversations from their own transcripts (this folder / project / all), searchable, resumable in a terminal or in chat view. 1.2 GB of transcripts list in 0.5 s the first time and in ~30 ms afterwards.
 
 | | |
@@ -82,14 +84,14 @@ Agents live in a background session daemon, so switching projects, closing the w
 
 - A sidebar with every project: branch, dirty state, ahead / behind, pull-request chip and all its sessions (status, task title, model, last activity); filter, sort, fold, pin, rename inline, *Open in* VS Code / Cursor / Zed / ….
 - **Git worktrees as child projects**: create one from any local or remote branch, tag or commit with a suggested name and folder (or straight from search: type a name, pick *Create worktree*).
-- **Ignored files follow the worktree**: `.worktreeinclude` and `copy:` entries are copied (`.env`), `link:` entries are shared as links (`node_modules`); the repository's `.erka.yaml` setup is shown in full and runs only when you tick it.
+- **Ignored files follow the worktree**: `.worktreeinclude` and `copy:` entries are copied (`.env`), `link:` entries are shared as links (`node_modules`); the repository's `.kelpie.yaml` setup is shown in full and runs only when you tick it.
 - Safe removal: refuses when a detached HEAD holds commits no branch has, removes shared links before the folder, and can delete the branch afterwards.
-- **Worktree comments**: a line saying what the worktree is doing now, set by you or by an agent with `erkad worktree set --comment …`, shown in the sidebar and on the board.
+- **Worktree comments**: a line saying what the worktree is doing now, set by you or by an agent with `kelpied worktree set --comment …`, shown in the sidebar and on the board.
 - A workspace board (Todo / In progress / Review / Done) with drag and drop, pins and the agents running in each card.
 
 | | |
 |---|---|
-| ![New worktree dialog](docs/screenshots/worktree-dialog.png) **New worktree** — branch, start from any ref, folder, and the `.erka.yaml` it would run. | ![Search everything](docs/screenshots/search.png) **Search everything** — sessions, projects, files, commands and settings in one box. |
+| ![New worktree dialog](docs/screenshots/worktree-dialog.png) **New worktree** — branch, start from any ref, folder, and the `.kelpie.yaml` it would run. | ![Search everything](docs/screenshots/search.png) **Search everything** — sessions, projects, files, commands and settings in one box. |
 
 ### Source control and review
 
@@ -127,10 +129,10 @@ Agents live in a background session daemon, so switching projects, closing the w
 
 ### Usage, settings and shortcuts
 
-- Claude and Codex plan usage (5 h and weekly windows) and Erka's own memory use in the status bar.
+- Claude and Codex plan usage (5 h and weekly windows) and Kelpie's own memory use in the status bar.
 - **Quick commands**: saved shell commands or agent prompts, run from search, the new-session menu or the terminal context menu.
 - A searchable settings page: per-agent arguments, permission mode / approval policy and environment, terminal font, renderer and colour theme, dark and light themes, compact density, interface text size, notifications, hibernation, keep-awake.
-- Every shortcut can be re-recorded; Erka warns about keys other commands, AltGr layouts or terminal programs use.
+- Every shortcut can be re-recorded; Kelpie warns about keys other commands, AltGr layouts or terminal programs use.
 
 | | |
 |---|---|
@@ -144,7 +146,7 @@ Agents live in a background session daemon, so switching projects, closing the w
 - **Grid layouts**: arrange a tab as rows × columns (or per-row counts like `3,2`), start one agent per cell, drag panes to swap or move them, equalize, focus panes by direction, broadcast typing to every terminal of a tab, save layouts and open them from a project's start page.
 - **Resume after a restart**: when the daemon stops while agents work (reboot, update, crash), their sessions come back interrupted and resume the same conversation when you open them, all at once, or on request.
 - **Several Claude Code / Codex accounts**, each with its own sign-in, settings, history and usage meter; new sessions use the active account, running ones keep theirs.
-- **Orchestration runs**: split a job into agent tasks with dependencies, approval gates and a worktree per task (or let an AI plan them); the daemon runs them and agents report back with `erkad run report`.
+- **Orchestration runs**: split a job into agent tasks with dependencies, approval gates and a worktree per task (or let an AI plan them); the daemon runs them and agents report back with `kelpied run report`.
 - **Linear, Jira and GitLab**: your issues in a panel (start an agent or a worktree from one, change its state), GitLab merge requests and pipelines next to GitHub pull requests. Tokens stay in the OS credential store.
 - **Browser panes with design mode**: open a page next to your agents, click elements to collect their selector, HTML and screenshot, and send them to an agent; localhost links from terminals open there.
 - **Remote projects over SSH**: terminals and agents on another machine (kept alive in tmux), with files, search and git through your own `ssh` config.
@@ -159,18 +161,18 @@ Screenshots are taken from the running app by [`scripts/e2e/readme_shots.py`](sc
 ## How it works
 
 ```
-Erka (Tauri app)                          erkad (session daemon, one per user)
+Kelpie (Tauri app)                        kelpied (session daemon, one per user)
 ├─ WebView: SolidJS UI, xterm.js, CM6     ├─ Session × N  (PTY + VT state + ring buffer)
 ├─ Rust core: daemon client, fs, git,     ├─ ChatSession × N (agent stdio JSON relay)
 │  search, file watcher, transcript       ├─ status ticker (250 ms) + persistence (30 s)
 │  history, usage, memory meter, gh,      ├─ automations, runs, keep-awake, comments
 │  accounts, plugins, integrations, ssh   ├─ phone server (opt-in)
 ├─ local socket ◄──────────────────────►  └─ local socket server
-└─ erka-stt (speech helper, on demand)    erkad hook  ◄── agent hooks (Claude/Codex)
-                                          erkad terminal / worktree / run ◄── scripts, agents
+└─ kelpie-stt (speech helper, on demand)  kelpied hook  ◄── agent hooks (Claude/Codex)
+                                          kelpied terminal / worktree / run ◄── scripts, agents
 ```
 
-- **The UI owns nothing that must keep running.** `erkad` parses every PTY byte once (`alacritty_terminal`), keeps a 1 MiB ring and an ANSI snapshot per session, and fans output out to attached views. A slow view is told to resync; the PTY never pauses.
+- **The UI owns nothing that must keep running.** `kelpied` parses every PTY byte once (`alacritty_terminal`), keeps a 1 MiB ring and an ANSI snapshot per session, and fans output out to attached views. A slow view is told to resync; the PTY never pauses.
 - **Attach is cheap and exact**: a view that comes back gets a delta replay of what it missed, or a snapshot when it fell too far behind.
 - **Render only what is visible.** Hidden terminals unsubscribe and park; the most recent keep their WebGL context so switching back is instant. Output reaches the webview through one binary channel per visible terminal, coalesced every 4 ms. Solid's fine-grained stores re-render only what changed.
 - **Transport** is a local socket only (Windows named pipe with an owner-only DACL, Unix socket mode 0600) with length-prefixed binary frames.
@@ -191,12 +193,12 @@ Measured on Windows 10 (numbers and method in [`plans/reports/`](plans/reports))
 
 ## Install
 
-Agents are not bundled: install the CLIs you use (`claude`, `codex`, `gemini`, `opencode`, …) as usual. Erka finds them on your PATH (Windows) or through your login shell (macOS); Settings → Agents shows which ones it found.
+Agents are not bundled: install the CLIs you use (`claude`, `codex`, `gemini`, `opencode`, …) as usual. Kelpie finds them on your PATH (Windows) or through your login shell (macOS); Settings → Agents shows which ones it found.
 
 Installers are produced by CI (`.github/workflows/ci.yml`) as build artifacts:
 
-- **Windows**: `Erka_x.y.z_x64-setup.exe` (per-user NSIS installer, no admin needed).
-- **macOS**: `.dmg` — drag Erka to Applications.
+- **Windows**: `Kelpie_x.y.z_x64-setup.exe` (per-user NSIS installer, no admin needed).
+- **macOS**: `.dmg` — drag Kelpie to Applications.
 
 Optional: the GitHub CLI (`gh`, signed in) for pull requests; VS Code / Cursor / Zed / … for *Open in*; an OpenSSH client (built into Windows 10+ and macOS) and, on remote hosts, `tmux` for remote projects.
 
@@ -214,32 +216,32 @@ scripts/build-release.sh --no-bundle         # just the executables
 Development, on an isolated daemon endpoint and data folder:
 
 ```bash
-scripts/dev-daemon.sh run                     # erkad on endpoint "erka-dev"
-cd app && ERKA_ENDPOINT=erka-dev pnpm tauri dev
+scripts/dev-daemon.sh run                     # kelpied on endpoint "kelpie-dev"
+cd app && KELPIE_ENDPOINT=kelpie-dev pnpm tauri dev
 ```
 
 ## Scripting
 
-Agents and scripts can drive other sessions and report progress through the `erkad` executable:
+Agents and scripts can drive other sessions and report progress through the `kelpied` executable:
 
 ```bash
-erkad terminal list                           # sessions with handle, kind, status, folder
-erkad terminal send 3 "run the tests" --enter # type into session 3
-erkad terminal wait 3 --timeout-ms 600000     # until it stops working
-erkad terminal read 3 --lines 80              # its last 80 lines, scrollback included
-erkad worktree set --comment "fix reproduced; writing test" --status progress
-erkad worktree get                            # comment and status of this worktree
-erkad run create run.json                     # an orchestration run (tasks, deps, approvals)
-erkad run report done "tests pass"            # from inside a run's agent session
+kelpied terminal list                           # sessions with handle, kind, status, folder
+kelpied terminal send 3 "run the tests" --enter # type into session 3
+kelpied terminal wait 3 --timeout-ms 600000     # until it stops working
+kelpied terminal read 3 --lines 80              # its last 80 lines, scrollback included
+kelpied worktree set --comment "fix reproduced; writing test" --status progress
+kelpied worktree get                            # comment and status of this worktree
+kelpied run create run.json                     # an orchestration run (tasks, deps, approvals)
+kelpied run report done "tests pass"            # from inside a run's agent session
 ```
 
 The raw daemon API is available too:
 
 ```bash
-erkad call session.list
-erkad call session.create '{"kind":"claude","cwd":"D:/proj","prompt":"Summarize the open TODOs"}'
-erkad call session.input  '{"handle":3,"data":"run the tests\r"}'
-erkad call session.read   '{"handle":3,"lines":200}'
+kelpied call session.list
+kelpied call session.create '{"kind":"claude","cwd":"D:/proj","prompt":"Summarize the open TODOs"}'
+kelpied call session.input  '{"handle":3,"data":"run the tests\r"}'
+kelpied call session.read   '{"handle":3,"lines":200}'
 ```
 
 ## Keyboard shortcuts
@@ -271,12 +273,18 @@ The full list is in the [user guide](docs/user-guide.md#keyboard-shortcuts).
 
 ## Privacy and data
 
-- Everything stays on your machine: sessions, layouts, settings, worktree comments, automations, runs, plugins and speech models live in `%LOCALAPPDATA%\Erka` (Windows) or `~/Library/Application Support/Erka` (macOS). There is no telemetry. No network port is opened unless you turn on **phone access** (one address and port you choose, paired devices only, optional HTTPS).
+- Everything stays on your machine: sessions, layouts, settings, worktree comments, automations, runs, plugins and speech models live in `%LOCALAPPDATA%\Kelpie` (Windows) or `~/Library/Application Support/Kelpie` (macOS). There is no telemetry. No network port is opened unless you turn on **phone access** (one address and port you choose, paired devices only, optional HTTPS).
+- **Upgrading from Erka** (the project's former name). Quit Erka, then start Kelpie. On its first start Kelpie:
+  - stops Erka's background daemon if it still runs; its sessions come back in Kelpie as exited, resumable from their conversation;
+  - moves your sessions, layouts, settings, accounts, saved hosts, plugins and speech models from the `Erka` folder, and points the paths stored in them at the new folder;
+  - moves saved secrets (SSH passwords, integration tokens) in the credential store, and the browser-pane profile, on first use.
+
+  Repositories' `.erka.yaml`, plugins' `erka-plugin.json` and remote tmux sessions started by Erka keep working, and paired phones stay paired. Then uninstall Erka. Scripts of your own that call `erkad` or read `ERKA_*` variables need the new names (`kelpied`, `KELPIE_*`); run branches are now named `kelpie/…` and `TERM_PROGRAM` is `Kelpie`.
 - **Network use you ask for**: issue trackers and GitLab (with tokens kept in the OS credential store), remote projects and saved SSH hosts through your `ssh` (saved passwords and key passphrases stay in the OS credential store), plugin installs from git, and one-time speech-model downloads (GitHub / Hugging Face, checked against pinned SHA-256). Voice is recognised locally.
-- **Usage meters** read the agents' own sign-in (`~/.claude/.credentials.json` or the macOS keychain, and `~/.codex/auth.json`). Tokens stay in Erka's Rust core and are sent only to the vendor's usage endpoint, identifying as Erka; the UI only sees percentages and reset times. The meters can be turned off in Settings.
+- **Usage meters** read the agents' own sign-in (`~/.claude/.credentials.json` or the macOS keychain, and `~/.codex/auth.json`). Tokens stay in Kelpie's Rust core and are sent only to the vendor's usage endpoint, identifying as Kelpie; the UI only sees percentages and reset times. The meters can be turned off in Settings.
 - **AI helpers** (commit messages, PR text, conflict help) run your installed `claude` or `codex` CLI with your own sign-in; only the diff or context shown in the request is sent. **Pull requests** go through your `gh` login.
 - **Session history** reads the agents' transcript folders (`~/.claude/projects`, `~/.codex/sessions`, `~/.omp/agent/sessions`) locally.
-- Agent environment variables set in Settings are stored in plain text in Erka's settings file.
+- Agent environment variables set in Settings are stored in plain text in Kelpie's settings file.
 - `app-state.json` is versioned; before a format change, or when a file cannot be read, a timestamped backup is written first.
 
 ## Testing
@@ -284,10 +292,10 @@ The full list is in the [user guide](docs/user-guide.md#keyboard-shortcuts).
 ```bash
 cargo test --workspace             # protocol, daemon, app backend
 cd app && pnpm typecheck && pnpm i18n:check
-erkad bench --sessions 20 --mb 2   # daemon throughput
+kelpied bench --sessions 20 --mb 2   # daemon throughput
 ```
 
-End-to-end tests drive the real app through WebDriver (`tauri-driver` + a matching `msedgedriver`), against an isolated daemon (`ERKA_ENDPOINT` / `ERKA_DATA_DIR`):
+End-to-end tests drive the real app through WebDriver (`tauri-driver` + a matching `msedgedriver`), against an isolated daemon (`KELPIE_ENDPOINT` / `KELPIE_DATA_DIR`):
 
 | Script | Covers |
 |---|---|
@@ -295,11 +303,11 @@ End-to-end tests drive the real app through WebDriver (`tauri-driver` + a matchi
 | `scripts/e2e/restart.py` | closing the app keeps sessions; reopening restores the same screen |
 | `scripts/e2e/chat.py` | Claude / Codex / OMP: TUI ↔ chat with the same conversation (real model calls) |
 | `scripts/e2e/phase1.py` … `phase5.py` | key hints, explorer, sidebar, search, history, usage, quick commands, settings, shortcuts, navigation, themes, worktrees, board, state migration |
-| `scripts/e2e/parity.py` | agent presets and Yolo, startup prompts, `erkad terminal` / `worktree` CLI, push / pull / sync / abort, worktree copy / link, review notes, inbox, floating terminal, hibernation, keep-awake, themes, viewers, automations (`--ai`: one real one-shot call) |
+| `scripts/e2e/parity.py` | agent presets and Yolo, startup prompts, `kelpied terminal` / `worktree` CLI, push / pull / sync / abort, worktree copy / link, review notes, inbox, floating terminal, hibernation, keep-awake, themes, viewers, automations (`--ai`: one real one-shot call) |
 | `scripts/e2e/layouts.py` | grids, per-row counts, drag to swap / move, equalize, broadcast, saved layouts, resume after a daemon restart (real Claude, terminal and chat) |
 | `scripts/e2e/accounts.py`, `runs.py`, `integrations.py` | several accounts; orchestration runs (real agent reporting, AI planning); Linear / Jira / GitLab (GitLab live) |
 | `scripts/e2e/browser.py`, `remote.py`, `mobile.py` | browser panes and design mode (trusted page input via DevTools); SSH projects (local test host); phone pairing and replies |
-| `scripts/e2e/ssh_hosts.py` | SSH hosts page against a local test host: password login through askpass, fingerprint check, terminal and Claude Code on the host, files, port forwards, keys installed and used, known hosts, config import (set `ERKA_SSH_DIR`) |
+| `scripts/e2e/ssh_hosts.py` | SSH hosts page against a local test host: password login through askpass, fingerprint check, terminal and Claude Code on the host, files, port forwards, keys installed and used, known hosts, config import (set `KELPIE_SSH_DIR`) |
 | `scripts/e2e/agent_resume.py` | Claude / Codex / OMP resume the same conversation after the daemon is killed (real model calls, daemon only) |
 | `scripts/e2e/scrollback.py` | long output: back-to-bottom with a new-lines count, jumping between the prompts sent |
 | `scripts/e2e/plugins.py`, `voice.py` | plugin install / review / every contribution; speech-model download, dictation into terminals and fields |
@@ -311,10 +319,10 @@ End-to-end tests drive the real app through WebDriver (`tauri-driver` + a matchi
 
 ```
 app/                 Tauri app: SolidJS UI (src/) and Rust core (src-tauri/)
-crates/erka-proto/   wire protocol and endpoint / data-dir conventions
-crates/erkad/        session daemon: PTYs, VT state, snapshots, hooks, chat relay,
+crates/kelpie-proto/   wire protocol and endpoint / data-dir conventions
+crates/kelpied/      session daemon: PTYs, VT state, snapshots, hooks, chat relay,
                      automations, runs, phone server, keep-awake, worktree comments, CLI
-crates/erka-stt/     speech-to-text helper (sherpa-onnx), started by the app on demand
+crates/kelpie-stt/   speech-to-text helper (sherpa-onnx), started by the app on demand
 scripts/             dev daemon, release build, end-to-end tests
 third_party/conpty/  sideloaded ConPTY (conpty.dll + OpenConsole.exe) for Windows
 docs/                user guide, architecture, screenshots
@@ -323,10 +331,11 @@ plans/               implementation plans and reports
 
 ## Documentation
 
-- [User guide](docs/user-guide.md) — everyday use, agents, terminals, worktrees and `.erka.yaml`, source control and review, viewers, automations, layouts, resume, accounts, runs, issue trackers, browser panes, remote projects, phone access, voice, plugins, language, settings, shortcuts.
+- [User guide](docs/user-guide.md) — everyday use, agents, terminals, worktrees and `.kelpie.yaml`, source control and review, viewers, automations, layouts, resume, accounts, runs, issue trackers, browser panes, remote projects, phone access, voice, plugins, language, settings, shortcuts.
 - [Architecture](docs/architecture.md) — processes, protocol, threading, attach semantics, rendering policy, chat mode, daemon services, layouts, runs, integrations, remote, phone server, plugins, voice, languages.
-- [Plugins](docs/plugins.md) — the `erka-plugin.json` format and how approval works.
+- [Plugins](docs/plugins.md) — the `kelpie-plugin.json` format and how approval works.
 - [ConPTY notes](docs/third-party-conpty.md) — the bundled Windows console host.
+- [Brand](docs/brand.md) — logo, colors, type and the mascot Kip, with the asset files.
 - [Plans and reports](plans/) — design decisions, UI and feature comparisons with Orca, measurements and test results.
 
 ## Status

@@ -1,12 +1,12 @@
-// Design mode for Erka's browser pane, injected into every page (main frame) before its own
+// Design mode for Kelpie's browser pane, injected into every page (main frame) before its own
 // scripts. While on, hovering outlines an element and clicking it reports the element — its
 // selector, text, trimmed HTML, allowlisted attributes (secret-looking values redacted), box
-// and key styles — to Erka. The report travels as a window.open() of a sentinel URL that
-// Erka intercepts and cancels, carrying a per-page nonce the page cannot read: no IPC is
+// and key styles — to Kelpie. The report travels as a window.open() of a sentinel URL that
+// Kelpie intercepts and cancels, carrying a per-page nonce the page cannot read: no IPC is
 // exposed to the page, and no navigation (or beforeunload prompt) happens.
 (() => {
-  if (window.top !== window || window.__erkaDesign) return;
-  const NONCE = "__ERKA_NONCE__";
+  if (window.top !== window || window.__kelpieDesign) return;
+  const NONCE = "__KELPIE_NONCE__";
   const open = window.open.bind(window);
   const B64 = (s) => {
     const bytes = new TextEncoder().encode(s);
@@ -14,7 +14,7 @@
     for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
     return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
   };
-  const send = (kind, data) => open(`http://erka-pick.invalid/#${NONCE}.${B64(JSON.stringify({ kind, data }))}`, "_blank");
+  const send = (kind, data) => open(`http://kelpie-pick.invalid/#${NONCE}.${B64(JSON.stringify({ kind, data }))}`, "_blank");
 
   const SECRET_NAME = /(token|secret|passw|api[-_]?key|session|csrf|xsrf|auth|signature|sig$|credential|cookie)/i;
   const SECRET_VALUE = /^(?:[A-Za-z0-9+/_-]{32,}={0,2}|eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*)$/;
@@ -99,8 +99,8 @@
     if (box) return;
     box = document.createElement("div");
     tag = document.createElement("div");
-    box.style.cssText = "position:fixed;pointer-events:none;z-index:2147483647;border:2px solid #6cb6ff;background:rgba(108,182,255,.14);border-radius:3px;display:none;box-sizing:border-box";
-    tag.style.cssText = "position:fixed;pointer-events:none;z-index:2147483647;background:#6cb6ff;color:#0b0d12;font:600 11px/1.6 system-ui,sans-serif;padding:0 6px;border-radius:3px;display:none;white-space:nowrap;max-width:60vw;overflow:hidden;text-overflow:ellipsis";
+    box.style.cssText = "position:fixed;pointer-events:none;z-index:2147483647;border:2px solid #e8743b;background:rgba(232,116,59,.14);border-radius:3px;display:none;box-sizing:border-box";
+    tag.style.cssText = "position:fixed;pointer-events:none;z-index:2147483647;background:#e8743b;color:#141823;font:600 11px/1.6 system-ui,sans-serif;padding:0 6px;border-radius:3px;display:none;white-space:nowrap;max-width:60vw;overflow:hidden;text-overflow:ellipsis";
     document.documentElement.append(box, tag);
   }
   function show(el) {
@@ -151,7 +151,7 @@
       current = null;
     }
   }
-  Object.defineProperty(window, "__erkaDesign", { value: Object.freeze({ set }), configurable: false });
+  Object.defineProperty(window, "__kelpieDesign", { value: Object.freeze({ set }), configurable: false });
 
   // A link meant for a new window (target=_blank, Ctrl/Shift/middle click) opens here, in the
   // same pane, as an ordinary navigation: a browser pane has no other windows. (Scripted

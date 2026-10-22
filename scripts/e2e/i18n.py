@@ -18,7 +18,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from smoke_support import REPO, Run  # noqa: E402
 
 shots, scratch = sys.argv[1], sys.argv[2]
-S = "window.__erka.store"
+S = "window.__kelpie.store"
 proj = os.path.join(scratch, "i18nproj")
 os.makedirs(proj, exist_ok=True)
 

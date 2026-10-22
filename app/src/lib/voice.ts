@@ -1,6 +1,6 @@
 // Voice dictation: speak, and the words land where you were typing — a text field (the chat
 // composer, a search box) at its caret, or the focused terminal as a paste (no Enter). Speech is
-// recognised on this computer by the erka-stt helper (app/src-tauri/src/voice.rs); nothing is
+// recognised on this computer by the kelpie-stt helper (app/src-tauri/src/voice.rs); nothing is
 // sent anywhere. Toggle with the shortcut or a mic button; Esc cancels.
 import { createSignal } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
@@ -73,7 +73,7 @@ function currentTarget(): Target | null {
 /** Starts dictating into `into` (default: the focused text field or terminal). */
 export async function startDictation(into?: { field?: HTMLTextAreaElement | HTMLInputElement; sessionId?: string }) {
   if (phase() !== "idle") return;
-  if (!(await voiceAvailable().catch(() => false))) return store.notify(t("Voice dictation is not included in this build of Erka"));
+  if (!(await voiceAvailable().catch(() => false))) return store.notify(t("Voice dictation is not included in this build of Kelpie"));
   const v = voiceSettings();
   const installed = v.model ? (await speechModels().catch(() => [])).some((m) => m.id === v.model && m.installed) : false;
   if (!installed) {

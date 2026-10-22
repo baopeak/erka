@@ -219,7 +219,7 @@
   "Alias from ~/.ssh/config, or user@host[:port]": "Alias trong ~/.ssh/config, hoặc user@host[:port]",
   "Connecting…": "Đang kết nối…",
   "Connect": "Kết nối",
-  "Erka uses your OpenSSH client and its config, keys and agent. Hosts that ask for a password need a key (or an agent) first.": "Erka dùng OpenSSH client cùng cấu hình, khóa và agent của bạn. Máy chủ yêu cầu mật khẩu cần có khóa (hoặc agent) trước.",
+  "Kelpie uses your OpenSSH client and its config, keys and agent. Hosts that ask for a password need a key (or an agent) first.": "Kelpie dùng OpenSSH client cùng cấu hình, khóa và agent của bạn. Máy chủ yêu cầu mật khẩu cần có khóa (hoặc agent) trước.",
   "git ✓": "git ✓",
   "git missing": "thiếu git",
   "tmux ✓": "tmux ✓",
@@ -292,7 +292,7 @@
   "Runs": "Lượt chạy",
   "Agents working on tasks in order, each reporting back when done.": "Các agent làm tác vụ theo thứ tự, mỗi agent báo lại khi xong.",
   "No runs yet.": "Chưa có lượt chạy nào.",
-  "Describe an objective, split it into tasks (or let an agent plan them) and Erka runs the agents in order — each task can get its own worktree and wait for your approval.": "Mô tả một mục tiêu, chia thành các tác vụ (hoặc để agent lập kế hoạch) và Erka sẽ chạy các agent theo thứ tự — mỗi tác vụ có thể có worktree riêng và chờ bạn duyệt.",
+  "Describe an objective, split it into tasks (or let an agent plan them) and Kelpie runs the agents in order — each task can get its own worktree and wait for your approval.": "Mô tả một mục tiêu, chia thành các tác vụ (hoặc để agent lập kế hoạch) và Kelpie sẽ chạy các agent theo thứ tự — mỗi tác vụ có thể có worktree riêng và chờ bạn duyệt.",
   "Search in files (Enter)": "Tìm trong tệp (Enter)",
   "Match case": "Phân biệt hoa thường",
   "Regular expression": "Biểu thức chính quy",
@@ -307,7 +307,7 @@
   "From": "Từ",
   "HEAD, a branch, origin/branch, a tag or a commit": "HEAD, một nhánh, origin/nhánh, một tag hoặc một commit",
   "Folder": "Thư mục",
-  "Run .erka.yaml from {ref}": "Chạy .erka.yaml từ {ref}",
+  "Run {file} from {ref}": "Chạy {file} từ {ref}",
   "Create": "Tạo",
   "Create worktree": "Tạo worktree"
 }

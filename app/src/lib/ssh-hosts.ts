@@ -1,5 +1,5 @@
 // Saved SSH hosts, keys, known hosts, port forwards and file transfer (the Hosts page).
-// Backend: app/src-tauri/src/ssh_hosts.rs. A saved host is an alias in Erka's generated ssh
+// Backend: app/src-tauri/src/ssh_hosts.rs. A saved host is an alias in Kelpie's generated ssh
 // config, so connecting to it is opening a remote project on it (lib/remote.ts): terminals and
 // agents run there in tmux, files / git / search work, and sessions resume like local ones.
 import { invoke } from "@tauri-apps/api/core";

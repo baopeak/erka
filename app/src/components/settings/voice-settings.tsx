@@ -42,7 +42,7 @@ export function VoiceSettings() {
   const current = () => models()?.find((m) => m.id === voiceSettings().model);
 
   return (
-    <Show when={available() !== false} fallback={<div class="muted">{t("Voice dictation is not included in this build of Erka (the erka-stt helper is missing).")}</div>}>
+    <Show when={available() !== false} fallback={<div class="muted">{t("Voice dictation is not included in this build of Kelpie (the kelpie-stt helper is missing).")}</div>}>
       <SettingRow id="voice-models" wide>
         <div class="speech-models">
           <For each={models()}>

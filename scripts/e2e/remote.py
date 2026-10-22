@@ -2,8 +2,8 @@
 
     python -X utf8 scripts/e2e/remote.py <screenshot-dir> <scratch-dir>
 
-Starts `ssh_test_server.py` (needs paramiko: set ERKA_SSH_TEST_PYTHON to a Python that has it)
-on 127.0.0.1:47823 with a fresh key, and a client config Erka is pointed at (Settings →
+Starts `ssh_test_server.py` (needs paramiko: set KELPIE_SSH_TEST_PYTHON to a Python that has it)
+on 127.0.0.1:47823 with a fresh key, and a client config Kelpie is pointed at (Settings →
 Remote: SSH config file). The "remote host" is this machine through Git Bash: the project
 folder is a POSIX path (/c/Users/…), commands are bash, git is Git for Windows.
 
@@ -23,13 +23,13 @@ sys.path.insert(0, os.path.dirname(__file__))
 from smoke_support import REPO, Run, daemon, restart_daemon  # noqa: E402
 
 shots, scratch = sys.argv[1], sys.argv[2]
-S = "window.__erka.store"
+S = "window.__kelpie.store"
 PORT = 47823
-erkad = os.path.join(REPO, "target", "release", "erkad.exe" if os.name == "nt" else "erkad")
+kelpied = os.path.join(REPO, "target", "release", "kelpied.exe" if os.name == "nt" else "kelpied")
 ssh_dir = os.path.join(scratch, "ssh-remote-test")
 os.makedirs(ssh_dir, exist_ok=True)
 if os.name == "nt":
-    # Erka includes this config from its own; Windows' OpenSSH refuses an included config others
+    # Kelpie includes this config from its own; Windows' OpenSSH refuses an included config others
     # may write (the temp folder can carry extra entries), as it does for ~/.ssh/config.
     subprocess.run(["icacls", ssh_dir, "/inheritance:r", "/grant:r", f"{os.environ['USERNAME']}:(OI)(CI)F", "/grant:r", "SYSTEM:(OI)(CI)F", "/grant:r", "Administrators:(OI)(CI)F"], capture_output=True)
 key = os.path.join(ssh_dir, "id_test")
@@ -40,9 +40,9 @@ if not os.path.exists(key):
 cfg = os.path.join(ssh_dir, "config")
 fwd = lambda p: p.replace("\\", "/")
 with open(cfg, "w") as f:
-    f.write(f"Host erka-remote\n  HostName 127.0.0.1\n  Port {PORT}\n  User tester\n  IdentityFile {fwd(key)}\n  IdentitiesOnly yes\n"
+    f.write(f"Host kelpie-remote\n  HostName 127.0.0.1\n  Port {PORT}\n  User tester\n  IdentityFile {fwd(key)}\n  IdentitiesOnly yes\n"
             f"  StrictHostKeyChecking no\n  UserKnownHostsFile {fwd(os.path.join(ssh_dir, 'known_hosts'))}\n  LogLevel ERROR\n")
-server = subprocess.Popen([os.environ.get("ERKA_SSH_TEST_PYTHON", sys.executable), os.path.join(os.path.dirname(__file__), "ssh_test_server.py"), str(PORT), key + ".pub", os.path.join(ssh_dir, "host_key")],
+server = subprocess.Popen([os.environ.get("KELPIE_SSH_TEST_PYTHON", sys.executable), os.path.join(os.path.dirname(__file__), "ssh_test_server.py"), str(PORT), key + ".pub", os.path.join(ssh_dir, "host_key")],
                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 server.stdout.readline()  # "ssh test server on …"
 
@@ -53,8 +53,8 @@ if os.path.exists(repo):
 os.makedirs(os.path.join(repo, "src"))
 git = lambda *a: subprocess.run(["git", "-C", repo, *a], capture_output=True, text=True, check=True).stdout
 subprocess.run(["git", "init", "-q", "-b", "main", repo], check=True)
-git("config", "user.email", "e2e@erka.test")
-git("config", "user.name", "Erka e2e")
+git("config", "user.email", "e2e@kelpie.test")
+git("config", "user.name", "Kelpie e2e")
 open(os.path.join(repo, "README.md"), "w", newline="\n").write("# Remote\nhello\n")
 open(os.path.join(repo, "src", "app.txt"), "w", newline="\n").write("the remote-needle is here\n")
 git("add", ".")
@@ -101,10 +101,10 @@ try:
 
     # ---------- hosts and the dialog ----------
     hosts = inv("remote_hosts", {})
-    run.check("hosts come from the SSH config", "erka-remote" in hosts, str(hosts))
+    run.check("hosts come from the SSH config", "kelpie-remote" in hosts, str(hosts))
     d.js(f"{S}.setOverlay('remote')")
     d.wait("return !!document.querySelector('.remote-dialog input')", 5)
-    d.js("const i = document.querySelector('.remote-dialog input'); i.value = 'erka-remote'; i.dispatchEvent(new InputEvent('input', {bubbles: true}));")
+    d.js("const i = document.querySelector('.remote-dialog input'); i.value = 'kelpie-remote'; i.dispatchEvent(new InputEvent('input', {bubbles: true}));")
     d.js("[...document.querySelectorAll('.remote-dialog .btn.primary')].find(b => b.textContent.includes('Connect')).click()")
     ok = d.wait("return !!document.querySelector('.remote-check')", 30)
     check = d.js("return document.querySelector('.remote-check').textContent")
@@ -121,9 +121,9 @@ try:
     run.shot("01-remote-dialog")
     d.js("[...document.querySelectorAll('.remote-dialog .btn.primary')].find(b => b.textContent.includes('Add project')).click()")
     p = wait(lambda: d.js(f"return {S}.state.projects.find(p => p.remote) ?? null"), 10)
-    run.check("remote project added with its ssh root", p and p["path"] == f"ssh://erka-remote{posix}" and p["remote"]["dest"] == "erka-remote", str(p))
+    run.check("remote project added with its ssh root", p and p["path"] == f"ssh://kelpie-remote{posix}" and p["remote"]["dest"] == "kelpie-remote", str(p))
     root, pid = p["path"], p["id"]
-    run.check("sidebar shows the host", bool(d.wait("return [...document.querySelectorAll('.remote-host')].some(e => e.textContent.includes('erka-remote'))", 10)))
+    run.check("sidebar shows the host", bool(d.wait("return [...document.querySelectorAll('.remote-host')].some(e => e.textContent.includes('kelpie-remote'))", 10)))
     info = wait(lambda: d.js(f"return {S}.projectInfo[arguments[0]]?.is_repo ? {S}.projectInfo[arguments[0]] : null", pid), 30)
     run.check("branch info over ssh", info and info["branch"] == "main", str(info))
 
@@ -167,7 +167,7 @@ try:
     info = js_await(f"{S}.newSession(arguments[0], 'shell')", pid)
     sid = info["id"]
     s = sess(sid)
-    run.check("the session runs over ssh in the remote folder", s["remote"] and s["remote"]["dest"] == "erka-remote" and s["cwd"] == posix and s["args"] == [] , str({k: s[k] for k in ("remote", "cwd")}))
+    run.check("the session runs over ssh in the remote folder", s["remote"] and s["remote"]["dest"] == "kelpie-remote" and s["cwd"] == posix and s["args"] == [] , str({k: s[k] for k in ("remote", "cwd")}))
     time.sleep(3)
     daemon(d, "session.input", {"handle": s["handle"], "data": "echo remote-$((40+2)) $(pwd)\r"})
     out = wait(lambda: (lambda t: t if "remote-42" in t else None)(daemon(d, "session.read", {"handle": sess(sid)["handle"], "lines": 50})["text"]), 30)
@@ -181,7 +181,7 @@ try:
     d.js(f"{S}.setOverlay(null)")
 
     # ---------- resume after the daemon restarts ----------
-    restart_daemon(d, erkad)
+    restart_daemon(d, kelpied)
     resumed = wait(lambda: (sess(sid) or {}).get("alive"), 30)
     run.check("the remote terminal resumes after the daemon restarts", bool(resumed))
     time.sleep(3)

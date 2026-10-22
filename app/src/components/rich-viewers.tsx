@@ -125,7 +125,7 @@ function loadMermaid() {
 export async function renderMermaid(source: string): Promise<string> {
   const mermaid = await loadMermaid();
   mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: store.state.settings.theme === "light" ? "default" : "dark" });
-  const { svg } = await mermaid.render(`erka-mmd-${++diagramSeq}`, source);
+  const { svg } = await mermaid.render(`kelpie-mmd-${++diagramSeq}`, source);
   return DOMPurify.sanitize(svg, { USE_PROFILES: { svg: true, svgFilters: true }, ADD_TAGS: ["foreignObject"] });
 }
 

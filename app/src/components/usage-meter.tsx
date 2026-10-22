@@ -1,4 +1,4 @@
-// Status-bar meters: Claude / Codex subscription windows (5 h, week) and Erka's memory use.
+// Status-bar meters: Claude / Codex subscription windows (5 h, week) and Kelpie's memory use.
 import { For, Show, createEffect, createSignal, on, onCleanup, onMount } from "solid-js";
 import { store } from "../lib/store";
 import { daemon, memoryStats, onEvent, usageFetch } from "../lib/ipc";
@@ -40,7 +40,7 @@ type ProviderId = "claude" | "codex";
 
 /** Last successful windows per provider and account, kept across launches: a failed refresh
  *  (rate limit, network) keeps showing them, marked stale, instead of a bare "!". */
-const CACHE_KEY = "erka-usage";
+const CACHE_KEY = "kelpie-usage";
 const accountKey = (p: ProviderId) => activeAccount(p)?.id ?? "default";
 const CACHE_MAX_AGE = 12 * 3600_000;
 type Cache = Partial<Record<string, { windows: UsageWindow[]; at: number }>>;
@@ -185,7 +185,7 @@ export function MemoryMeter() {
         data-meter="memory"
         title={[
           t("Memory"),
-          t("Erka app + WebView: {size}", { size: gb(stats()!.app) }),
+          t("Kelpie app + WebView: {size}", { size: gb(stats()!.app) }),
           t("Session daemon: {size}", { size: gb(stats()!.daemon) }),
           t("Sessions ({n} processes): {size}", { n: stats()!.session_processes, size: gb(stats()!.sessions) }),
         ].join("\n")}

@@ -27,9 +27,9 @@ def wait_text(handle, needle, timeout=15):
 try:
     run.boot()
     # Other scenarios may have turned the shortcut notes off in the shared dev state.
-    d.js("const s = window.__erka.store; s.setSettings({ shortcutHints: true }); for (const p of [...s.state.projects]) s.removeProject(p.id); s.addProject(arguments[0]);", project)
-    pid = d.js("return window.__erka.store.state.activeProject")
-    info = d.js_async("const done = arguments[arguments.length-1]; window.__erka.store.newSession(arguments[0], 'shell').then(done);", pid)
+    d.js("const s = window.__kelpie.store; s.setSettings({ shortcutHints: true }); for (const p of [...s.state.projects]) s.removeProject(p.id); s.addProject(arguments[0]);", project)
+    pid = d.js("return window.__kelpie.store.state.activeProject")
+    info = d.js_async("const done = arguments[arguments.length-1]; window.__kelpie.store.newSession(arguments[0], 'shell').then(done);", pid)
     h = info["handle"]
     d.wait("return !!document.querySelector('.pane .term-host .xterm')", 20)
     time.sleep(2)
@@ -60,14 +60,14 @@ try:
     d.keys("escape")
 
     # Explorer: header, ignored dimming, name filter, Names/Contents.
-    d.js("const s = window.__erka.store; s.showRightPanel('files');")
+    d.js("const s = window.__kelpie.store; s.showRightPanel('files');")
     d.wait("return document.querySelectorAll('.tree-row').length > 3", 15)
     ignored = d.js("return [...document.querySelectorAll('.tree-row.ignored .fname')].map(e => e.textContent)")
     run.check("gitignored entries are dimmed", "target" in ignored and "crates" not in ignored, ",".join(ignored))
     run.shot("p1-02-explorer")
     d.click(".explorer-tools .text-input")
     d.keys("session.rs")
-    d.wait("return [...document.querySelectorAll('.explorer .list-row .dir')].some(e => e.textContent.includes('erkad'))", 10)
+    d.wait("return [...document.querySelectorAll('.explorer .list-row .dir')].some(e => e.textContent.includes('kelpied'))", 10)
     run.check("explorer name filter finds files", True)
     run.shot("p1-03-explorer-filter")
     d.js("[...document.querySelectorAll('.seg button')].find(b => b.textContent === 'Contents').click()")

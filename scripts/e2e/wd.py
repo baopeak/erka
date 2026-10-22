@@ -1,4 +1,4 @@
-"""Minimal W3C WebDriver client for driving the Erka app through tauri-driver.
+"""Minimal W3C WebDriver client for driving the Kelpie app through tauri-driver.
 
     tauri-driver --port 4444 --native-driver <msedgedriver.exe>
 """
@@ -18,8 +18,8 @@ KEYS = {
 
 class Driver:
     def __init__(self, app_path, url=None):
-        # ERKA_E2E_DRIVER: another tauri-driver port, when 4444 is taken by someone else's run.
-        self.url = url or os.environ.get("ERKA_E2E_DRIVER", "http://127.0.0.1:4444")
+        # KELPIE_E2E_DRIVER: another tauri-driver port, when 4444 is taken by someone else's run.
+        self.url = url or os.environ.get("KELPIE_E2E_DRIVER", "http://127.0.0.1:4444")
         caps = {"capabilities": {"alwaysMatch": {"browserName": "wry", "tauri:options": {"application": app_path}}}}
         self.sid = self._req("POST", "/session", caps)["sessionId"]
 

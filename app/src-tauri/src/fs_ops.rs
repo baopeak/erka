@@ -264,7 +264,7 @@ fn fs_write_file_blocking(root: String, path: String, content: String, expected_
     }
     // Write through symlinks to their target, and keep the file's permissions (exec bit…).
     let full = std::fs::canonicalize(&full).unwrap_or(full);
-    let tmp = full.with_extension(format!("{}.erka-tmp", full.extension().and_then(|e| e.to_str()).unwrap_or("")));
+    let tmp = full.with_extension(format!("{}.kelpie-tmp", full.extension().and_then(|e| e.to_str()).unwrap_or("")));
     std::fs::write(&tmp, content.as_bytes()).map_err(err)?;
     if let Ok(meta) = std::fs::metadata(&full) {
         let _ = std::fs::set_permissions(&tmp, meta.permissions());

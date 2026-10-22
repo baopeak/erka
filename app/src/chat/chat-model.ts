@@ -140,12 +140,12 @@ export class ChatController {
       } catch {
         /* non-JSON noise */
       }
-      if (msg?.type === "erka_exit") {
+      if (msg?.type === "kelpie_exit") {
         this.set({ exited: true, busy: false });
         this.upsert({ kind: "system", id: `exit-${Date.now()}`, text: t("Agent process exited (code {code}).", { code: String(msg.code) }), tone: "info" });
         continue;
       }
-      if (msg?.type === "erka_stderr") {
+      if (msg?.type === "kelpie_stderr") {
         if (/error|fatal|panic/i.test(msg.text)) this.upsert({ kind: "system", id: `err-${this.state.items.length}`, text: msg.text, tone: "error" });
         continue;
       }

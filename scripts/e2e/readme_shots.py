@@ -20,7 +20,7 @@ with_chat = "--no-chat" not in sys.argv
 os.makedirs(out, exist_ok=True)
 run = Run(out)
 d = run.d
-S = "window.__erka.store"
+S = "window.__kelpie.store"
 
 
 def shot(name, wait=0.6):
@@ -61,26 +61,26 @@ try:
           {{ id: 'q2', label: 'Review diff', text: 'Review the uncommitted changes and list risks.', action: 'agent', enter: true, projectId: null }},
         ] }});""")
 
-    erka = d.js(f"return {S}.addProject(arguments[0])", REPO)
+    kelpie = d.js(f"return {S}.addProject(arguments[0])", REPO)
     orca = d.js(f"return {S}.addProject(arguments[0], {{ open: false }})", os.path.join(os.path.dirname(REPO), "orca-ref", "orca"))
     app = d.js(f"return {S}.addProject(arguments[0], {{ open: false }})", demo)
     d.js(f"{S}.renameProject(arguments[0], arguments[1])", app, os.path.basename(os.path.normpath(demo)))
     d.wait(f"return {S}.projectInfo[arguments[0]]?.is_repo || null", 20, 0.25, app)
-    d.js_async("const done = arguments[arguments.length-1]; import('/src/lib/worktrees.ts').then(m => m.addExistingWorktrees(window.__erka.store.state.projects.find(p => p.id === arguments[0]))).then(done, e => done(String(e)));", app)
+    d.js_async("const done = arguments[arguments.length-1]; import('/src/lib/worktrees.ts').then(m => m.addExistingWorktrees(window.__kelpie.store.state.projects.find(p => p.id === arguments[0]))).then(done, e => done(String(e)));", app)
     kids = d.js(f"return {S}.childrenOf(arguments[0]).map(p => p.id)", app)
-    # Worktree comments, as an agent would set them with `erkad worktree set --comment`.
+    # Worktree comments, as an agent would set them with `kelpied worktree set --comment`.
     for k, comment in zip(kids, ["checkout endpoint returns 201; writing tests", "burst of 30 req/s reproduced; tuning bucket"]):
         daemon(d, "meta.set", {"path": d.js(f"return {S}.state.projects.find(p => p.id === arguments[0]).path", k), "comment": comment})
 
     # Board state.
-    for pid, status in [(erka, "progress"), (orca, "review"), (app, "todo")] + [(k, s) for k, s in zip(kids, ["progress", "done"])]:
+    for pid, status in [(kelpie, "progress"), (orca, "review"), (app, "todo")] + [(k, s) for k, s in zip(kids, ["progress", "done"])]:
         d.js(f"{S}.setProjectStatus(arguments[0], arguments[1])", pid, status)
-    d.js(f"{S}.togglePin(arguments[0])", erka)
+    d.js(f"{S}.togglePin(arguments[0])", kelpie)
 
     # Terminals with real output.
-    d.js(f"{S}.switchProject(arguments[0]); {S}.showRightPanel('files');", erka)
-    s1 = new_session(erka, "shell")
-    s2 = new_session(erka, "shell", "right")
+    d.js(f"{S}.switchProject(arguments[0]); {S}.showRightPanel('files');", kelpie)
+    s1 = new_session(kelpie, "shell")
+    s2 = new_session(kelpie, "shell", "right")
     for k in kids:
         new_session(k, "shell")
     new_session(orca, "shell")
@@ -88,7 +88,7 @@ try:
     type_into(s1["handle"], "git log --oneline --graph --decorate -18")
     type_into(s2["handle"], "git status -sb; Get-ChildItem crates, app/src -Directory | Select-Object Name, LastWriteTime | Format-Table -AutoSize")
     time.sleep(3)
-    d.js(f"{S}.switchProject(arguments[0])", erka)
+    d.js(f"{S}.switchProject(arguments[0])", kelpie)
     shot("workspace", 1.5)
 
     d.keys("ctrl+shift+p")
@@ -102,21 +102,21 @@ try:
     shot("history", 3)
     d.js(f"{S}.showRightPanel('files')")
 
-    d.js(f"{S}.openFile(arguments[0], 'crates/erkad/src/session.rs')", erka)
+    d.js(f"{S}.openFile(arguments[0], 'crates/kelpied/src/session.rs')", kelpie)
     d.wait("return document.querySelectorAll('.cm-content span[class]').length > 20 || null", 30)
     shot("editor", 0.5)
 
     if with_chat:
         info = d.js_async(f"""const done = arguments[arguments.length-1];
-            window.__erka.chat.newChat(arguments[0], 'claude', 'tab').then(i => done(i ? i.id : null));""", erka)
+            window.__kelpie.chat.newChat(arguments[0], 'claude', 'tab').then(i => done(i ? i.id : null));""", kelpie)
         sid = info or d.js(f"return Object.values({S}.sessions).filter(s => s.chat).map(s => s.id).pop()")
         time.sleep(6)
-        d.js("window.__erka.chat.getController(window.__erka.store.sessions[arguments[0]]).send(arguments[1])",
+        d.js("window.__kelpie.chat.getController(window.__kelpie.store.sessions[arguments[0]]).send(arguments[1])",
              sid, "Using only the Glob tool (no Bash), list the top-level folders of this repository and say in one short line what each is for.")
         try:
-            d.wait("const c = window.__erka.chat.getController(window.__erka.store.sessions[arguments[0]]); return (c.state.items.some(i => i.kind === 'assistant') && !c.state.busy) || null", 240, 1, sid)
+            d.wait("const c = window.__kelpie.chat.getController(window.__kelpie.store.sessions[arguments[0]]); return (c.state.items.some(i => i.kind === 'assistant') && !c.state.busy) || null", 240, 1, sid)
         except TimeoutError:
-            print("chat still busy:", d.js("const c = window.__erka.chat.getController(window.__erka.store.sessions[arguments[0]]); return c.state.items.map(i => i.kind + (i.status ? ':' + i.status : '') + (i.resolved ? ':' + i.resolved : ''))", sid))
+            print("chat still busy:", d.js("const c = window.__kelpie.chat.getController(window.__kelpie.store.sessions[arguments[0]]); return c.state.items.map(i => i.kind + (i.status ? ':' + i.status : '') + (i.resolved ? ':' + i.resolved : ''))", sid))
         time.sleep(4)
         shot("chat", 0.5)
 
@@ -156,15 +156,15 @@ try:
         shot("csv", 0.8)
 
     # Terminal colour theme and context menu.
-    d.js(f"{S}.switchProject(arguments[0]); {S}.selectTab(arguments[0], {S}.workspace(arguments[0]).tabs[0].id);", erka)
-    d.js(f"{S}.setSettings({{ terminalTheme: 'dracula' }}); for (const v of window.__erka.views()) v.applySettings({S}.state.settings);")
+    d.js(f"{S}.switchProject(arguments[0]); {S}.selectTab(arguments[0], {S}.workspace(arguments[0]).tabs[0].id);", kelpie)
+    d.js(f"{S}.setSettings({{ terminalTheme: 'dracula' }}); for (const v of window.__kelpie.views()) v.applySettings({S}.state.settings);")
     d.wait("return getComputedStyle(document.querySelector('.pane .term-wrap')).backgroundColor === 'rgb(40, 42, 54)' || null", 5)
     d.js("document.querySelector('.pane .term-wrap').dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 520, clientY: 330 }))")
     d.wait("return document.querySelector('.ctx-menu .ctx-item') || null", 5)
     shot("terminal-menu", 0.6)
     escape()
     run.check("Escape closes the terminal context menu", d.wait("return !document.querySelector('.ctx-menu') || null", 5))
-    d.js(f"{S}.setSettings({{ terminalTheme: 'default' }}); for (const v of window.__erka.views()) v.applySettings({S}.state.settings);")
+    d.js(f"{S}.setSettings({{ terminalTheme: 'default' }}); for (const v of window.__kelpie.views()) v.applySettings({S}.state.settings);")
 
     # Floating terminal over the workspace (opens in the home folder: keep that path off the picture).
     d.keys("ctrl+shift+`")
@@ -224,10 +224,10 @@ try:
     shot("shortcuts", 0.6)
     escape()
 
-    d.js(f"{S}.setSettings({{ theme: 'light' }}); for (const v of window.__erka.views()) v.applySettings({S}.state.settings);")
-    d.js(f"{S}.switchProject(arguments[0]); {S}.selectTab(arguments[0], {S}.workspace(arguments[0]).tabs[0].id);", erka)
+    d.js(f"{S}.setSettings({{ theme: 'light' }}); for (const v of window.__kelpie.views()) v.applySettings({S}.state.settings);")
+    d.js(f"{S}.switchProject(arguments[0]); {S}.selectTab(arguments[0], {S}.workspace(arguments[0]).tabs[0].id);", kelpie)
     shot("light", 1.5)
-    d.js(f"{S}.setSettings({{ theme: 'dark', quickCommands: [] }}); for (const v of window.__erka.views()) v.applySettings({S}.state.settings);")
+    d.js(f"{S}.setSettings({{ theme: 'dark', quickCommands: [] }}); for (const v of window.__kelpie.views()) v.applySettings({S}.state.settings);")
 
     for s in daemon(d, "session.list"):
         daemon(d, "session.close", {"handle": s["handle"]})

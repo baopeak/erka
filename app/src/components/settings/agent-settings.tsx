@@ -50,7 +50,7 @@ function AgentFields(props: { kind: string }) {
       </Show>
       <label class="field">
         <span>{t("Environment")}</span>
-        <textarea class="text-input" rows={2} placeholder={t("KEY=value, one per line (stored in Erka's settings file as plain text)")}
+        <textarea class="text-input" rows={2} placeholder={t("KEY=value, one per line (stored in Kelpie's settings file as plain text)")}
           value={Object.entries(p().env ?? {}).map(([k, v]) => `${k}=${v}`).join("\n")}
           onChange={(e) => update({ env: parseEnv(e.currentTarget.value) })} />
       </label>

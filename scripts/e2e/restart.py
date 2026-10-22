@@ -12,22 +12,22 @@ from smoke_support import Run, daemon  # noqa: E402
 shots, project = sys.argv[1], sys.argv[2]
 BUFFER_JS = r"""
 const out = [];
-for (const v of window.__erka.views()) {
+for (const v of window.__kelpie.views()) {
   if (!v.visible) continue;
   const b = v.term.buffer.active;
   for (let i = 0; i < b.length; i++) out.push(b.getLine(i)?.translateToString(true) ?? '');
 }
 return out.join('\n');
 """
-marker = f"erka-restart-{int(time.time())}"
+marker = f"kelpie-restart-{int(time.time())}"
 
 run = Run(shots)
 try:
     run.boot()
     d = run.d
-    d.js("const s = window.__erka.store; for (const p of [...s.state.projects]) s.removeProject(p.id); s.addProject(arguments[0]);", project)
-    pid = d.js("return window.__erka.store.state.activeProject")
-    info = d.js_async("const done = arguments[arguments.length-1]; window.__erka.store.newSession(arguments[0], 'shell').then(done);", pid)
+    d.js("const s = window.__kelpie.store; for (const p of [...s.state.projects]) s.removeProject(p.id); s.addProject(arguments[0]);", project)
+    pid = d.js("return window.__kelpie.store.state.activeProject")
+    info = d.js_async("const done = arguments[arguments.length-1]; window.__kelpie.store.newSession(arguments[0], 'shell').then(done);", pid)
     handle, sid = info["handle"], info["id"]
     d.wait("return !!document.querySelector('.pane .term-host .xterm')", 20)
     time.sleep(2)

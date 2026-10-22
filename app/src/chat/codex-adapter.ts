@@ -15,9 +15,9 @@ export function codexArgs(profile: string[] = []): string[] {
   return out;
 }
 
-const INIT_ID = "erka-init";
-const THREAD_ID = "erka-thread";
-const LIST_ID = "erka-list";
+const INIT_ID = "kelpie-init";
+const THREAD_ID = "kelpie-thread";
+const LIST_ID = "kelpie-list";
 
 export function createCodexAdapter(ctx: AdapterContext): Adapter {
   let initialized = false;
@@ -31,7 +31,7 @@ export function createCodexAdapter(ctx: AdapterContext): Adapter {
 
   function startTurn(text: string) {
     ctx.set("busy", true);
-    request(`erka-turn-${++seq}-${Date.now()}`, "turn/start", { threadId, input: [{ type: "text", text, text_elements: [] }] });
+    request(`kelpie-turn-${++seq}-${Date.now()}`, "turn/start", { threadId, input: [{ type: "text", text, text_elements: [] }] });
   }
 
   const request = (id: string, method: string, params: unknown) => ctx.write({ id, method, params });
@@ -110,7 +110,7 @@ export function createCodexAdapter(ctx: AdapterContext): Adapter {
     },
     start() {
       if (!initialized) {
-        request(INIT_ID, "initialize", { clientInfo: { name: "erka", title: "Erka", version: "0.1.0" } });
+        request(INIT_ID, "initialize", { clientInfo: { name: "kelpie", title: "Kelpie", version: "0.1.0" } });
       } else if (!threadReady) {
         openThread(ctx.state.conversationId);
       }
@@ -121,7 +121,7 @@ export function createCodexAdapter(ctx: AdapterContext): Adapter {
       if ("id" in m && ("result" in m || "error" in m) && !("method" in m)) {
         if (m.error) {
           ctx.upsert({ kind: "system", id: `e-${String(m.id)}-${ctx.state.items.length}`, text: t("Codex: {error}", { error: String(m.error.message ?? JSON.stringify(m.error)) }), tone: "error" });
-          if (String(m.id).startsWith("erka-turn-")) ctx.set("busy", false);
+          if (String(m.id).startsWith("kelpie-turn-")) ctx.set("busy", false);
           if ((m.id === THREAD_ID || m.id === LIST_ID) && ctx.state.conversationId && !ctx.replaying()) {
             // Resume failed (thread gone): start fresh instead.
             ctx.set("conversationId", null);
@@ -221,7 +221,7 @@ export function createCodexAdapter(ctx: AdapterContext): Adapter {
       startTurn(text);
     },
     interrupt() {
-      if (threadId && turnId) request(`erka-int-${++seq}`, "turn/interrupt", { threadId, turnId });
+      if (threadId && turnId) request(`kelpie-int-${++seq}`, "turn/interrupt", { threadId, turnId });
     },
     respond(id, option) {
       const a = approvals.get(id);

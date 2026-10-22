@@ -11,9 +11,9 @@ sys.path.insert(0, os.path.dirname(__file__))
 from smoke_support import Run, daemon  # noqa: E402
 
 shots, project = sys.argv[1], sys.argv[2]
-S = "window.__erka.store"
+S = "window.__kelpie.store"
 run = Run(shots)
-V = "window.__erka.peekView(arguments[0])"
+V = "window.__kelpie.peekView(arguments[0])"
 
 
 def wait(fn, timeout=30, step=0.25):
@@ -70,15 +70,15 @@ try:
     d.js(f"{V}.scrollToBottom()", sid)
     seen = []
     for _ in range(4):
-        d.js("window.__erka.commands.find((c) => c.id === 'terminal.prevPrompt').run()")
+        d.js("window.__kelpie.commands.find((c) => c.id === 'terminal.prevPrompt').run()")
         time.sleep(0.2)
         seen.append(command_block(top_rows()))
     marks = d.js(f"const v = {V}; const b = v.term.buffer.active; return {{top: b.viewportY, base: b.baseY, marks: v.marks.map((m) => m.line)}}", sid)
     run.check("previous-prompt walks back through the commands sent", seen == ["block3", "block2", "block1", "block0"], f"{seen} {marks}")
-    d.js("window.__erka.commands.find((c) => c.id === 'terminal.nextPrompt').run()")
+    d.js("window.__kelpie.commands.find((c) => c.id === 'terminal.nextPrompt').run()")
     time.sleep(0.2)
     run.check("next-prompt goes forward again", command_block(top_rows()) == "block1", top_rows())
-    run.check("shortcuts are bound", d.js("return ['terminal.prevPrompt','terminal.nextPrompt','terminal.bottom'].every((id) => { const c = window.__erka.commands.find((x) => x.id === id); return c && (c.win || c.mac); })"))
+    run.check("shortcuts are bound", d.js("return ['terminal.prevPrompt','terminal.nextPrompt','terminal.bottom'].every((id) => { const c = window.__kelpie.commands.find((x) => x.id === id); return c && (c.win || c.mac); })"))
     d.click("[data-jump-bottom]")
     time.sleep(0.3)
     b = buf()

@@ -265,7 +265,7 @@ export function RunsPage() {
         </div>
         <div class="runs-main">
           <Show when={!editing()} fallback={<RunEditor onDone={(id) => { setEditing(false); if (id) setSelected(id); }} />}>
-            <Show when={current()} fallback={<div class="empty"><div class="welcome"><h1>{t("Runs")}</h1><div style={{ color: "var(--text-dim)" }}>{t("Describe an objective, split it into tasks (or let an agent plan them) and Erka runs the agents in order — each task can get its own worktree and wait for your approval.")}</div><button class="btn primary" onClick={() => setEditing(true)}>{t("New run")}</button></div></div>}>
+            <Show when={current()} fallback={<div class="empty"><div class="welcome"><h1>{t("Runs")}</h1><div style={{ color: "var(--text-dim)" }}>{t("Describe an objective, split it into tasks (or let an agent plan them) and Kelpie runs the agents in order — each task can get its own worktree and wait for your approval.")}</div><button class="btn primary" onClick={() => setEditing(true)}>{t("New run")}</button></div></div>}>
               {(r) => <RunDetail run={r()} />}
             </Show>
           </Show>

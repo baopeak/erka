@@ -4,7 +4,7 @@
 
 Claude: terminal (TUI) turn → switch to chat → chat turn → back to terminal, same conversation.
 Codex / OMP: new chat → turn → switch to terminal (resume).
-Claude's TUI needs an already-trusted folder; set ERKA_E2E_TRUSTED_DIR (default C:\\Windows\\System32).
+Claude's TUI needs an already-trusted folder; set KELPIE_E2E_TRUSTED_DIR (default C:\\Windows\\System32).
 """
 import json
 import os
@@ -16,7 +16,7 @@ from smoke_support import Run, daemon  # noqa: E402
 
 shots, scratch = sys.argv[1], sys.argv[2]
 agents = sys.argv[3:] or ["claude", "codex", "omp"]
-trusted = os.environ.get("ERKA_E2E_TRUSTED_DIR", r"C:\Windows\System32")
+trusted = os.environ.get("KELPIE_E2E_TRUSTED_DIR", r"C:\Windows\System32")
 run = Run(shots)
 d = run.d
 
@@ -47,22 +47,22 @@ def chat_send(text):
 
 
 def pane_session():
-    return d.js("const s = window.__erka.store; const t = s.activeTab(s.state.activeProject); const p = (function f(n){return n.type==='leaf'?[n.pane]:[...f(n.a),...f(n.b)]})(t.root).find(p => p.id === t.focus); return s.sessions[p.sessionId];")
+    return d.js("const s = window.__kelpie.store; const t = s.activeTab(s.state.activeProject); const p = (function f(n){return n.type==='leaf'?[n.pane]:[...f(n.a),...f(n.b)]})(t.root).find(p => p.id === t.focus); return s.sessions[p.sessionId];")
 
 
 def switch(fn):
-    d.js_async("const done = arguments[arguments.length-1]; const s = window.__erka.store; const p = s.activeProject(); const t = s.activeTab(p.id);"
-               f"window.__erka.chat.{fn}(p, t, (function f(n){{return n.type==='leaf'?[n.pane]:[...f(n.a),...f(n.b)]}})(t.root).find(x => x.id === t.focus)).then(() => done(true), e => done(String(e)));")
+    d.js_async("const done = arguments[arguments.length-1]; const s = window.__kelpie.store; const p = s.activeProject(); const t = s.activeTab(p.id);"
+               f"window.__kelpie.chat.{fn}(p, t, (function f(n){{return n.type==='leaf'?[n.pane]:[...f(n.a),...f(n.b)]}})(t.root).find(x => x.id === t.focus)).then(() => done(true), e => done(String(e)));")
 
 
 try:
     run.boot()
-    d.js("const s = window.__erka.store; for (const p of [...s.state.projects]) s.removeProject(p.id);")
+    d.js("const s = window.__kelpie.store; for (const p of [...s.state.projects]) s.removeProject(p.id);")
 
     if "claude" in agents:
-        d.js("window.__erka.store.addProject(arguments[0]);", trusted)
-        pid = d.js("return window.__erka.store.state.activeProject")
-        info = d.js_async("const done = arguments[arguments.length-1]; window.__erka.store.newSession(arguments[0], 'claude').then(done);", pid)
+        d.js("window.__kelpie.store.addProject(arguments[0]);", trusted)
+        pid = d.js("return window.__kelpie.store.state.activeProject")
+        info = d.js_async("const done = arguments[arguments.length-1]; window.__kelpie.store.newSession(arguments[0], 'claude').then(done);", pid)
         h = info["handle"]
         end = time.time() + 60
         while "❯" not in daemon(d, "session.read", {"handle": h})["text"] and time.time() < end:
@@ -107,15 +107,15 @@ try:
     for kind, word in (("codex", "gamma"), ("omp", "delta")):
         if kind not in agents:
             continue
-        d.js("window.__erka.store.addProject(arguments[0]);", scratch)
-        pid = d.js("return window.__erka.store.state.activeProject")
-        model = os.environ.get("ERKA_E2E_CODEX_MODEL")
+        d.js("window.__kelpie.store.addProject(arguments[0]);", scratch)
+        pid = d.js("return window.__kelpie.store.state.activeProject")
+        model = os.environ.get("KELPIE_E2E_CODEX_MODEL")
         if kind == "codex" and model:
-            d.js("const s = window.__erka.store; s.setSettings({ profiles: s.state.settings.profiles.map(p => p.kind === 'codex' ? { ...p, args: ['--model', arguments[0]] } : p) });", model)
-        d.js_async("const done = arguments[arguments.length-1]; window.__erka.chat.newChat(arguments[0], arguments[1]).then(done);", pid, kind)
+            d.js("const s = window.__kelpie.store; s.setSettings({ profiles: s.state.settings.profiles.map(p => p.kind === 'codex' ? { ...p, args: ['--model', arguments[0]] } : p) });", model)
+        d.js_async("const done = arguments[arguments.length-1]; window.__kelpie.chat.newChat(arguments[0], arguments[1]).then(done);", pid, kind)
         d.wait("return !!document.querySelector('.chat .composer-box')", 30)
         # Wait until the handshake produced a conversation id.
-        d.wait("const s = window.__erka.store; return Object.values(s.sessions).some(x => x.chat && x.kind === arguments[0] && x.alive)", 30, 0.5, kind)
+        d.wait("const s = window.__kelpie.store; return Object.values(s.sessions).some(x => x.chat && x.kind === arguments[0] && x.alive)", 30, 0.5, kind)
         time.sleep(8)
         chat_send(f"Reply with exactly the single word: {word}")
         items = wait_chat_text(word, 240)
@@ -129,7 +129,7 @@ try:
         run.check(f"{kind} resumes in TUI", s["alive"] and s["agent_session_id"], f"id={s['agent_session_id']}")
         run.shot(f"2{2 if kind == 'codex' else 3}-{kind}-tui")
         daemon(d, "session.close", {"handle": s["handle"]})
-        d.js("const s = window.__erka.store; s.removeProject(s.state.activeProject);")
+        d.js("const s = window.__kelpie.store; s.removeProject(s.state.activeProject);")
 except Exception:
     import traceback
     traceback.print_exc()

@@ -1,17 +1,17 @@
-# Erka — user guide
+# Kelpie — user guide
 
-Erka runs many coding agents (Claude Code, Codex, OMP) and shells across many projects.
-Sessions live in a background daemon (`erkad`): switching projects, closing the window or a
+Kelpie runs many coding agents (Claude Code, Codex, OMP) and shells across many projects.
+Sessions live in a background daemon (`kelpied`): switching projects, closing the window or a
 UI crash never stops them. Only the project you are looking at is rendered.
 
 Architecture and protocol: [architecture.md](architecture.md).
 
 ## Install
 
-- **Windows 10 1809+ / 11**: run the `Erka_x.y.z_x64-setup.exe` installer (per-user, no admin).
-- **macOS 12+**: open the `.dmg` and drag Erka to Applications.
+- **Windows 10 1809+ / 11**: run the `Kelpie_x.y.z_x64-setup.exe` installer (per-user, no admin).
+- **macOS 12+**: open the `.dmg` and drag Kelpie to Applications.
 
-Agents are not bundled: install the CLIs you use (`claude`, `codex`, `omp`) as usual. Erka
+Agents are not bundled: install the CLIs you use (`claude`, `codex`, `omp`) as usual. Kelpie
 finds them on your PATH (Windows) or through your login shell (macOS).
 
 ## Everyday use
@@ -42,7 +42,7 @@ finds them on your PATH (Windows) or through your login shell (macOS).
    (arguments, account, chat view); `Esc` closes it.
 8. **Chat view**: in an agent pane header click the chat icon to continue the *same
    conversation* in a chat UI (messages, tool cards with diffs, Allow/Deny prompts); the
-   terminal icon switches back to the TUI. Erka stops one front-end before starting the other,
+   terminal icon switches back to the TUI. Kelpie stops one front-end before starting the other,
    so a conversation never has two writers.
 
 ### Past conversations
@@ -57,10 +57,10 @@ pass.
 ### Usage and memory
 
 The status bar shows Claude and Codex plan usage (5 h and weekly windows, amber from 80 %, red
-and a notice at 100 %) and Erka's memory (app + WebView, daemon, sessions). Usage is read with
+and a notice at 100 %) and Kelpie's memory (app + WebView, daemon, sessions). Usage is read with
 the agents' own sign-in (`~/.claude/.credentials.json` or the macOS keychain, and
-`~/.codex/auth.json`); tokens stay in Erka's Rust core and are sent only to the vendor's usage
-endpoint, identifying as Erka. When a refresh fails (e.g. the endpoint's rate limit) the last
+`~/.codex/auth.json`); tokens stay in Kelpie's Rust core and are sent only to the vendor's usage
+endpoint, identifying as Kelpie. When a refresh fails (e.g. the endpoint's rate limit) the last
 values stay shown, dimmed, with the reason in the tooltip. Both meters can be turned off in
 Settings → Usage & Resources.
 
@@ -80,7 +80,7 @@ would be lost (running sessions, uncommitted files, ignored files such as `.env`
 its sessions and runs `git worktree remove`; the branch is always kept. A worktree on a
 detached HEAD with commits no branch contains is not removed — create a branch first.
 
-A repository may contain `.erka.yaml`. The new-worktree dialog shows its commands as they are
+A repository may contain `.kelpie.yaml` (or `.erka.yaml`, its name before the rename). The new-worktree dialog shows its commands as they are
 in the base commit and runs them only if you tick the box (it stays ticked for the same file
 next time):
 
@@ -96,7 +96,7 @@ The **workspace board** (`Ctrl+Shift+J` / `⌘⇧J`, or the board icon in the si
 project and worktree as a card in *Todo / In progress / Review / Done* with the agents running
 in it; drag cards between columns, pin important ones, click to open.
 
-`.erka.yaml` can also bring ignored files into new worktrees (a fresh checkout lacks them):
+`.kelpie.yaml` can also bring ignored files into new worktrees (a fresh checkout lacks them):
 
 ```yaml
 copy:             # private copies (also read from .worktreeinclude, one path per line)
@@ -108,15 +108,15 @@ link:             # shared with the repository (symlink; a junction on Windows)
 Only literal paths that exist in the repository and are ignored by git qualify; copies are
 capped at 2 GiB / 50,000 files per worktree. The *From* field suggests local and remote
 branches and tags (a commit id works too). After **Remove worktree…** a notice offers to
-delete its branch (`git branch -d`; when it has unmerged commits Erka asks before `-D`).
+delete its branch (`git branch -d`; when it has unmerged commits Kelpie asks before `-D`).
 In search, typing a name that matches nothing offers **Create worktree "…"**.
 
 A worktree (or any folder) can carry a **comment** — what it is doing right now — and a board
 status. Set them from the sidebar menu (*Add comment…*) or let an agent set them:
 
 ```
-erkad worktree set --comment "reproduced the bug; testing a fix" --status progress
-erkad worktree get
+kelpied worktree set --comment "reproduced the bug; testing a fix" --status progress
+kelpied worktree get
 ```
 
 The comment shows under the sidebar row and on its board card.
@@ -127,7 +127,7 @@ needs input.
 
 ### Agents
 
-Besides Claude Code, Codex and OMP, Erka knows 20 more agent CLIs (Gemini, Cursor CLI,
+Besides Claude Code, Codex and OMP, Kelpie knows 20 more agent CLIs (Gemini, Cursor CLI,
 OpenCode, GitHub Copilot, Grok, Qwen Code, Droid, Aider, Amp, Goose, Kimi, Crush, Cline, Kiro,
 Continue, Devin, Auggie, CodeBuddy, Mistral Vibe, Pi). Installed ones appear in the launchers;
 Settings → Agents shows them all, hides ones you do not want and edits their arguments and
@@ -155,10 +155,10 @@ folder, above any project; hide it and it keeps running.
 Scripts and agents can drive sessions:
 
 ```
-erkad terminal list
-erkad terminal read <session> --lines 80
-erkad terminal send <session> "run the tests" --enter
-erkad terminal wait <session>          # until it stops working
+kelpied terminal list
+kelpied terminal read <session> --lines 80
+kelpied terminal send <session> "run the tests" --enter
+kelpied terminal wait <session>          # until it stops working
 ```
 
 `<session>` is a handle, a session id (prefix) or a session name.
@@ -239,7 +239,7 @@ again below their old output.
 
 Settings → Accounts adds sign-ins: each account gets its own config folder
 (`<data>/accounts/<agent>/<id>`, used as `CLAUDE_CONFIG_DIR` / `CODEX_HOME`) and you sign in
-once in a terminal Erka opens there. The *active* account per agent is used by new sessions,
+once in a terminal Kelpie opens there. The *active* account per agent is used by new sessions,
 chat view, automations and AI actions; running sessions keep theirs. Right-click a usage meter
 to switch; each account has its own meter. The new-session dialog can pick an account, and the
 Sessions panel lists the conversations of every account and resumes each with its own.
@@ -251,15 +251,15 @@ an agent, the tasks it waits for, optionally an **approval** before it starts an
 **worktree** (a new branch, so parallel tasks never edit the same checkout). *Plan tasks with
 AI* drafts the tasks from an objective for you to review. The session daemon runs them —
 also with the window closed — starting each task when its dependencies are done. A task ends
-when its agent reports (`erkad run report done "summary"` / `failed "why"`, which Erka adds to
+when its agent reports (`kelpied run report done "summary"` / `failed "why"`, which Kelpie adds to
 the prompt), exits, or worked and then stayed idle for 5 minutes. Failed tasks can be retried,
 skipped or marked done; the status bar shows active runs and tasks waiting for approval.
 
 ```
-erkad run create run.json          # {"name", "objective", "tasks": [{"id", "title", "prompt",
-erkad run list                     #   "kind", "deps": [...], "approve", "worktree"}]}
-erkad run show <run> | approve|retry|done|skip <run> <task> | cancel|delete <run>
-erkad run wait <run>
+kelpied run create run.json          # {"name", "objective", "tasks": [{"id", "title", "prompt",
+kelpied run list                     #   "kind", "deps": [...], "approve", "worktree"}]}
+kelpied run show <run> | approve|retry|done|skip <run> <task> | cancel|delete <run>
+kelpied run wait <run>
 ```
 
 ### Issue trackers and GitLab
@@ -267,7 +267,7 @@ erkad run wait <run>
 Settings → Integrations connects **Linear** (personal API key), **Jira** (Cloud: site, e-mail
 and API token; Server / Data Center: personal access token) and **GitLab** (gitlab.com and
 self-hosted hosts; public projects work without a token). Tokens go to the OS credential store
-(Windows Credential Manager, macOS Keychain), never to Erka's files. The **Issues** panel lists
+(Windows Credential Manager, macOS Keychain), never to Kelpie's files. The **Issues** panel lists
 your open issues; start an agent on one, create a worktree for it, or move it to another state.
 For a GitLab repository the Changes panel shows the branch's merge request with its pipeline,
 creates merge requests (with AI-written description) and offers *Fix with AI* on a failing
@@ -287,7 +287,7 @@ pane*, `Ctrl/⌘+click` on a dev-server address in a terminal opens it next to t
 *Add Remote Project (SSH)…* (search, or the server icon in the sidebar's project toolbar) picks a host
 (a saved one, or one from your SSH config) and a folder on it. Terminals and agents run there over
 `ssh -t` — inside `tmux` when the host has it, so they survive a dropped connection — and the file
-tree, editor, search and git work through ssh as well. Erka uses your OpenSSH client and config
+tree, editor, search and git work through ssh as well. Kelpie uses your OpenSSH client and config
 (Settings → Remote picks another config file): keys, agents, users, ports and jump hosts apply.
 The launchers show the agents installed on the host; *Open in VS Code* uses its Remote-SSH
 extension. Chat view is not available for remote sessions.
@@ -299,14 +299,14 @@ The **SSH hosts** page (the server icon at the bottom of the sidebar, `Ctrl+Alt+
 
 - **Hosts** with a name, group, tags, colour and notes; address, user and port; log in with a key
   (or the SSH agent) or a **password** saved in the system credential store (Windows Credential
-  Manager / macOS keychain) — never in Erka's files. Jump host, agent forwarding, keepalive,
+  Manager / macOS keychain) — never in Kelpie's files. Jump host, agent forwarding, keepalive,
   environment variables, a start folder and a **startup command** typed into every new shell.
   *Import* adds the hosts of your SSH config. Search filters by name, address, group or tag.
 - **One click on a host**: *Terminal*, **Claude Code here** or any other agent the host has, in
   its folder and inside tmux. *Install Claude Code* types the official installer into a terminal
   when the host lacks it. *Open as project* adds the host's folder to the sidebar (files, git,
   search). Sessions on a host resume like local ones.
-- **First connection**: Erka shows the host's key fingerprints before trusting it, and warns
+- **First connection**: Kelpie shows the host's key fingerprints before trusting it, and warns
   loudly when a known host's key changed.
 - **Files**: browse the host, upload files or folders (or drop them from Explorer / Finder onto
   the list), download, new folder, rename, delete (`scp` / SFTP).
@@ -317,9 +317,9 @@ The **SSH hosts** page (the server icon at the bottom of the sidebar, `Ctrl+Alt+
   SSH agent, save its passphrase, move it to the trash.
 - **Known hosts**: every entry with its fingerprint; forget one.
 - **Port forwarding**: local (`-L`), remote (`-R`) and SOCKS (`-D`) rules per host, started and
-  stopped from the page; rules marked *Start when Erka opens* come back with the app.
+  stopped from the page; rules marked *Start when Kelpie opens* come back with the app.
 
-Saved hosts become entries of a config Erka generates (`ssh/config` in its data folder) that
+Saved hosts become entries of a config Kelpie generates (`ssh/config` in its data folder) that
 ends by including your own SSH config, so `ssh <alias>` aliases keep working and every remote
 project can use a saved host.
 
@@ -341,11 +341,11 @@ Then `Ctrl+Shift+Space` (`⌘⇧Space`) or a microphone button (chat composer, t
 Settings) starts listening; press it again (or **Done**) and the words are inserted where you
 were typing — at the cursor of a text field, or pasted into the focused terminal without
 pressing Enter. `Esc` cancels. Speech is recognised on this computer by a separate helper
-process (`erka-stt`) that exits after ten idle minutes; nothing is sent anywhere.
+process (`kelpie-stt`) that exits after ten idle minutes; nothing is sent anywhere.
 
 ### Plugins
 
-A plugin is a folder with an `erka-plugin.json` manifest that adds agents, palette commands,
+A plugin is a folder with an `kelpie-plugin.json` manifest that adds agents, palette commands,
 quick commands, terminal themes, layouts and status-bar items. Settings → Plugins installs one
 from a folder or a git URL, or creates a starter to edit. A plugin does nothing until you
 **Review & enable** it: the review lists every program it would run. Editing the manifest turns
@@ -394,14 +394,14 @@ App shortcuts use `Ctrl+Shift` on Windows so plain `Ctrl+letter` keys reach the 
 | Terminal: back to the bottom | Ctrl+Shift+End | ⌘End |
 | SSH hosts | Ctrl+Alt+H | ⌘⌥H |
 
-Every shortcut can be changed in Settings → Shortcuts (record a key; Erka warns when another
-command or terminal programs use it). When Erka keeps a key from the focused terminal it says
+Every shortcut can be changed in Settings → Shortcuts (record a key; Kelpie warns when another
+command or terminal programs use it). When Kelpie keeps a key from the focused terminal it says
 so once (Settings → Notifications turns these notes off).
 
 In terminals: `Ctrl+C` copies when text is selected (otherwise it is sent to the program),
 `Ctrl+V` pastes, `Shift+Enter` inserts a newline in agent prompts, `Ctrl/⌘+click` opens links.
 Drop files from Explorer/Finder onto a terminal to paste their paths. Programs may set the
-clipboard (OSC 52) only from the terminal you are looking at, and Erka shows a notice when
+clipboard (OSC 52) only from the terminal you are looking at, and Kelpie shows a notice when
 they do.
 
 ## Settings
@@ -429,14 +429,14 @@ old file is first copied to `app-state.v<N>.bak.json`.
 
 ## Automation
 
-Besides `erkad terminal …`, `erkad worktree …` and `erkad run …` (above), `erkad call <method> [json]` talks
+Besides `kelpied terminal …`, `kelpied worktree …` and `kelpied run …` (above), `kelpied call <method> [json]` talks
 to the running daemon directly, e.g.
 
 ```
-erkad call session.list
-erkad call session.create '{"kind":"claude","cwd":"D:/proj"}'
-erkad call session.input '{"handle":3,"data":"run the tests\r"}'
-erkad call session.read '{"handle":3}'
+kelpied call session.list
+kelpied call session.create '{"kind":"claude","cwd":"D:/proj"}'
+kelpied call session.input '{"handle":3,"data":"run the tests\r"}'
+kelpied call session.read '{"handle":3}'
 ```
 
 ## Build from source
@@ -449,12 +449,12 @@ scripts/build-release.sh --bundles nsis      # Windows installer
 scripts/build-release.sh --bundles app,dmg   # macOS
 ```
 
-Voice dictation needs the speech helper: `cargo build --release -p erka-stt` (the build script
+Voice dictation needs the speech helper: `cargo build --release -p kelpie-stt` (the build script
 does it; it downloads the speech engine's prebuilt library, ~120 MB, at build time). A
 development build finds it in `target/release`.
 
 Development: `scripts/dev-daemon.sh run` (isolated endpoint/data dir), then in `app/`
-`ERKA_ENDPOINT=erka-dev pnpm tauri dev`. Tests: `cargo test`, `pnpm typecheck`,
-`pnpm i18n:check` (every interface text has a Vietnamese translation), `erkad bench --sessions
+`KELPIE_ENDPOINT=kelpie-dev pnpm tauri dev`. Tests: `cargo test`, `pnpm typecheck`,
+`pnpm i18n:check` (every interface text has a Vietnamese translation), `kelpied bench --sessions
 20 --mb 2`, and the WebDriver end-to-end scripts in `scripts/e2e/`
 (require `tauri-driver` + a matching `msedgedriver`).

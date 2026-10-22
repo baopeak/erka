@@ -1,4 +1,4 @@
-// Orchestration runs, kept in sync with the daemon (crates/erkad/src/runs.rs): the list, the
+// Orchestration runs, kept in sync with the daemon (crates/kelpied/src/runs.rs): the list, the
 // actions on runs and tasks, activity entries for what needs the user, worktree projects for
 // tasks that run in their own worktree, and planning a run's tasks with an AI agent.
 import { createStore, produce, reconcile } from "solid-js/store";

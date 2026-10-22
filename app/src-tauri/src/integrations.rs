@@ -17,17 +17,13 @@ use crate::fs_ops::{err, CmdResult};
 
 // ---------- secrets ----------
 
-fn service() -> String {
-    erka_proto::keyring_service()
-}
-
 fn valid_key(key: &str) -> CmdResult<()> {
     let ok = matches!(key.split(':').next(), Some("linear" | "jira" | "gitlab")) && key.len() < 300 && !key.contains(['\n', '\r']);
     if ok { Ok(()) } else { Err("unknown integration".into()) }
 }
 
 fn secret(key: &str) -> Option<String> {
-    keyring::Entry::new(&service(), key).ok()?.get_password().ok().filter(|s| !s.is_empty())
+    kelpie_proto::secret_get(key)
 }
 
 #[tauri::command]
@@ -38,7 +34,7 @@ pub async fn integration_secret_set(key: String, value: String) -> CmdResult<()>
         if value.is_empty() {
             return Err("the token is empty".into());
         }
-        keyring::Entry::new(&service(), &key).and_then(|e| e.set_password(value)).map_err(err)
+        kelpie_proto::secret_set(&key, value).map_err(err)
     })
     .await
 }
@@ -47,10 +43,7 @@ pub async fn integration_secret_set(key: String, value: String) -> CmdResult<()>
 pub async fn integration_secret_clear(key: String) -> CmdResult<()> {
     crate::fs_ops::blocking(move || {
         valid_key(&key)?;
-        match keyring::Entry::new(&service(), &key).and_then(|e| e.delete_credential()) {
-            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-            Err(e) => Err(err(e)),
-        }
+        kelpie_proto::secret_delete(&key).map_err(err)
     })
     .await
 }
@@ -66,7 +59,7 @@ pub async fn integration_secret_has(key: String) -> CmdResult<bool> {
 
 // ---------- HTTP ----------
 
-const USER_AGENT: &str = concat!("erka/", env!("CARGO_PKG_VERSION"));
+const USER_AGENT: &str = concat!("kelpie/", env!("CARGO_PKG_VERSION"));
 
 fn agent() -> ureq::Agent {
     ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(20))).http_status_as_error(false).build().into()
@@ -130,7 +123,7 @@ fn clip(s: &str) -> Option<String> {
 
 fn linear_url() -> String {
     // Tests point this at a local server.
-    std::env::var("ERKA_LINEAR_API").unwrap_or_else(|_| "https://api.linear.app/graphql".into())
+    std::env::var("KELPIE_LINEAR_API").unwrap_or_else(|_| "https://api.linear.app/graphql".into())
 }
 
 fn linear(query: &str, variables: Value) -> CmdResult<Value> {
@@ -704,7 +697,7 @@ mod tests {
         assert!(valid_key("linear\nx").is_err());
     }
 
-    /// `cargo test -p erka --lib -- --ignored live_gitlab` — reads a public GitLab project's
+    /// `cargo test -p kelpie --lib -- --ignored live_gitlab` — reads a public GitLab project's
     /// merge requests without a token (network).
     #[test]
     #[ignore]

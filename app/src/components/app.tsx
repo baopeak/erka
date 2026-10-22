@@ -73,7 +73,7 @@ export function App() {
     setEditorTheme(s.theme !== "light");
     // Remembered outside the state file so the next launch paints the right theme at once.
     try {
-      localStorage.setItem("erka-theme", s.theme ?? "dark");
+      localStorage.setItem("kelpie-theme", s.theme ?? "dark");
     } catch {
       /* storage unavailable: the theme still applies once the state is loaded */
     }

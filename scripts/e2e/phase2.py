@@ -21,17 +21,17 @@ try:
     # Leftover sessions of earlier runs would show under "Other sessions".
     for s in daemon(d, "session.list"):
         daemon(d, "session.close", {"handle": s["handle"]})
-    d.js("const s = window.__erka.store; for (const p of [...s.state.projects]) s.removeProject(p.id);")
+    d.js("const s = window.__kelpie.store; for (const p of [...s.state.projects]) s.removeProject(p.id);")
     for p in [REPO, os.path.join(os.path.dirname(REPO), "orca-ref", "orca"), scratch]:
-        d.js("window.__erka.store.addProject(arguments[0]);", p)
-    ids = d.js("return window.__erka.store.state.projects.map(p => p.id)")
+        d.js("window.__kelpie.store.addProject(arguments[0]);", p)
+    ids = d.js("return window.__kelpie.store.state.projects.map(p => p.id)")
     created = []
     for pid, n in ((ids[0], 2), (ids[1], 1)):
-        d.js("window.__erka.store.switchProject(arguments[0]);", pid)
+        d.js("window.__kelpie.store.switchProject(arguments[0]);", pid)
         for _ in range(n):
-            info = d.js_async("const done = arguments[arguments.length-1]; window.__erka.store.newSession(arguments[0], 'shell').then(done);", pid)
+            info = d.js_async("const done = arguments[arguments.length-1]; window.__kelpie.store.newSession(arguments[0], 'shell').then(done);", pid)
             created.append(info)
-    d.js("window.__erka.store.switchProject(arguments[0]);", ids[2])
+    d.js("window.__kelpie.store.switchProject(arguments[0]);", ids[2])
     time.sleep(1.5)
 
     rows = d.js(ROWS_JS)
@@ -70,15 +70,15 @@ try:
     for c in created[1:]:
         daemon(d, "session.set_unread", {"handle": c["handle"], "unread": False})
     time.sleep(0.6)
-    d.js("window.__erka.store.setSettings({ projectFilter: 'attention' })")
+    d.js("window.__kelpie.store.setSettings({ projectFilter: 'attention' })")
     time.sleep(0.4)
     names = d.js("return [...document.querySelectorAll('.project-name')].map(e => e.innerText)")
-    dbg = d.js("const s = window.__erka.store; return JSON.stringify({active: s.activeProject()?.name, rows: s.state.projects.map(p => [p.name, Object.values(s.sessions).filter(x => x.project_id === p.id).map(x => [x.alive, x.status, x.unread])])})")
+    dbg = d.js("const s = window.__kelpie.store; return JSON.stringify({active: s.activeProject()?.name, rows: s.state.projects.map(p => [p.name, Object.values(s.sessions).filter(x => x.project_id === p.id).map(x => [x.alive, x.status, x.unread])])})")
     run.check("attention filter hides quiet projects", len(names) == 2 and "orca" not in names, ",".join(names) + " " + dbg)
-    d.js("window.__erka.store.setSettings({ projectFilter: 'all' })")
+    d.js("window.__kelpie.store.setSettings({ projectFilter: 'all' })")
 
     # Unified search.
-    d.js("window.__erka.store.switchProject(arguments[0]);", ids[0])
+    d.js("window.__kelpie.store.switchProject(arguments[0]);", ids[0])
     time.sleep(0.5)
     d.keys("ctrl+shift+p")
     d.wait("return !!document.querySelector('.palette .scopes')", 5)

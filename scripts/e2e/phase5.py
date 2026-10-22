@@ -1,4 +1,4 @@
-"""E2E for UI phase 5: worktrees as child projects (create with .erka.yaml, agents in each,
+"""E2E for UI phase 5: worktrees as child projects (create with .kelpie.yaml, agents in each,
 remove one cleanly: sessions stop, folder goes, branch stays), the workspace board with drag
 and drop, and the app-state migration backup.
 
@@ -16,7 +16,7 @@ from smoke_support import Run, daemon  # noqa: E402
 
 shots, scratch = sys.argv[1], sys.argv[2]
 repo = os.path.join(scratch, "wt-repo")
-S = "window.__erka.store"
+S = "window.__kelpie.store"
 
 
 def git(*args):
@@ -29,17 +29,17 @@ def _writable_and_retry(func, path, _exc):
 
 
 def fresh_repo():
-    """Repository with an .erka.yaml; leftovers of an earlier run are discarded first."""
+    """Repository with an .kelpie.yaml; leftovers of an earlier run are discarded first."""
     for path in (repo, repo + "-worktrees"):
         if os.path.exists(path):
             shutil.rmtree(path, onexc=_writable_and_retry)
     os.makedirs(repo)
     git("init", "-q", "-b", "main")
-    git("config", "user.email", "e2e@erka.test")
-    git("config", "user.name", "Erka e2e")
+    git("config", "user.email", "e2e@kelpie.test")
+    git("config", "user.name", "Kelpie e2e")
     open(os.path.join(repo, "README.md"), "w").write("worktree test\n")
     # The nonce makes this a file the user has not approved before (approvals are by content).
-    open(os.path.join(repo, ".erka.yaml"), "w").write(f"# run {time.time()}\nsetup:\n  - echo erka-setup-ran\ntabs:\n  - shell\n")
+    open(os.path.join(repo, ".kelpie.yaml"), "w").write(f"# run {time.time()}\nsetup:\n  - echo kelpie-setup-ran\ntabs:\n  - shell\n")
     git("add", ".")
     git("commit", "-q", "-m", "init")
 
@@ -93,13 +93,13 @@ try:
         d.wait("return !!document.querySelector('.worktree-dialog .form-check input')", 10)
         ticked = d.js("return document.querySelector('.worktree-dialog .form-check input').checked")
         if i == 0:
-            shown = d.js("return document.querySelector('.erka-config-body').innerText")
-            run.check(".erka.yaml commands are shown before creating", "$ echo erka-setup-ran" in shown and "tab: shell" in shown, shown.replace(chr(10), " | "))
-            run.check("running .erka.yaml is opt-in the first time", ticked is False)
+            shown = d.js("return document.querySelector('.kelpie-config-body').innerText")
+            run.check(".kelpie.yaml commands are shown before creating", "$ echo kelpie-setup-ran" in shown and "tab: shell" in shown, shown.replace(chr(10), " | "))
+            run.check("running .kelpie.yaml is opt-in the first time", ticked is False)
             d.js("document.querySelector('.worktree-dialog .form-check input').click()")
             run.shot("p5-01-new-worktree")
         elif i == 1:
-            run.check("an approved .erka.yaml is pre-selected next time", ticked is True)
+            run.check("an approved .kelpie.yaml is pre-selected next time", ticked is True)
         d.js("[...document.querySelectorAll('.worktree-dialog .btn')].find(b => b.innerText.startsWith('Create')).click()")
         d.wait("return !document.querySelector('.worktree-dialog')", 30)
     kids = children(repo_id)
@@ -107,17 +107,17 @@ try:
     run.check("worktree folders exist on their branches", all(os.path.isdir(k["path"]) for k in kids)
               and "feature/b" in git("worktree", "list"), str([k["path"] for k in kids]))
 
-    # .erka.yaml: a setup terminal that ran the command, plus the default shell tab.
+    # .kelpie.yaml: a setup terminal that ran the command, plus the default shell tab.
     a = kids[0]
     end = time.time() + 20
     setup_ok = False
     while time.time() < end and not setup_ok:
         for s in sessions_of(a["id"]):
-            if s.get("name") == "setup" and "erka-setup-ran" in daemon(d, "session.read", {"handle": s["handle"]})["text"].replace("echo erka-setup-ran", ""):
+            if s.get("name") == "setup" and "kelpie-setup-ran" in daemon(d, "session.read", {"handle": s["handle"]})["text"].replace("echo kelpie-setup-ran", ""):
                 setup_ok = True
         time.sleep(0.4)
-    run.check(".erka.yaml setup ran in the new worktree", setup_ok)
-    run.check(".erka.yaml default tabs opened", len(sessions_of(a["id"])) == 2, str([(s["kind"], s.get("name")) for s in sessions_of(a["id"])]))
+    run.check(".kelpie.yaml setup ran in the new worktree", setup_ok)
+    run.check(".kelpie.yaml default tabs opened", len(sessions_of(a["id"])) == 2, str([(s["kind"], s.get("name")) for s in sessions_of(a["id"])]))
 
     # An agent in each worktree.
     for k in kids:

@@ -1,5 +1,5 @@
-//! Erka desktop app (Tauri). The UI process owns no PTYs: terminals and agent processes
-//! live in `erkad`; this crate relays them to the webview and serves file/git/search
+//! Kelpie desktop app (Tauri). The UI process owns no PTYs: terminals and agent processes
+//! live in `kelpied`; this crate relays them to the webview and serves file/git/search
 //! commands for the workbench.
 
 mod accounts;
@@ -60,7 +60,7 @@ async fn state_load() -> CmdResult<Value> {
 }
 
 fn state_load_blocking() -> CmdResult<Value> {
-    let path = erka_proto::data_dir().join("app-state.json");
+    let path = kelpie_proto::data_dir().join("app-state.json");
     match std::fs::read(&path) {
         Ok(bytes) => serde_json::from_slice(&bytes).map_err(err),
         // Only a missing file means "no state yet"; a locked or unreadable one is an error the
@@ -76,7 +76,7 @@ async fn state_save(state: Value) -> CmdResult<()> {
 }
 
 fn state_save_blocking(state: Value) -> CmdResult<()> {
-    let dir = erka_proto::data_dir();
+    let dir = kelpie_proto::data_dir();
     std::fs::create_dir_all(&dir).map_err(err)?;
     let path = dir.join("app-state.json");
     let tmp = dir.join("app-state.json.tmp");
@@ -95,7 +95,7 @@ fn state_backup_blocking(label: String) -> CmdResult<Option<String>> {
     if label.is_empty() || !label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
         return Err("invalid backup label".into());
     }
-    let dir = erka_proto::data_dir();
+    let dir = kelpie_proto::data_dir();
     let src = dir.join("app-state.json");
     if !src.exists() {
         return Ok(None);
@@ -111,20 +111,20 @@ fn platform_info() -> Value {
     serde_json::json!({
         "os": std::env::consts::OS,
         "home": std::env::var(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).unwrap_or_default(),
-        "data_dir": erka_proto::data_dir(),
+        "data_dir": kelpie_proto::data_dir(),
         // The daemon feature level this app was built against.
-        "api": erka_proto::API_LEVEL,
+        "api": kelpie_proto::API_LEVEL,
         // Set by the end-to-end test runner: lets it drive a release build too.
-        "e2e": std::env::var_os("ERKA_E2E").is_some(),
+        "e2e": std::env::var_os("KELPIE_E2E").is_some(),
     })
 }
 
-/// End-to-end tests only (dev builds or ERKA_E2E): resizes the window itself. WebDriver's
+/// End-to-end tests only (dev builds or KELPIE_E2E): resizes the window itself. WebDriver's
 /// `window/rect` moves the WebView2 control inside the window instead, so the whole UI ends up
 /// offset and clipped.
 #[tauri::command]
 fn test_window_size(window: tauri::Window, width: f64, height: f64) -> CmdResult<()> {
-    if !(cfg!(debug_assertions) || std::env::var_os("ERKA_E2E").is_some()) {
+    if !(cfg!(debug_assertions) || std::env::var_os("KELPIE_E2E").is_some()) {
         return Err("only available to the end-to-end tests".into());
     }
     if window.is_maximized().unwrap_or(false) {
@@ -133,8 +133,37 @@ fn test_window_size(window: tauri::Window, width: f64, height: f64) -> CmdResult
     window.set_size(tauri::LogicalSize::new(width, height)).map_err(err)
 }
 
+/// The webview profile (browser-pane logins, the remembered theme) lives in a folder named after
+/// the app identifier, which changed with the rename to Kelpie: move the old one over once.
+/// Same rules as the data migration: never for dev / test instances or debug builds.
+fn move_legacy_webview_profile() {
+    if std::env::var_os("KELPIE_DATA_DIR").is_some() || cfg!(debug_assertions) {
+        return;
+    }
+    let base = if cfg!(windows) {
+        std::env::var_os("LOCALAPPDATA").map(std::path::PathBuf::from)
+    } else if cfg!(target_os = "macos") {
+        std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join("Library/WebKit"))
+    } else {
+        None
+    };
+    let Some(base) = base else { return };
+    let (old, new) = (base.join("dev.erka.desktop"), base.join("dev.kelpie.desktop"));
+    if old.is_dir() && !new.exists() {
+        // Fails while the old app is still open; its logins then stay where they are.
+        if let Err(e) = std::fs::rename(&old, &new) {
+            eprintln!("kelpie: could not move the Erka webview profile: {e}");
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Before anything reads app-state.json, starts the daemon or opens a webview.
+    if let Err(e) = kelpie_proto::migrate_legacy_data_dir() {
+        eprintln!("kelpie: could not move data from the Erka folder: {e}");
+    }
+    move_legacy_webview_profile();
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
@@ -283,5 +312,5 @@ pub fn run() {
             sys_stats::memory_stats,
         ])
         .run(tauri::generate_context!())
-        .expect("error while running Erka");
+        .expect("error while running Kelpie");
 }

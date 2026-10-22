@@ -1,4 +1,4 @@
-//! Connection from the app to `erkad`.
+//! Connection from the app to `kelpied`.
 //!
 //! - Spawns the daemon detached (it must outlive the app) when nothing is listening.
 //! - One reader task demultiplexes frames: replies → pending calls, events → `daemon-event`,
@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{anyhow, Result};
-use erka_proto::{read_frame, transport, Frame};
+use kelpie_proto::{read_frame, transport, Frame};
 use interprocess::local_socket::traits::tokio::Stream as _;
 use parking_lot::Mutex;
 use serde_json::{json, Value};
@@ -70,7 +70,7 @@ impl DaemonClient {
     }
 
     async fn connection_loop(self: Arc<Self>) {
-        let endpoint = erka_proto::endpoint();
+        let endpoint = kelpie_proto::endpoint();
         let mut spawned_at: Option<std::time::Instant> = None;
         loop {
             match transport::connect(&endpoint).await {
@@ -100,7 +100,7 @@ impl DaemonClient {
                     // Spawn at most once per 5 s; the daemon may take a moment to bind.
                     if spawned_at.is_none_or(|t| t.elapsed() > Duration::from_secs(5)) {
                         if let Err(e) = spawn_daemon() {
-                            tracing::error!("spawn erkad: {e:#}");
+                            tracing::error!("spawn kelpied: {e:#}");
                             let _ = self.app.emit("daemon-status", json!({"connected": false, "error": format!("{e:#}")}));
                         }
                         spawned_at = Some(std::time::Instant::now());
@@ -206,7 +206,7 @@ impl DaemonClient {
             }
             let _ = tokio::time::timeout(Duration::from_millis(100), self.connected_notify.notified()).await;
         }
-        Err(anyhow!("erkad is not reachable"))
+        Err(anyhow!("kelpied is not reachable"))
     }
 
     fn send_frame(&self, frame: &Frame) -> Result<()> {
@@ -264,15 +264,15 @@ impl DaemonClient {
     }
 }
 
-/// `erkad` next to our executable (or `ERKA_DAEMON_PATH`).
+/// `kelpied` next to our executable (or `KELPIE_DAEMON_PATH`).
 pub fn daemon_exe() -> std::path::PathBuf {
-    std::env::var_os("ERKA_DAEMON_PATH").map(std::path::PathBuf::from).unwrap_or_else(|| {
+    std::env::var_os("KELPIE_DAEMON_PATH").map(std::path::PathBuf::from).unwrap_or_else(|| {
         let dir = std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.to_path_buf())).unwrap_or_default();
-        dir.join(if cfg!(windows) { "erkad.exe" } else { "erkad" })
+        dir.join(if cfg!(windows) { "kelpied.exe" } else { "kelpied" })
     })
 }
 
-/// Starts `erkad` next to our executable, fully detached so closing the app (or its console
+/// Starts `kelpied` next to our executable, fully detached so closing the app (or its console
 /// job on Windows) never takes the daemon — and every agent — down with it.
 fn spawn_daemon() -> Result<()> {
     let exe = daemon_exe();

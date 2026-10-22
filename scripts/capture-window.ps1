@@ -1,7 +1,7 @@
 # Captures a top-level window of a process to PNG (dev tooling for visual checks).
-#   pwsh scripts/capture-window.ps1 -Process erka -Out shot.png
+#   pwsh scripts/capture-window.ps1 -Process kelpie -Out shot.png
 param(
-  [string]$Process = "erka",
+  [string]$Process = "kelpie",
   [Parameter(Mandatory = $true)][string]$Out
 )
 Add-Type -AssemblyName System.Drawing

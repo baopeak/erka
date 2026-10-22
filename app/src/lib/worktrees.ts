@@ -1,4 +1,4 @@
-// Git worktrees as child projects: create (with the repository's `.erka.yaml` setup), find
+// Git worktrees as child projects: create (with the repository's `.kelpie.yaml` setup), find
 // existing ones, and remove one cleanly (its sessions stop first; the branch is kept).
 import { parse as parseYaml } from "yaml";
 import { store } from "./store";
@@ -8,8 +8,8 @@ import { basename, normPath } from "./platform";
 import { disposeView } from "./terminal-host";
 import type { Project, SessionKind } from "./types";
 
-/** `.erka.yaml` in a repository root. */
-export interface ErkaConfig {
+/** `.kelpie.yaml` in a repository root. */
+export interface KelpieConfig {
   /** Commands typed into a "setup" terminal of every new worktree. */
   setup: string[];
   /** Sessions opened in every new worktree: an agent/shell kind, or `{ command }`. */
@@ -20,6 +20,8 @@ export interface ErkaConfig {
   link: string[];
   /** Hash of the file's text: what the user approved to run. */
   hash: string;
+  /** The file it came from: `.kelpie.yaml`, or `.erka.yaml` from before the rename. */
+  file?: string;
 }
 
 /** shell, a core agent or any preset agent id (checked when the tab starts). */
@@ -32,43 +34,47 @@ function hashText(text: string): string {
   return (h >>> 0).toString(16) + ":" + text.length;
 }
 
-/** Parses `.erka.yaml` text. Throws a readable message when it is invalid. */
-export function parseErkaConfig(text: string): ErkaConfig {
-  if (text.length > MAX_CONFIG) throw new Error(t(".erka.yaml is larger than 64 KB"));
+/** Parses `.kelpie.yaml` text. Throws a readable message when it is invalid. */
+export function parseKelpieConfig(text: string): KelpieConfig {
+  if (text.length > MAX_CONFIG) throw new Error(t(".kelpie.yaml is larger than 64 KB"));
   let raw: any;
   try {
     raw = parseYaml(text) ?? {};
   } catch (e) {
-    throw new Error(t(".erka.yaml: {error}", { error: String(e).split("\n")[0] }));
+    throw new Error(t(".kelpie.yaml: {error}", { error: String(e).split("\n")[0] }));
   }
   const list = (v: unknown) => (v == null ? [] : Array.isArray(v) ? v : [v]);
   const setup = list(raw.setup).map(String).filter((c) => c.trim());
-  const tabs: ErkaConfig["tabs"] = [];
+  const tabs: KelpieConfig["tabs"] = [];
   for (const tab of list(raw.tabs)) {
     if (typeof tab === "string" && KIND_RE.test(tab) && tab !== "custom") tabs.push({ kind: tab as SessionKind });
     else if (tab && typeof tab === "object" && typeof tab.command === "string" && tab.command.trim()) tabs.push({ command: tab.command.trim() });
-    else throw new Error(t(".erka.yaml: unknown tab {tab} (use an agent such as claude, shell, or { command: … })", { tab: JSON.stringify(tab) }));
+    else throw new Error(t(".kelpie.yaml: unknown tab {tab} (use an agent such as claude, shell, or { command: … })", { tab: JSON.stringify(tab) }));
   }
   const paths = (v: unknown) => list(v).map(String).map((x) => x.trim()).filter(Boolean);
   return { setup, tabs, copy: paths(raw.copy), link: paths(raw.link), hash: hashText(text) };
 }
 
 /**
- * The `.erka.yaml` a new worktree based on `base` will contain — read from that commit, not
+ * The `.kelpie.yaml` a new worktree based on `base` will contain — read from that commit, not
  * from the repository's working copy, so what the user reviews is what would run.
  */
-export async function configAtRef(repo: Project, base: string): Promise<ErkaConfig | null> {
-  const text = await ipc.gitShowFile(repo.path, base || "HEAD", ".erka.yaml");
-  return text === null ? null : parseErkaConfig(text);
+export async function configAtRef(repo: Project, base: string): Promise<KelpieConfig | null> {
+  // `.erka.yaml` is the name from before the rename to Kelpie; repositories may still have it.
+  for (const name of [".kelpie.yaml", ".erka.yaml"]) {
+    const text = await ipc.gitShowFile(repo.path, base || "HEAD", name);
+    if (text !== null) return { ...parseKelpieConfig(text), file: name };
+  }
+  return null;
 }
 
 /** Whether this exact config was approved for the repository before. */
-export const configApproved = (repo: Project, config: ErkaConfig) => store.state.approvedSetups?.[normPath(repo.path)] === config.hash;
+export const configApproved = (repo: Project, config: KelpieConfig) => store.state.approvedSetups?.[normPath(repo.path)] === config.hash;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** Runs `.erka.yaml` for a project: setup commands in a "setup" terminal, then default tabs. */
-export async function applyErkaConfig(project: Project, config: ErkaConfig) {
+/** Runs `.kelpie.yaml` for a project: setup commands in a "setup" terminal, then default tabs. */
+export async function applyKelpieConfig(project: Project, config: KelpieConfig) {
   if (config.setup.length) {
     const s = await store.newSession(project.id, "shell", { name: "setup" });
     // One command per line, as if typed; the shell runs them in order.
@@ -94,7 +100,7 @@ export function worktreeFolder(repo: Project, branch: string): string {
  * Creates the worktree and its project. `config` (already shown to and approved by the user)
  * runs afterwards; its failures are reported, not thrown — the worktree exists by then.
  */
-export async function createWorktree(repo: Project, opts: { branch: string; base?: string; path: string; config: ErkaConfig | null }) {
+export async function createWorktree(repo: Project, opts: { branch: string; base?: string; path: string; config: KelpieConfig | null }) {
   if (!validBranch(opts.branch)) throw new Error(t("\"{name}\" is not a valid branch name", { name: opts.branch }));
   await ipc.gitWorktreeAdd(repo.path, opts.path.trim(), opts.branch, opts.base?.trim() || undefined);
   // Ignored files a checkout lacks (.env, node_modules): before setup runs, which may need them.
@@ -109,7 +115,7 @@ export async function createWorktree(repo: Project, opts: { branch: string; base
   if (files?.skipped.length) store.notify(t("Not brought into the worktree: {files}", { files: files.skipped.map((x) => `${x.path} (${x.reason})`).join("; ") }), undefined, 12000);
   if (opts.config) {
     store.approveSetup(repo.path, opts.config.hash);
-    void applyErkaConfig(project, opts.config).catch((e) => store.notify(t(".erka.yaml: {error}", { error: String(e) })));
+    void applyKelpieConfig(project, opts.config).catch((e) => store.notify(t(".kelpie.yaml: {error}", { error: String(e) })));
   }
   return project;
 }
@@ -172,7 +178,7 @@ async function stopSessions(wt: Project, timeoutMs = 10_000) {
 }
 
 /**
- * Removes a worktree the user confirmed (see `checkRemoval`): leaves it (so Erka stops
+ * Removes a worktree the user confirmed (see `checkRemoval`): leaves it (so Kelpie stops
  * watching its folder), stops its sessions, then `git worktree remove`. The branch is never
  * deleted. If git already deleted the worktree but could not delete a folder still in use,
  * the record is pruned and the leftover folder reported.

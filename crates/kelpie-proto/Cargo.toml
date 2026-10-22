@@ -1,0 +1,15 @@
+[package]
+name = "kelpie-proto"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+tokio.workspace = true
+interprocess.workspace = true
+keyring = { version = "3.6", default-features = false, features = ["windows-native", "apple-native"] }
+
+[target.'cfg(windows)'.dependencies]
+widestring = "1"

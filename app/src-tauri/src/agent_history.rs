@@ -214,7 +214,7 @@ static SCANNING: Mutex<()> = Mutex::new(());
 static SAVING: Mutex<()> = Mutex::new(());
 
 fn cache_file() -> PathBuf {
-    erka_proto::data_dir().join("history-cache.json")
+    kelpie_proto::data_dir().join("history-cache.json")
 }
 
 fn load_cache() -> Cache {
@@ -731,7 +731,7 @@ mod tests {
         assert!(clean_text(&"word ".repeat(200)).unwrap().ends_with('…'));
     }
 
-    /// `cargo test -p erka --lib --release -- --ignored --nocapture scan_real` — list scan
+    /// `cargo test -p kelpie --lib --release -- --ignored --nocapture scan_real` — list scan
     /// (cold / warm) and full prompt count over this machine's real transcripts.
     #[test]
     #[ignore]
@@ -766,7 +766,7 @@ mod tests {
 
     #[test]
     fn parses_each_agent_format() {
-        let dir = std::env::temp_dir().join(format!("erka-history-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("kelpie-history-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let claude = dir.join("abc.jsonl");
         let claude_lines = [
@@ -821,7 +821,7 @@ mod tests {
 
     #[test]
     fn rewritten_files_are_recounted() {
-        let path = std::env::temp_dir().join(format!("erka-rewrite-{}.jsonl", std::process::id()));
+        let path = std::env::temp_dir().join(format!("kelpie-rewrite-{}.jsonl", std::process::id()));
         let turn = r#"{"type":"event_msg","payload":{"type":"task_started"}}"#;
         std::fs::write(&path, format!("{turn}\n{turn}\n")).unwrap();
         let len = std::fs::metadata(&path).unwrap().len();
@@ -836,7 +836,7 @@ mod tests {
 
     #[test]
     fn counts_grow_incrementally_and_skip_partial_lines() {
-        let path = std::env::temp_dir().join(format!("erka-turns-{}.jsonl", std::process::id()));
+        let path = std::env::temp_dir().join(format!("kelpie-turns-{}.jsonl", std::process::id()));
         let turn = r#"{"type":"event_msg","payload":{"type":"task_started"}}"#;
         std::fs::write(&path, format!("{turn}\n{turn}\n{turn}")).unwrap(); // last line still being written
         let len = std::fs::metadata(&path).unwrap().len();

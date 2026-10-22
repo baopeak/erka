@@ -1,4 +1,4 @@
-//! Plugins: folders under `<data>/plugins/<id>/` with an `erka-plugin.json` manifest. A plugin is
+//! Plugins: folders under `<data>/plugins/<id>/` with an `kelpie-plugin.json` manifest. A plugin is
 //! declarative — agents, palette commands, quick commands, terminal themes, layouts and status
 //! items — and nothing it declares that runs a program (agents, commands, status items) is
 //! used before the user approves that exact manifest (its SHA-256): a changed manifest needs
@@ -14,10 +14,19 @@ use sha2::{Digest, Sha256};
 
 use crate::fs_ops::{err, CmdResult};
 
-const MANIFEST: &str = "erka-plugin.json";
+const MANIFEST: &str = "kelpie-plugin.json";
+/// Manifest name from before the rename to Kelpie; plugins that still use it keep working.
+const LEGACY_MANIFEST: &str = "erka-plugin.json";
+
+/// A plugin folder's manifest file: the current name, else the legacy one when only that exists.
+fn manifest_path(dir: &Path) -> PathBuf {
+    let path = dir.join(MANIFEST);
+    let legacy = dir.join(LEGACY_MANIFEST);
+    if !path.exists() && legacy.exists() { legacy } else { path }
+}
 
 fn plugins_dir() -> PathBuf {
-    erka_proto::data_dir().join("plugins")
+    kelpie_proto::data_dir().join("plugins")
 }
 
 fn valid_id(id: &str) -> bool {
@@ -112,12 +121,16 @@ pub struct PluginInfo {
     /// Approved once, but the manifest changed since: it needs reviewing again.
     changed: bool,
     error: Option<String>,
+    /// The manifest's file name (`kelpie-plugin.json`, or the pre-rename `erka-plugin.json`).
+    file: String,
 }
 
 fn read_plugin(dir: &Path, approvals: &BTreeMap<String, String>) -> PluginInfo {
     let id = dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    let mut info = PluginInfo { id: id.clone(), dir: dir.to_string_lossy().into_owned(), manifest: None, hash: String::new(), approved: false, changed: false, error: None };
-    let bytes = match std::fs::read(dir.join(MANIFEST)) {
+    let mut info = PluginInfo { id: id.clone(), dir: dir.to_string_lossy().into_owned(), manifest: None, hash: String::new(), approved: false, changed: false, error: None, file: String::new() };
+    let path = manifest_path(dir);
+    info.file = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let bytes = match std::fs::read(&path) {
         Ok(b) => b,
         Err(_) => {
             info.error = Some(format!("no {MANIFEST}"));
@@ -134,7 +147,7 @@ fn read_plugin(dir: &Path, approvals: &BTreeMap<String, String>) -> PluginInfo {
             }
             info.manifest = Some(m);
         }
-        Err(e) => info.error = Some(format!("{MANIFEST}: {e}")),
+        Err(e) => info.error = Some(format!("{}: {e}", info.file)),
     }
     info
 }
@@ -177,7 +190,7 @@ fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
 
 /// The id a folder's manifest declares (installing names the folder after it).
 fn manifest_id(dir: &Path) -> CmdResult<String> {
-    let m: Value = serde_json::from_slice(&std::fs::read(dir.join(MANIFEST)).map_err(|_| format!("{} has no {MANIFEST}", dir.display()))?).map_err(|e| format!("{MANIFEST}: {e}"))?;
+    let m: Value = serde_json::from_slice(&std::fs::read(manifest_path(dir)).map_err(|_| format!("{} has no {MANIFEST}", dir.display()))?).map_err(|e| format!("{MANIFEST}: {e}"))?;
     let id = m["id"].as_str().ok_or("manifest has no id")?.to_string();
     validate(&m, &id)?;
     Ok(id)

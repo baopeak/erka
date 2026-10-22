@@ -137,14 +137,14 @@ export const commands: Command[] = [
   { id: "sidebar", label: msg("Toggle Sidebar"), win: "mod+shift+b", mac: "mod+b", run: () => store.setSettings({ sidebarCollapsed: !store.state.settings.sidebarCollapsed }) },
   {
     id: "find", label: msg("Find in Terminal"), win: "mod+shift+f", mac: "mod+f",
-    run: () => window.dispatchEvent(new CustomEvent("erka:find")),
+    run: () => window.dispatchEvent(new CustomEvent("kelpie:find")),
     // Pages and dialogs have their own find (e.g. Settings search).
     when: () => store.overlay() === null,
   },
   { id: "settings", label: msg("Settings"), win: "mod+,", mac: "mod+,", run: () => store.openSettings() },
   { id: "voice.toggle", label: msg("Dictate (start / stop voice input)"), win: "mod+shift+space", mac: "mod+shift+space", run: toggleDictation },
   { id: "floating.toggle", label: msg("Toggle Floating Terminal"), win: "mod+shift+`", mac: "mod+alt+a", run: () => store.toggleFloating(), when: () => store.state.settings.floatingTerminal },
-  { id: "inbox", label: msg("Show Activity & Notifications"), run: () => window.dispatchEvent(new CustomEvent("erka:inbox")) },
+  { id: "inbox", label: msg("Show Activity & Notifications"), run: () => window.dispatchEvent(new CustomEvent("kelpie:inbox")) },
   {
     id: "editor.wordWrap", label: msg("Toggle Word Wrap"), win: "alt+z", mac: "alt+z",
     run: () => store.setSettings({ wordWrap: !store.state.settings.wordWrap }),

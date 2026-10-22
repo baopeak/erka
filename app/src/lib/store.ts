@@ -75,7 +75,7 @@ const emptyState = (): AppState => ({
 const MAX_RECENT = 40;
 const MAX_INBOX = 200;
 
-/** Same key the daemon uses for workspace notes (crates/erkad/src/meta.rs `key`). */
+/** Same key the daemon uses for workspace notes (crates/kelpied/src/meta.rs `key`). */
 export function metaKey(path: string): string {
   let k = path.trim().replace(/\\/g, "/");
   while (k.length > 1 && k.endsWith("/") && !k.endsWith(":/")) k = k.slice(0, -1);
@@ -299,7 +299,7 @@ function createAppStore() {
       case "session.resync": {
         const s = byHandle(p.handle);
         if (s?.chat) {
-          window.dispatchEvent(new CustomEvent("erka:chat-resync", { detail: s.id }));
+          window.dispatchEvent(new CustomEvent("kelpie:chat-resync", { detail: s.id }));
           break;
         }
         const v = s && peekView(s.id);
@@ -309,7 +309,7 @@ function createAppStore() {
       case "meta.updated": {
         const m = p as WorkspaceMeta;
         setMeta(metaKey(m.path), m.comment || m.status ? reconcile(m) : undefined!);
-        // An agent moving its card (`erkad worktree set --status`) moves it on the board.
+        // An agent moving its card (`kelpied worktree set --status`) moves it on the board.
         const project = state.projects.find((x) => canonKey(x) === metaKey(m.path));
         if (project && m.status && project.status !== m.status) update((s) => (s.projects.find((x) => x.id === project.id)!.status = m.status!));
         break;
@@ -319,11 +319,11 @@ function createAppStore() {
         const body = p.error ? t("Failed: {error}", { error: p.error }) : t("Started");
         addInbox({ kind: p.error ? "error" : "automation", title, body, sessionId: p.session_id ?? undefined, projectId: (p.session_id && sessions[p.session_id]?.project_id) || undefined });
         void desktopNotify(title, body);
-        window.dispatchEvent(new CustomEvent("erka:automations"));
+        window.dispatchEvent(new CustomEvent("kelpie:automations"));
         break;
       }
       case "automation.changed":
-        window.dispatchEvent(new CustomEvent("erka:automations"));
+        window.dispatchEvent(new CustomEvent("kelpie:automations"));
         break;
       case "session.clipboard": {
         // OSC 52: only the terminal the user is looking at may set the clipboard, and we say so.
@@ -400,7 +400,7 @@ function createAppStore() {
       const p = s.projects.find((x) => x.id === id);
       if (p) p.status = status;
     });
-    // Agents read it back with `erkad worktree get`.
+    // Agents read it back with `kelpied worktree get`.
     const p = state.projects.find((x) => x.id === id);
     if (p) void ipc.daemon("meta.set", { path: p.path, status }).catch(() => {});
   }
@@ -438,7 +438,7 @@ function createAppStore() {
     });
   }
 
-  /** Remembers a `.erka.yaml` (by hash) the user agreed to run for this repository. */
+  /** Remembers a `.kelpie.yaml` (by hash) the user agreed to run for this repository. */
   function approveSetup(repoPath: string, hash: string) {
     update((s) => {
       s.approvedSetups ??= {};
@@ -1174,9 +1174,9 @@ function createAppStore() {
     } else if (saved && version !== STATE_VERSION) {
       const copy = await ipc.stateBackup(`v${version}`).catch(() => null);
       if (version > STATE_VERSION) {
-        // Written by a newer Erka: use what we understand, never write it back in our format.
+        // Written by a newer Kelpie: use what we understand, never write it back in our format.
         persistBlocked = true;
-        notify(t("App state was written by a newer version of Erka; changes in this session will not be saved."), undefined, 12000);
+        notify(t("App state was written by a newer version of Kelpie; changes in this session will not be saved."), undefined, 12000);
       } else if (!copy) {
         persistBlocked = true;
         notify(t("App state could not be backed up before updating its format; changes in this session will not be saved."), undefined, 12000);

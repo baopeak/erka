@@ -84,9 +84,9 @@ function ChatBody(props: { sessionId: string; project: Project; focused: boolean
     createEffect(on(target, (handle) => handle != null && void ctrl.attach(handle)));
     // The daemon dropped us for falling behind: re-attach (full replay).
     const onResync = (e: Event) => (e as CustomEvent).detail === props.sessionId && target() != null && void ctrl.attach(target()!);
-    window.addEventListener("erka:chat-resync", onResync);
+    window.addEventListener("kelpie:chat-resync", onResync);
     onCleanup(() => {
-      window.removeEventListener("erka:chat-resync", onResync);
+      window.removeEventListener("kelpie:chat-resync", onResync);
       ctrl.detach();
     });
   });

@@ -1,9 +1,9 @@
 // "New worktree" dialog: branch (suggested), base ref, folder, and — when the base commit has
-// one — the `.erka.yaml` it would run, shown in full. Running it is opt-in unless the user
+// one — the `.kelpie.yaml` it would run, shown in full. Running it is opt-in unless the user
 // approved that exact file for this repository before.
 import { For, Show, createEffect, createResource, createSignal, on, onMount } from "solid-js";
 import { store } from "../lib/store";
-import { configAtRef, configApproved, createWorktree, validBranch, worktreeFolder, type ErkaConfig } from "../lib/worktrees";
+import { configAtRef, configApproved, createWorktree, validBranch, worktreeFolder, type KelpieConfig } from "../lib/worktrees";
 import { gitRefs } from "../lib/ipc";
 import { KeyHints } from "./key-hints";
 import { t, errorText } from "../lib/i18n";
@@ -31,7 +31,7 @@ function suggestBranch(existing: string[]): string {
   return `wt/${Date.now().toString(36)}`;
 }
 
-type ConfigState = { config: ErkaConfig | null } | { error: string };
+type ConfigState = { config: KelpieConfig | null } | { error: string };
 
 export function WorktreeDialog() {
   const repo = () => store.state.projects.find((p) => p.id === repoId());
@@ -113,12 +113,12 @@ export function WorktreeDialog() {
             <Show when={"config" in c()} fallback={<div class="form-note error">{(c() as { error: string }).error}</div>}>
               <Show when={loaded()}>
                 {(cfg) => (
-                  <div class="erka-config">
+                  <div class="kelpie-config">
                     <label class="form-check">
                       <input type="checkbox" checked={runConfig()} onChange={(e) => setRunConfig(e.currentTarget.checked)} />
-                      {t("Run .erka.yaml from {ref}", { ref: baseRef() })}
+                      {t("Run {file} from {ref}", { file: cfg().file ?? ".kelpie.yaml", ref: baseRef() })}
                     </label>
-                    <div class="erka-config-body">
+                    <div class="kelpie-config-body">
                       <For each={cfg().setup}>{(cmd) => <div class="mono">$ {cmd}</div>}</For>
                       <For each={cfg().tabs}>{(tab) => <div class="mono">+ tab: {"kind" in tab ? tab.kind : tab.command}</div>}</For>
                       <For each={cfg().copy}>{(f) => <div class="mono">copy: {f}</div>}</For>

@@ -44,7 +44,7 @@ export function DaemonSettings() {
         </div>
         <div class="inline-fields">
           <button class="btn" onClick={() => void revealEntry(info()?.data_dir ?? platform()!.data_dir, "").catch((e) => store.notify(String(e)))}>{t("Open folder")}</button>
-          <button class="btn" onClick={() => void revealEntry(info()?.data_dir ?? platform()!.data_dir, "logs/erkad.log").catch((e) => store.notify(String(e)))}>{t("Show log file")}</button>
+          <button class="btn" onClick={() => void revealEntry(info()?.data_dir ?? platform()!.data_dir, "logs/kelpied.log").catch((e) => store.notify(String(e)))}>{t("Show log file")}</button>
         </div>
       </SettingRow>
       <SettingRow id="daemon-stop">
@@ -59,7 +59,7 @@ export function AboutSettings() {
   return (
     <SettingRow id="version">
       <div class="kv">
-        <span>Erka</span><span>{version()}</span>
+        <span>Kelpie</span><span>{version()}</span>
         <span>{t("Platform")}</span><span>{platform()?.os ?? ""}</span>
         <span>{t("Stack")}</span><span>Tauri 2 · SolidJS · xterm.js · Rust session daemon</span> {/* i18n-ignore: product names */}
       </div>

@@ -1,9 +1,9 @@
-"""A small SSH server for Erka's remote-project tests (needs `paramiko`).
+"""A small SSH server for Kelpie's remote-project tests (needs `paramiko`).
 
     python ssh_test_server.py <port> <authorized-public-key-file> <host-key-file>
 
 Logs in with the given public key (or one in $HOME/.ssh/authorized_keys), or with a password when
-ERKA_TEST_SSH_PASSWORD is set. ERKA_TEST_HOME replaces $HOME for commands and SFTP, so tests that
+KELPIE_TEST_SSH_PASSWORD is set. KELPIE_TEST_HOME replaces $HOME for commands and SFTP, so tests that
 change ~/.ssh on the "remote" never touch the real one.
 Every command runs through Git Bash, so the "remote" is this machine behaving like a POSIX host;
 a pty request is accepted (output is unbuffered, but it is not a real terminal: fine for running
@@ -23,9 +23,9 @@ import paramiko
 PORT = int(sys.argv[1])
 AUTH_LINE = open(sys.argv[2]).read().split()[1]
 HOST_KEY_FILE = sys.argv[3]
-PASSWORD = os.environ.get("ERKA_TEST_SSH_PASSWORD")
-BASH = os.environ.get("ERKA_TEST_BASH", r"C:\Program Files\Git\bin\bash.exe")
-HOME = os.environ.get("ERKA_TEST_HOME") or os.path.expanduser("~")
+PASSWORD = os.environ.get("KELPIE_TEST_SSH_PASSWORD")
+BASH = os.environ.get("KELPIE_TEST_BASH", r"C:\Program Files\Git\bin\bash.exe")
+HOME = os.environ.get("KELPIE_TEST_HOME") or os.path.expanduser("~")
 
 if not os.path.exists(HOST_KEY_FILE):
     paramiko.RSAKey.generate(2048).write_private_key_file(HOST_KEY_FILE)

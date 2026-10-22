@@ -1,6 +1,6 @@
 // Terminal colour themes (Settings → Terminal → Colour theme). "default" follows the app's
 // dark / light theme. The chosen palette is also sent to the daemon, which answers agents'
-// colour queries with it (see `set_palette` in crates/erkad/src/vt.rs).
+// colour queries with it (see `set_palette` in crates/kelpied/src/vt.rs).
 import { createSignal } from "solid-js";
 import type { ITheme } from "@xterm/xterm";
 

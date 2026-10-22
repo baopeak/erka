@@ -87,7 +87,7 @@ export function PluginSettings() {
     }
   };
   const installFolder = async () => {
-    const dir = await open({ directory: true, multiple: false, title: t("Plugin folder (with erka-plugin.json)") });
+    const dir = await open({ directory: true, multiple: false, title: t("Plugin folder (with kelpie-plugin.json)") });
     if (typeof dir !== "string") return;
     await act(async () => {
       try {
@@ -122,7 +122,7 @@ export function PluginSettings() {
                     <Show when={!p.error}>
                       <button class="btn" disabled={busy()} onClick={() => toggle(p)}>{p.approved ? t("Disable") : t("Review & enable")}</button>
                     </Show>
-                    <button class="icon-btn" title={t("Show files")} onClick={() => void revealEntry(p.dir, "erka-plugin.json").catch(() => {})}><Icon name="folder" size={13} /></button>
+                    <button class="icon-btn" title={t("Show files")} onClick={() => void revealEntry(p.dir, p.file || "kelpie-plugin.json").catch(() => {})}><Icon name="folder" size={13} /></button>
                     <button class="icon-btn" title={t("Remove plugin")} disabled={busy()}
                       onClick={() => confirm(t("Remove plugin “{name}”? Its folder goes to the trash.", { name: p.manifest?.name ?? p.id })) && void act(() => pluginRemove(p.id))}>
                       <Icon name="close" size={13} />
@@ -144,7 +144,7 @@ export function PluginSettings() {
       </SettingRow>
       <SettingRow id="plugin-install-git" wide>
         <div class="inline-fields">
-          <input class="text-input" placeholder="https://github.com/you/erka-plugin.git" value={gitUrl()} onInput={(e) => setGitUrl(e.currentTarget.value)} />
+          <input class="text-input" placeholder="https://github.com/you/kelpie-plugin.git" value={gitUrl()} onInput={(e) => setGitUrl(e.currentTarget.value)} />
           <button class="btn" disabled={busy() || !gitUrl().trim()} onClick={() => void act(async () => { const id = await pluginInstallGit(gitUrl().trim()); setGitUrl(""); return t("Installed {id}. Review it to enable it.", { id }); })}>
             {busy() ? t("Working…") : t("Install")}
           </button>
@@ -158,8 +158,8 @@ export function PluginSettings() {
             const dir = await pluginCreate(newId().trim(), newName().trim() || newId().trim());
             setNewId("");
             setNewName("");
-            void revealEntry(dir, "erka-plugin.json").catch(() => {});
-            return t("Created {dir}. Edit erka-plugin.json, then Reload and enable it.", { dir });
+            void revealEntry(dir, "kelpie-plugin.json").catch(() => {});
+            return t("Created {dir}. Edit kelpie-plugin.json, then Reload and enable it.", { dir });
           })}>{t("Create")}</button>
         </div>
       </SettingRow>

@@ -1,4 +1,4 @@
-"""Screenshot tour of every Erka surface (dark, light, compact, small window) for visual review.
+"""Screenshot tour of every Kelpie surface (dark, light, compact, small window) for visual review.
 Not a pass/fail test: it only fails when a surface cannot be opened.
 
     python -X utf8 scripts/e2e/ui_tour.py <screenshot-dir> <worktree repo (optional)>
@@ -14,7 +14,7 @@ shots = sys.argv[1]
 wt_repo = sys.argv[2] if len(sys.argv) > 2 else None
 run = Run(shots)
 d = run.d
-S = "window.__erka.store"
+S = "window.__kelpie.store"
 
 
 def shot(name, wait=0.5):
@@ -42,7 +42,7 @@ def escape():
 
 
 def settings(theme):
-    d.js(f"{S}.setSettings({{ theme: arguments[0] }}); for (const v of window.__erka.views()) v.applySettings({S}.state.settings);", theme)
+    d.js(f"{S}.setSettings({{ theme: arguments[0] }}); for (const v of window.__kelpie.views()) v.applySettings({S}.state.settings);", theme)
     time.sleep(0.5)
 
 
@@ -54,23 +54,23 @@ try:
     d.js(f"const s = {S}; for (const p of [...s.state.projects]) s.removeProject(p.id); s.setSettings({{ theme: 'dark', density: 'comfortable', uiScale: 1 }});")
     shot("t01-welcome-empty")
 
-    erka = d.js(f"return {S}.addProject(arguments[0])", REPO)
+    kelpie = d.js(f"return {S}.addProject(arguments[0])", REPO)
     orca = d.js(f"return {S}.addProject(arguments[0], {{ open: false }})", os.path.join(os.path.dirname(REPO), "orca-ref", "orca"))
     if wt_repo:
         repo = d.js(f"return {S}.addProject(arguments[0], {{ open: false }})", wt_repo)
-        d.js(f"window.__erka.store.switchProject(arguments[0])", repo)
+        d.js(f"window.__kelpie.store.switchProject(arguments[0])", repo)
         # The worktree items appear once the repository's git info is known.
         d.wait(f"return {S}.projectInfo[arguments[0]]?.is_repo || null", 15, 0.25, repo)
         context_menu(f"[data-project='{repo}']")
         d.js("[...document.querySelectorAll('.ctx-item')].find(e => e.innerText.startsWith('Add existing'))?.click()")
         time.sleep(1)
         escape()
-    d.js(f"{S}.switchProject(arguments[0]); {S}.showRightPanel('files');", erka)
+    d.js(f"{S}.switchProject(arguments[0]); {S}.showRightPanel('files');", kelpie)
     shot("t02-project-launcher")
 
     # Workspace: an agent TUI and a shell side by side.
-    claude = new_session(erka, "claude")
-    shell = new_session(erka, "shell", "right")
+    claude = new_session(kelpie, "claude")
+    shell = new_session(kelpie, "shell", "right")
     daemon(d, "session.input", {"handle": shell["handle"], "data": "git log --oneline -12\r"})
     new_session(orca, "shell")
     time.sleep(6)
@@ -84,7 +84,7 @@ try:
     shot("t05-explorer-filter", 1)
     d.js("const i = document.querySelector('.explorer-tools input'); i.value = ''; i.dispatchEvent(new Event('input', {bubbles: true}));")
 
-    d.js(f"{S}.openFile(arguments[0], 'app/src/lib/store.ts')", erka)
+    d.js(f"{S}.openFile(arguments[0], 'app/src/lib/store.ts')", kelpie)
     # Language support loads lazily: wait for highlighted tokens before the shot.
     highlighted = d.wait("return document.querySelectorAll('.cm-content span[class]').length > 20 || null", 20)
     run.check("file viewer highlights syntax", bool(highlighted))
@@ -95,7 +95,7 @@ try:
     shot("t07-diff-view", 1.5)
     d.js(f"{S}.showRightPanel('files')")
 
-    d.js_async("const done = arguments[arguments.length-1]; window.__erka.chat.newChat(arguments[0], 'claude', 'tab').then(() => done(true));", erka)
+    d.js_async("const done = arguments[arguments.length-1]; window.__kelpie.chat.newChat(arguments[0], 'claude', 'tab').then(() => done(true));", kelpie)
     shot("t08-chat-view", 3)
 
     d.keys("ctrl+shift+p")
@@ -116,7 +116,7 @@ try:
     context_menu(".session-row")
     shot("t14-session-menu", 0.3)
     escape()
-    context_menu(f"[data-project='{erka}']")
+    context_menu(f"[data-project='{kelpie}']")
     shot("t15-project-menu", 0.3)
     escape()
 
@@ -126,13 +126,13 @@ try:
         escape()
 
     if wt_repo:
-        d.js("window.__erka.store.switchProject(arguments[0])", repo)
+        d.js("window.__kelpie.store.switchProject(arguments[0])", repo)
         time.sleep(0.4)
         d.js(f"document.querySelector('[data-project=\"{repo}\"]').dispatchEvent(new MouseEvent('contextmenu', {{bubbles: true, clientX: 140, clientY: 200}}))")
         d.js("[...document.querySelectorAll('.ctx-item')].find(e => e.innerText.startsWith('New worktree'))?.click()")
         shot("t17-worktree-dialog", 1.5)
         escape()
-        d.js(f"{S}.switchProject(arguments[0])", erka)
+        d.js(f"{S}.switchProject(arguments[0])", kelpie)
 
     d.js(f"{S}.setSettings({{ sidebarCollapsed: true }})")
     shot("t18-sidebar-collapsed")

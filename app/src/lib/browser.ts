@@ -71,7 +71,7 @@ export function onBrowserEvent(label: string, fn: (e: BrowserEvent) => void) {
     void listen<BrowserEvent>("browser-event", (e) => {
       handlers.get(e.payload.label)?.(e.payload);
       // Observable for tests and anything else interested (the page itself is out of reach).
-      window.dispatchEvent(new CustomEvent("erka:browser-event", { detail: e.payload }));
+      window.dispatchEvent(new CustomEvent("kelpie:browser-event", { detail: e.payload }));
     });
   }
   handlers.set(label, fn);

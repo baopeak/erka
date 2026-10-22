@@ -1,4 +1,4 @@
-//! Voice dictation: talks to the `erka-stt` helper (crates/erka-stt) over its stdin/stdout JSON
+//! Voice dictation: talks to the `kelpie-stt` helper (crates/kelpie-stt) over its stdin/stdout JSON
 //! lines. The helper starts on first use and exits after ten idle minutes, freeing the loaded
 //! model's memory. Its events (`level` while recording, `download` progress) are re-emitted to
 //! the UI as `voice-event`. Models live in `<data>/speech-models`.
@@ -33,14 +33,14 @@ struct Helper {
 static HELPER: Mutex<Option<Arc<Helper>>> = Mutex::new(None);
 
 fn models_dir() -> PathBuf {
-    erka_proto::data_dir().join("speech-models")
+    kelpie_proto::data_dir().join("speech-models")
 }
 
-/// `ERKA_STT_PATH`, else next to our executable; a dev build (target/debug) also finds the
-/// helper in target/release, where it is built (`cargo build --release -p erka-stt`).
+/// `KELPIE_STT_PATH`, else next to our executable; a dev build (target/debug) also finds the
+/// helper in target/release, where it is built (`cargo build --release -p kelpie-stt`).
 fn helper_path() -> Option<PathBuf> {
-    let name = if cfg!(windows) { "erka-stt.exe" } else { "erka-stt" };
-    if let Some(p) = std::env::var_os("ERKA_STT_PATH") {
+    let name = if cfg!(windows) { "kelpie-stt.exe" } else { "kelpie-stt" };
+    if let Some(p) = std::env::var_os("KELPIE_STT_PATH") {
         return Some(PathBuf::from(p));
     }
     let dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
@@ -53,7 +53,7 @@ fn helper_path() -> Option<PathBuf> {
 }
 
 fn spawn(app: &AppHandle) -> CmdResult<Arc<Helper>> {
-    let exe = helper_path().filter(|p| p.is_file()).ok_or("the speech helper (erka-stt) is not installed with this build")?;
+    let exe = helper_path().filter(|p| p.is_file()).ok_or("the speech helper (kelpie-stt) is not installed with this build")?;
     let mut cmd = tokio::process::Command::new(exe);
     cmd.stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::null()).kill_on_drop(true);
     #[cfg(windows)]

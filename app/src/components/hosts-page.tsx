@@ -298,7 +298,7 @@ function TrustPanel(props: { alias: string; onDone: (trusted: boolean) => void }
             <div class="trust-title">
               {r().known && !r().matches
                 ? t("WARNING: the host key of {name} changed. This happens after a reinstall — or when someone intercepts the connection. Trust the new key only if you expected the change.", { name: r().name })
-                : t("Erka has not connected to {name} before. Check that a fingerprint matches what the server's owner gave you:", { name: r().name })}
+                : t("Kelpie has not connected to {name} before. Check that a fingerprint matches what the server's owner gave you:", { name: r().name })}
             </div>
             <For each={r().keys}>{(key) => <div class="mono trust-fp"><span class="muted-inline">{key.kind}</span> {key.fingerprint}</div>}</For>
             <div class="inline-fields">
@@ -360,7 +360,7 @@ function HostEditor(props: { host: SshHost; onDone: (id?: string) => void }) {
         <div class="form-row"><label>{t("Password")}</label>
           <div>
             <input class="text-input" type="password" data-field="password" autocomplete="off" placeholder={hasPassword() ? t("Saved — type to replace") : ""} value={password()} onInput={(e) => setPassword(e.currentTarget.value)} />
-            <div class="form-note">{t("Kept in the system credential store, never in Erka's files.")}</div>
+            <div class="form-note">{t("Kept in the system credential store, never in Kelpie's files.")}</div>
           </div>
         </div>
       </Show>
@@ -375,11 +375,11 @@ function HostEditor(props: { host: SshHost; onDone: (id?: string) => void }) {
         </div>
       </div>
       <div class="form-row"><label>{t("Jump host")}</label>
-        <input class="text-input mono" list="erka-jump-hosts" placeholder={t("none (another saved host's alias, or user@host)")} value={h().jump} onInput={(e) => set("jump", e.currentTarget.value)} />
-        <datalist id="erka-jump-hosts"><For each={others()}>{(x) => <option value={x.alias}>{x.label}</option>}</For></datalist>
+        <input class="text-input mono" list="kelpie-jump-hosts" placeholder={t("none (another saved host's alias, or user@host)")} value={h().jump} onInput={(e) => set("jump", e.currentTarget.value)} />
+        <datalist id="kelpie-jump-hosts"><For each={others()}>{(x) => <option value={x.alias}>{x.label}</option>}</For></datalist>
       </div>
-      <div class="form-row"><label>{t("Group")}</label><input class="text-input" list="erka-host-groups" value={h().group} placeholder={t("e.g. Production")} onInput={(e) => set("group", e.currentTarget.value)} />
-        <datalist id="erka-host-groups"><For each={[...new Set(vault().hosts.map((x) => x.group).filter(Boolean))]}>{(g) => <option value={g} />}</For></datalist>
+      <div class="form-row"><label>{t("Group")}</label><input class="text-input" list="kelpie-host-groups" value={h().group} placeholder={t("e.g. Production")} onInput={(e) => set("group", e.currentTarget.value)} />
+        <datalist id="kelpie-host-groups"><For each={[...new Set(vault().hosts.map((x) => x.group).filter(Boolean))]}>{(g) => <option value={g} />}</For></datalist>
       </div>
       <div class="form-row"><label>{t("Tags")}</label><input class="text-input" value={h().tags.join(", ")} placeholder="gpu, staging" onInput={(e) => set("tags", e.currentTarget.value.split(",").map((s) => s.trim()).filter(Boolean))} /></div> {/* i18n-ignore */}
       <div class="form-row"><label>{t("Start folder")}</label><input class="text-input mono" value={h().folder} placeholder={t("the login folder")} onInput={(e) => set("folder", e.currentTarget.value)} /></div>
@@ -557,7 +557,7 @@ function ForwardRow(props: { f: SshForward; onEdit?: () => void }) {
       <span class={`fw-state ${st()?.running ? "on" : st()?.error ? "err" : ""}`} />
       <div style={{ flex: 1, "min-width": 0 }}>
         <div>{props.f.label || describe()}</div>
-        <div class="muted-inline" style={{ "font-size": "11.5px" }}>{props.f.label ? describe() : ""}{props.f.autoStart ? ` · ${t("starts with Erka")}` : ""}</div>
+        <div class="muted-inline" style={{ "font-size": "11.5px" }}>{props.f.label ? describe() : ""}{props.f.autoStart ? ` · ${t("starts with Kelpie")}` : ""}</div>
         <Show when={error() || (!st()?.running && st()?.error)}><div class="form-note error">{error() || st()?.error}</div></Show>
       </div>
       <button class={`btn${st()?.running ? "" : " primary"}`} data-action="toggle-forward" disabled={busy()} onClick={() => void toggle()}>{st()?.running ? t("Stop") : t("Start")}</button>
@@ -613,7 +613,7 @@ function ForwardEditor(props: { f: SshForward; onDone: () => void }) {
         </div>
       </Show>
       <div class="form-row"><label>{t("Name (optional)")}</label><input class="text-input" value={f().label} onInput={(e) => set("label", e.currentTarget.value)} /></div>
-      <div class="form-row"><label /><label class="check-label"><input type="checkbox" checked={f().autoStart} onChange={(e) => set("autoStart", e.currentTarget.checked)} /> {t("Start when Erka opens")}</label></div>
+      <div class="form-row"><label /><label class="check-label"><input type="checkbox" checked={f().autoStart} onChange={(e) => set("autoStart", e.currentTarget.checked)} /> {t("Start when Kelpie opens")}</label></div>
       <Show when={error()}><div class="form-note error">{error()}</div></Show>
       <div class="inline-fields">
         <button class="btn primary" data-action="save-forward" disabled={!f().hostId || !f().bindPort} onClick={() => void save()}>{t("Save")}</button>
@@ -649,7 +649,7 @@ function ForwardsTab() {
   return (
     <div class="hosts-section">
       <div class="inline-fields">
-        <div class="form-note" style={{ flex: 1 }}>{t("Forwards run while Erka is open; the ones marked to start with Erka come back when it opens.")}</div>
+        <div class="form-note" style={{ flex: 1 }}>{t("Forwards run while Kelpie is open; the ones marked to start with Kelpie come back when it opens.")}</div>
         <button class="btn primary" disabled={!vault().hosts.length} onClick={() => setEditing(newForward(vault().hosts[0]?.id ?? ""))}><Icon name="plus" size={13} /> {t("New forward")}</button>
       </div>
       <Show when={editing()} keyed>{(f) => <ForwardEditor f={f} onDone={() => setEditing(null)} />}</Show>
@@ -691,7 +691,7 @@ function KeysTab() {
   return (
     <div class="hosts-section">
       <div class="inline-fields">
-        <button class="btn primary" data-action="generate-key" onClick={() => setGen({ name: "id_ed25519_erka", kind: "ed25519", passphrase: "", comment: "", save: true })}><Icon name="plus" size={13} /> {t("Generate key")}</button>
+        <button class="btn primary" data-action="generate-key" onClick={() => setGen({ name: "id_ed25519_kelpie", kind: "ed25519", passphrase: "", comment: "", save: true })}><Icon name="plus" size={13} /> {t("Generate key")}</button>
         <button class="btn" onClick={() => void doImport()}>{t("Import key…")}</button>
         <span style={{ flex: 1 }} />
         <span class="muted-inline">{agent()?.running ? t("SSH agent: {n} key(s) loaded", { n: agent()!.keys.length }) : t("SSH agent not running")}</span>
@@ -708,7 +708,7 @@ function KeysTab() {
             </div>
             <div class="form-row"><label>{t("Passphrase")}</label><input class="text-input" type="password" autocomplete="off" value={g().passphrase} placeholder={t("optional")} onInput={(e) => setGen({ ...g(), passphrase: e.currentTarget.value })} /></div>
             <div class="form-row"><label>{t("Comment")}</label><input class="text-input" value={g().comment} placeholder={t("e.g. you@laptop")} onInput={(e) => setGen({ ...g(), comment: e.currentTarget.value })} /></div>
-            <div class="form-row"><label /><label class="check-label"><input type="checkbox" checked={g().save} onChange={(e) => setGen({ ...g(), save: e.currentTarget.checked })} /> {t("Save the passphrase so Erka can unlock the key")}</label></div>
+            <div class="form-row"><label /><label class="check-label"><input type="checkbox" checked={g().save} onChange={(e) => setGen({ ...g(), save: e.currentTarget.checked })} /> {t("Save the passphrase so Kelpie can unlock the key")}</label></div>
             <div class="inline-fields">
               <button class="btn primary" data-action="create-key" onClick={() => void act(async () => { await generateKey(g().name.trim(), g().kind, g().passphrase, g().comment, g().save); setGen(null); }, t("Key created"))}>{t("Create")}</button>
               <button class="btn" onClick={() => setGen(null)}>{t("Cancel")}</button>

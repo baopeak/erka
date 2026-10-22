@@ -21,7 +21,7 @@ jobs:
         with:
           node-version: 24
       - name: Rust tests (protocol, daemon, app backend, speech helper)
-        run: cargo test -p erka-proto -p erkad -p erka -p erka-stt
+        run: cargo test -p kelpie-proto -p kelpied -p kelpie -p kelpie-stt
       - name: Frontend typecheck
         working-directory: app
         run: |
@@ -33,7 +33,7 @@ jobs:
         run: scripts/build-release.sh --bundles ${{ matrix.os == 'windows-latest' && 'nsis' || 'app,dmg' }}
       - uses: actions/upload-artifact@v4
         with:
-          name: erka-${{ matrix.os }}
+          name: kelpie-${{ matrix.os }}
           path: |
             target/release/bundle/nsis/*.exe
             target/release/bundle/dmg/*.dmg

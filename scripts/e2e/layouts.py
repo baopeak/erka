@@ -11,8 +11,8 @@ Resume: the daemon is stopped with sessions running and started again; sessions 
 old screen. `--ai` also resumes a real Claude Code conversation (terminal and chat view) and
 checks the agent still knows what was said before the restart.
 
-Needs the dev environment (ERKA_ENDPOINT / ERKA_DATA_DIR set for both tauri-driver and this
-script): the script stops the dev daemon and starts the release `erkad` itself.
+Needs the dev environment (KELPIE_ENDPOINT / KELPIE_DATA_DIR set for both tauri-driver and this
+script): the script stops the dev daemon and starts the release `kelpied` itself.
 """
 import json
 import os
@@ -24,10 +24,10 @@ from smoke_support import REPO, Run, daemon, restart_daemon as support_restart  
 
 shots, scratch = sys.argv[1], sys.argv[2]
 with_ai = "--ai" in sys.argv
-S = "window.__erka.store"
-L = "window.__erka.layout"
+S = "window.__kelpie.store"
+L = "window.__kelpie.layout"
 DOWN, ENTER = chr(27) + "[B", chr(13)
-erkad = os.path.join(REPO, "target", "release", "erkad.exe" if os.name == "nt" else "erkad")
+kelpied = os.path.join(REPO, "target", "release", "kelpied.exe" if os.name == "nt" else "kelpied")
 proj = os.path.join(scratch, "layouts-proj")
 os.makedirs(proj, exist_ok=True)
 with open(os.path.join(proj, "README.md"), "w", encoding="utf-8") as f:
@@ -69,7 +69,7 @@ def rect(css, i=0):
 
 def restart_daemon(kill=False):
     """Stops the daemon (sessions still running unless `kill`); a new one takes over."""
-    support_restart(d, erkad, kill)
+    support_restart(d, kelpied, kill)
 
 try:
     run.boot()
@@ -197,9 +197,9 @@ try:
     # Spatial focus: stacked panes, focus up / down.
     panes = tab_panes()
     d.js(f"{S}.focusPane({S}.state.activeProject, {S}.activeTab({S}.state.activeProject).id, arguments[0])", panes[1]["id"])
-    d.js("window.__erka.commands.find(c => c.id === 'pane.up').run()")
+    d.js("window.__kelpie.commands.find(c => c.id === 'pane.up').run()")
     run.check("Focus Pane Up moves focus to the pane above", d.js(f"return {S}.activeTab({S}.state.activeProject).focus") == panes[0]["id"])
-    d.js("window.__erka.commands.find(c => c.id === 'pane.down').run()")
+    d.js("window.__kelpie.commands.find(c => c.id === 'pane.down').run()")
     run.check("Focus Pane Down moves focus back", d.js(f"return {S}.activeTab({S}.state.activeProject).focus") == panes[1]["id"])
 
     # Broadcast input: typed once, both shells receive it.
@@ -361,7 +361,7 @@ try:
         daemon(d, "session.close", {"handle": sess(cid)["handle"]})
 
         # Chat view: same check through a chat session.
-        chat = js_await("window.__erka.chat.newChat(arguments[0], 'claude')", pid)
+        chat = js_await("window.__kelpie.chat.newChat(arguments[0], 'claude')", pid)
         chid = chat["id"]
         d.wait("return !!document.querySelector('.chat-composer textarea')", 20)
         d.js("const t = document.querySelector('.chat-composer textarea'); t.value = arguments[0]; t.dispatchEvent(new InputEvent('input', {bubbles: true}));", f"Remember the word {word}X. Reply with just OK.")

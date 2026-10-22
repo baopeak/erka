@@ -2,10 +2,10 @@
 
     python -X utf8 scripts/e2e/ssh_hosts.py <screenshot-dir> <scratch-dir>
 
-Start tauri-driver with ERKA_E2E=1, an isolated ERKA_DATA_DIR / ERKA_ENDPOINT and ERKA_SSH_DIR
-(Erka's stand-in for ~/.ssh: keys and known_hosts the test creates never touch the real ones);
-run this script with the same ERKA_SSH_DIR. Starts `ssh_test_server.py` on 127.0.0.1:47824 with
-password login and its own $HOME (ERKA_TEST_HOME), so "installing a key on the host" writes a
+Start tauri-driver with KELPIE_E2E=1, an isolated KELPIE_DATA_DIR / KELPIE_ENDPOINT and KELPIE_SSH_DIR
+(Kelpie's stand-in for ~/.ssh: keys and known_hosts the test creates never touch the real ones);
+run this script with the same KELPIE_SSH_DIR. Starts `ssh_test_server.py` on 127.0.0.1:47824 with
+password login and its own $HOME (KELPIE_TEST_HOME), so "installing a key on the host" writes a
 scratch authorized_keys.
 
 Covers: saving a host with a password (credential store, never in files), the generated ssh
@@ -29,14 +29,14 @@ sys.path.insert(0, os.path.dirname(__file__))
 from smoke_support import Run, daemon  # noqa: E402
 
 shots, scratch = sys.argv[1], sys.argv[2]
-S = "window.__erka.store"
+S = "window.__kelpie.store"
 PORT, WEB, LOCAL_FW, REMOTE_FW, SOCKS = 47824, 47830, 47831, 47832, 47833
 PASSWORD = f"pw-{int(time.time())}"
-ssh_dir = os.environ.get("ERKA_SSH_DIR")
+ssh_dir = os.environ.get("KELPIE_SSH_DIR")
 if not ssh_dir:
-    raise SystemExit("set ERKA_SSH_DIR (the same value tauri-driver was started with)")
+    raise SystemExit("set KELPIE_SSH_DIR (the same value tauri-driver was started with)")
 fwd = lambda p: p.replace("\\", "/")
-BASH = os.environ.get("ERKA_TEST_BASH", r"C:\Program Files\Git\bin\bash.exe")
+BASH = os.environ.get("KELPIE_TEST_BASH", r"C:\Program Files\Git\bin\bash.exe")
 # The test host is Git Bash: C:\x -> /c/x, and the temp folder is /tmp.
 posix = lambda p: subprocess.run([BASH, "-c", 'cygpath -u "$1"', "_", p], capture_output=True, text=True).stdout.strip()
 
@@ -57,8 +57,8 @@ os.makedirs(server_dir, exist_ok=True)
 server_key = os.path.join(server_dir, "id_unused")
 if not os.path.exists(server_key):
     subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", server_key], check=True)
-server = subprocess.Popen([os.environ.get("ERKA_SSH_TEST_PYTHON", sys.executable), os.path.join(os.path.dirname(__file__), "ssh_test_server.py"), str(PORT), server_key + ".pub", os.path.join(server_dir, "host_key")],
-                          env=dict(os.environ, ERKA_TEST_SSH_PASSWORD=PASSWORD, ERKA_TEST_HOME=home), stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+server = subprocess.Popen([os.environ.get("KELPIE_SSH_TEST_PYTHON", sys.executable), os.path.join(os.path.dirname(__file__), "ssh_test_server.py"), str(PORT), server_key + ".pub", os.path.join(server_dir, "host_key")],
+                          env=dict(os.environ, KELPIE_TEST_SSH_PASSWORD=PASSWORD, KELPIE_TEST_HOME=home), stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 server.stdout.readline()
 
 # A web server on this machine, reached through the forwards.
@@ -126,7 +126,7 @@ def connects(port):
 
 
 def open_hosts():
-    d.js("window.__erka.commands.find((c) => c.id === 'hosts').run()")
+    d.js("window.__kelpie.commands.find((c) => c.id === 'hosts').run()")
     wait(lambda: exists(".hosts-page"), 10)
     time.sleep(0.5)  # the page reloads the vault when it opens
 
@@ -179,7 +179,7 @@ try:
     run.check("a terminal starts on the host", sess is not None)
     project = d.js(f"return {S}.state.projects.find((p) => p.remote?.dest === 'test-box')")
     run.check("in a remote project for the host's folder", project and project["remote"]["path"] == posix(home), str(project and project.get("remote")))
-    run.check("its ssh can ask Erka for the password", sess and (sess.get("env") or {}).get("SSH_ASKPASS", "").lower().endswith("erkad.exe"), str(sess and sess.get("env")))
+    run.check("its ssh can ask Kelpie for the password", sess and (sess.get("env") or {}).get("SSH_ASKPASS", "").lower().endswith("kelpied.exe"), str(sess and sess.get("env")))
     time.sleep(2)
     daemon(d, "session.input", {"handle": sess["handle"], "data": "echo hosts-marker-$((40+2))\r"})
     run.check("commands run on the host", wait(lambda: "hosts-marker-42" in daemon(d, "session.read", {"handle": sess["handle"], "lines": 50})["text"], 30))
@@ -196,9 +196,9 @@ try:
     d.click("[data-action=ask-ok]")
     run.check("new folder on the host", wait(lambda: os.path.isdir(os.path.join(home, "made-by-e2e")) and exists('[data-entry="made-by-e2e"]'), 20))
     up = os.path.join(scratch, "upload-me.txt")
-    open(up, "w").write("uploaded by erka")
+    open(up, "w").write("uploaded by kelpie")
     invoke("ssh_transfer", {"alias": "test-box", "upload": True, "sources": [up], "target": posix(home) + "/made-by-e2e"})
-    run.check("upload (scp)", open(os.path.join(home, "made-by-e2e", "upload-me.txt")).read() == "uploaded by erka")
+    run.check("upload (scp)", open(os.path.join(home, "made-by-e2e", "upload-me.txt")).read() == "uploaded by kelpie")
     down = os.path.join(scratch, "downloads")
     shutil.rmtree(down, ignore_errors=True)
     os.makedirs(down)

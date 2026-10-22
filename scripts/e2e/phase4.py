@@ -14,7 +14,7 @@ from smoke_support import REPO, Run, daemon  # noqa: E402
 shots, other = sys.argv[1], sys.argv[2]
 run = Run(shots)
 d = run.d
-S = "window.__erka.store"
+S = "window.__kelpie.store"
 
 
 def place():
@@ -158,10 +158,10 @@ try:
     d.keys("escape")
     time.sleep(0.6)
     bg = d.js("return getComputedStyle(document.documentElement).getPropertyValue('--bg').trim()")
-    term_bg = d.js("return window.__erka.peekView(arguments[0])?.term.options.theme.background", s1["id"])
-    run.check("light theme restyles the app and the terminals", bg == "#f5f6f9" and term_bg == "#ffffff", f"{bg} {term_bg}")
+    term_bg = d.js("return window.__kelpie.peekView(arguments[0])?.term.options.theme.background", s1["id"])
+    run.check("light theme restyles the app and the terminals", bg == "#f6f6f3" and term_bg == "#ffffff", f"{bg} {term_bg}")
     run.shot("p4-08-workspace-light")
-    d.js(f"{S}.setSettings({{ theme: 'dark', density: 'compact', uiScale: 1.1 }}); for (const v of window.__erka.views()) v.applySettings({S}.state.settings);")
+    d.js(f"{S}.setSettings({{ theme: 'dark', density: 'compact', uiScale: 1.1 }}); for (const v of window.__kelpie.views()) v.applySettings({S}.state.settings);")
     time.sleep(0.4)
     run.check("compact density and interface scale apply", d.js("return document.documentElement.dataset.density") == "compact"
               and d.js("return getComputedStyle(document.querySelector('.sidebar')).zoom") in ("1.1", 1.1))

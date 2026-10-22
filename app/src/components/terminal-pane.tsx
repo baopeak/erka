@@ -35,9 +35,9 @@ export function TerminalPane(props: { sessionId: string; focused: boolean }) {
       findInput?.focus();
       findInput?.select();
     };
-    window.addEventListener("erka:find", onFind);
+    window.addEventListener("kelpie:find", onFind);
     onCleanup(() => {
-      window.removeEventListener("erka:find", onFind);
+      window.removeEventListener("kelpie:find", onFind);
       parkView(props.sessionId);
     });
   });
@@ -49,8 +49,8 @@ export function TerminalPane(props: { sessionId: string; focused: boolean }) {
     const light = store.state.settings.theme === "light";
     const opts = {
       decorations: light
-        ? { matchOverviewRuler: "#b7791f", activeMatchColorOverviewRuler: "#2f6fde", matchBackground: "#fbe7a6", activeMatchBackground: "#b9d2fb" }
-        : { matchOverviewRuler: "#f2c96d", activeMatchColorOverviewRuler: "#6cb6ff", matchBackground: "#5a4a1a", activeMatchBackground: "#1f4b7a" },
+        ? { matchOverviewRuler: "#b7791f", activeMatchColorOverviewRuler: "#b4501f", matchBackground: "#fbe7a6", activeMatchBackground: "#b9d2fb" }
+        : { matchOverviewRuler: "#f2c96d", activeMatchColorOverviewRuler: "#e8743b", matchBackground: "#5a4a1a", activeMatchBackground: "#1f4b7a" },
     };
     if (forward) view.search.findNext(q, opts);
     else view.search.findPrevious(q, opts);

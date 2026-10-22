@@ -1,4 +1,4 @@
-// Switching a session between its terminal UI (TUI) and Erka's chat view.
+// Switching a session between its terminal UI (TUI) and Kelpie's chat view.
 //
 // Neither Claude Code, Codex nor OMP lets a second client drive a running TUI's
 // conversation, so a switch is a hand-off of the *conversation*, not of the process:

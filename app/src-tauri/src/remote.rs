@@ -3,7 +3,7 @@
 //! the user's config, keys and agent apply; commands run non-interactively (`BatchMode`) and
 //! never prompt. File operations, git and search for such a root become small POSIX shell
 //! commands on the host; terminals and agents are `ssh -t` sessions owned by the local daemon
-//! (see `crates/erkad/src/agents.rs`, optionally inside the host's tmux).
+//! (see `crates/kelpied/src/agents.rs`, optionally inside the host's tmux).
 
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -13,7 +13,7 @@ use serde::Serialize;
 
 use crate::fs_ops::{err, CmdResult};
 
-/// Settings → Remote: SSH config file. Erka's generated config (saved hosts) includes it.
+/// Settings → Remote: SSH config file. Kelpie's generated config (saved hosts) includes it.
 #[tauri::command]
 pub fn remote_configure(config: Option<String>) {
     crate::ssh_hosts::set_user_config(config);
@@ -81,7 +81,7 @@ pub fn q(s: &str) -> String {
     format!("'{}'", s.replace('\'', r"'\''"))
 }
 
-/// Never prompts: saved passwords / passphrases come from Erka's askpass (`ssh_env`), anything
+/// Never prompts: saved passwords / passphrases come from Kelpie's askpass (`ssh_env`), anything
 /// else (no saved secret, an unknown host key) fails instead of waiting for a terminal.
 fn ssh_base(r: &RemoteRoot) -> Vec<String> {
     let mut args = vec!["-F".to_string(), crate::ssh_hosts::config_path().to_string_lossy().into_owned()];
@@ -158,7 +158,7 @@ pub fn exec_blocking(r: &RemoteRoot, script: &str) -> Option<String> {
     out.status.success().then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
-/// `git` in the remote folder `dir` (a root string), with Erka's usual config overrides.
+/// `git` in the remote folder `dir` (a root string), with Kelpie's usual config overrides.
 pub async fn git(dir: &str, args: &[&str]) -> CmdResult<crate::git::GitOutput> {
     let r = parse_root(dir).ok_or("invalid remote root")?;
     let script = format!(

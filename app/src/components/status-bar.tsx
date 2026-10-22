@@ -25,11 +25,11 @@ export function StatusBar() {
     };
     window.addEventListener("pointerdown", close);
     window.addEventListener("keydown", onKey, true);
-    window.addEventListener("erka:inbox", open);
+    window.addEventListener("kelpie:inbox", open);
     onCleanup(() => {
       window.removeEventListener("pointerdown", close);
       window.removeEventListener("keydown", onKey, true);
-      window.removeEventListener("erka:inbox", open);
+      window.removeEventListener("kelpie:inbox", open);
     });
   });
   const counts = createMemo(() => {
@@ -54,7 +54,7 @@ export function StatusBar() {
     <div class="statusbar">
       <span class="item" title={store.connected() ? t("Session daemon connected") : t("Session daemon not connected")}>
         <span class={`conn${store.connected() ? " on" : ""}`} />
-        {store.connected() ? "erkad" : t("erkad offline")}
+        {store.connected() ? "kelpied" : t("kelpied offline")}
       </span>
       <Show when={branch()}>
         <span class="item clickable" onClick={() => store.setRightPanel("git")}><Icon name="git" size={13} /> {branch()}</span>

@@ -20,7 +20,7 @@
   "refusing to delete the project root": "không xóa thư mục gốc của dự án",
   "sign-in expired: run the agent once to refresh it": "phiên đăng nhập đã hết hạn: hãy chạy agent một lần để làm mới",
   "the plugin changed since it was shown; review it again": "plugin đã thay đổi kể từ khi hiển thị; hãy xem lại",
-  "the speech helper (erka-stt) is not installed with this build": "bản Erka này không kèm trình nhận dạng giọng nói (erka-stt)",
+  "the speech helper (kelpie-stt) is not installed with this build": "bản Kelpie này không kèm trình nhận dạng giọng nói (kelpie-stt)",
   "the speech helper stopped": "trình nhận dạng giọng nói đã dừng",
   "the token is empty": "token đang trống",
   "the worktree folder does not exist": "thư mục worktree không tồn tại",

@@ -33,8 +33,8 @@ pub struct UsageReport {
     codex: ProviderUsage,
 }
 
-/// Erka identifies itself; it does not pose as the vendors' own CLIs.
-const USER_AGENT: &str = concat!("erka/", env!("CARGO_PKG_VERSION"));
+/// Kelpie identifies itself; it does not pose as the vendors' own CLIs.
+const USER_AGENT: &str = concat!("kelpie/", env!("CARGO_PKG_VERSION"));
 
 fn home() -> PathBuf {
     std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map(PathBuf::from).unwrap_or_default()
@@ -171,7 +171,7 @@ fn codex_usage(agent: &ureq::Agent, dir: &Path) -> ProviderUsage {
         .header("Authorization", &format!("Bearer {token}"))
         .header("User-Agent", USER_AGENT)
         .header("OpenAI-Beta", "codex-1")
-        .header("originator", "erka");
+        .header("originator", "kelpie");
     if let Some(account) = tokens.and_then(|t| t["account_id"].as_str()) {
         req = req.header("ChatGPT-Account-Id", account);
     }
@@ -238,7 +238,7 @@ mod tests {
         assert_eq!(parse_iso_ms("2026-10-20T13:00:00+07:00"), Some(1792476000000));
     }
 
-    /// `cargo test -p erka --lib -- --ignored --nocapture live_usage` — calls both endpoints
+    /// `cargo test -p kelpie --lib -- --ignored --nocapture live_usage` — calls both endpoints
     /// with this machine's sign-in; prints only window labels, percentages or the error.
     #[test]
     #[ignore]

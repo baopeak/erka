@@ -1,6 +1,6 @@
 """Agents must resume the same conversation after the session daemon stops (reboot, update, crash).
 
-    python scripts/e2e/agent_resume.py <erkad.exe> <project-dir> [agent ...]   # default: claude codex omp
+    python scripts/e2e/agent_resume.py <kelpied.exe> <project-dir> [agent ...]   # default: claude codex omp
 
 Runs an isolated daemon (own endpoint and data folder), tells each agent a secret number,
 kills the daemon hard, starts it again, resumes every interrupted session and asks for a value
@@ -17,12 +17,12 @@ import time
 
 exe, project = sys.argv[1], sys.argv[2]
 agents = sys.argv[3:] or ["claude", "codex", "omp"]
-os.environ["ERKA_ENDPOINT"] = f"erka-resume-test-{os.getpid()}"
-os.environ["ERKA_DATA_DIR"] = tempfile.mkdtemp(prefix="erka-resume-")
+os.environ["KELPIE_ENDPOINT"] = f"kelpie-resume-test-{os.getpid()}"
+os.environ["KELPIE_DATA_DIR"] = tempfile.mkdtemp(prefix="kelpie-resume-")
 
-spec = importlib.util.spec_from_file_location("erka_call", os.path.join(os.path.dirname(__file__), "..", "erka-call.py"))
-erka_call = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(erka_call)
+spec = importlib.util.spec_from_file_location("kelpie_call", os.path.join(os.path.dirname(__file__), "..", "kelpie-call.py"))
+kelpie_call = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(kelpie_call)
 
 results = []
 
@@ -37,7 +37,7 @@ def start_daemon():
     proc = subprocess.Popen([exe, "serve"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     for _ in range(100):
         try:
-            return proc, erka_call.Conn()
+            return proc, kelpie_call.Conn()
         except OSError:
             time.sleep(0.1)
     raise SystemExit("daemon did not start")

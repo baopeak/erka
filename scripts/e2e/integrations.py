@@ -2,9 +2,9 @@
 
     python -X utf8 scripts/e2e/integrations.py <screenshot-dir> <scratch-dir> [--port 47811]
 
-Needs tauri-driver started with ERKA_LINEAR_API=http://127.0.0.1:<port>/graphql (the default
+Needs tauri-driver started with KELPIE_LINEAR_API=http://127.0.0.1:<port>/graphql (the default
 port is 47811). Linear and Jira run against a local stand-in server implementing the parts of
-their documented APIs Erka uses (no account is needed), which checks the auth headers Erka
+their documented APIs Kelpie uses (no account is needed), which checks the auth headers Kelpie
 sends; GitLab runs live against the public gitlab.com project gitlab-org/cli (read-only, no
 token) and against the stand-in for token-only calls (merge request creation, your issues).
 
@@ -29,8 +29,8 @@ from smoke_support import Run, daemon  # noqa: E402
 
 shots, scratch = sys.argv[1], sys.argv[2]
 port = int(sys.argv[sys.argv.index("--port") + 1]) if "--port" in sys.argv else 47811
-S = "window.__erka.store"
-I = "window.__erka.integrations"
+S = "window.__kelpie.store"
+I = "window.__kelpie.integrations"
 LINEAR_KEY, JIRA_TOKEN, GITLAB_TOKEN = "lin_api_e2e", "jira-e2e-token", "glpat-e2e"
 seen = {"linear_auth": [], "jira_auth": [], "gitlab_auth": [], "linear_state": None, "jira_transition": None, "mr_created": None}
 
@@ -151,8 +151,8 @@ def make_repo(path, remote, branch):
     os.makedirs(path)
     run_git = lambda *a: subprocess.run(["git", "-C", path, *a], capture_output=True, text=True, check=True)
     subprocess.run(["git", "init", "-q", "-b", "main", path], check=True)
-    run_git("config", "user.email", "e2e@erka.test")
-    run_git("config", "user.name", "Erka e2e")
+    run_git("config", "user.email", "e2e@kelpie.test")
+    run_git("config", "user.name", "Kelpie e2e")
     open(os.path.join(path, "README.md"), "w").write("x\n")
     run_git("add", ".")
     run_git("commit", "-q", "-m", "init")
@@ -303,7 +303,7 @@ try:
     mr = js_await(f"{I}.gitlabMrStatus(arguments[0])", live)
     run.check("live gitlab.com: merge request of the branch found without a token", isinstance(mr, dict) and mr.get("iid") == merged["iid"] and mr.get("state") == "merged", str(mr)[:200])
     run.check("live gitlab.com: pipeline status read", isinstance(mr, dict) and bool(mr.get("pipeline")), str(mr and mr.get("pipeline")))
-    js_await(f"window.__erka.prs.pullRequests.refresh(arguments[0], arguments[1])", lpid, live)
+    js_await(f"window.__kelpie.prs.pullRequests.refresh(arguments[0], arguments[1])", lpid, live)
     chip = wait(lambda: d.js("return [...document.querySelectorAll('.primary-tag')].map(e => e.textContent).find(t => t.startsWith('!')) ?? null"), 15)
     run.check("sidebar shows the merge request chip (!iid)", chip == f"!{merged['iid']}", str(chip))
     run.shot("05-gitlab-live-chip")

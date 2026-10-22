@@ -12,8 +12,8 @@ use serde_json::Value;
 
 use crate::fs_ops::{err, CmdResult};
 
-/// Marks a folder Erka created, so removal never touches anything else.
-const MARKER: &str = ".erka-account";
+/// Marks a folder Kelpie created, so removal never touches anything else.
+const MARKER: &str = ".kelpie-account";
 
 fn home() -> PathBuf {
     std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map(PathBuf::from).unwrap_or_default()
@@ -32,8 +32,8 @@ fn valid_id(id: &str) -> CmdResult<()> {
 }
 
 fn account_dir(agent: &str, id: &str) -> PathBuf {
-    let dir = erka_proto::data_dir().join("accounts").join(agent).join(id);
-    // One separator style: the data dir may come with forward slashes (ERKA_DATA_DIR).
+    let dir = kelpie_proto::data_dir().join("accounts").join(agent).join(id);
+    // One separator style: the data dir may come with forward slashes (KELPIE_DATA_DIR).
     if cfg!(windows) { PathBuf::from(dir.to_string_lossy().replace('/', "\\")) } else { dir }
 }
 
@@ -107,7 +107,7 @@ pub async fn account_create(agent: String, id: String) -> CmdResult<String> {
     crate::fs_ops::blocking(move || create_blocking(&agent, &id)).await
 }
 
-/// Moves an Erka-created account home to the trash (logins and history with it).
+/// Moves a Kelpie-created account home to the trash (logins and history with it).
 #[tauri::command]
 pub async fn account_remove(agent: String, id: String) -> CmdResult<()> {
     crate::fs_ops::blocking(move || {
@@ -117,8 +117,10 @@ pub async fn account_remove(agent: String, id: String) -> CmdResult<()> {
         if !dir.exists() {
             return Ok(());
         }
-        if !dir.join(MARKER).is_file() {
-            return Err("not an Erka account folder".into());
+        // `.erka-account`: created before the rename (the data migration renames it, but a
+        // folder it could not reach still counts).
+        if !dir.join(MARKER).is_file() && !dir.join(".erka-account").is_file() {
+            return Err("not a Kelpie account folder".into());
         }
         trash::delete(&dir).or_else(|_| std::fs::remove_dir_all(&dir)).map_err(err)
     })
@@ -201,7 +203,7 @@ mod tests {
 
     #[test]
     fn reads_status_without_exposing_tokens() {
-        let dir = std::env::temp_dir().join(format!("erka-acct-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("kelpie-acct-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         assert!(!claude_status(&dir).signed_in);
         std::fs::write(dir.join(".credentials.json"), r#"{"claudeAiOauth":{"accessToken":"t","subscriptionType":"max"}}"#).unwrap();

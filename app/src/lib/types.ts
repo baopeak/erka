@@ -1,4 +1,4 @@
-/** Mirrors `SessionInfo` from erkad (crates/erkad/src/session.rs). */
+/** Mirrors `SessionInfo` from kelpied (crates/kelpied/src/session.rs). */
 export type SessionStatus = "idle" | "working" | "waiting" | "exited";
 /** shell | custom | claude | codex | omp, or a preset agent id from `agent.presets` (gemini, cursor…). */
 export type SessionKind = string;
@@ -144,7 +144,7 @@ export interface Settings {
   sidebarWidth: number;
   sidebarCollapsed: boolean;
   notifications: boolean;
-  /** Toast once per shortcut when Erka keeps a key from the focused terminal. */
+  /** Toast once per shortcut when Kelpie keeps a key from the focused terminal. */
   shortcutHints: boolean;
   projectFilter: "all" | "running" | "attention";
   projectSort: "manual" | "recent";
@@ -335,9 +335,9 @@ export interface AppState {
   collapsed: Record<string, boolean>;
   /** Shortcut overrides by command id: a chord like "mod+alt+p", or "" for none. */
   keymap: Record<string, string>;
-  /** `.erka.yaml` contents (hash) the user agreed to run, by repository path. */
+  /** `.kelpie.yaml` contents (hash) the user agreed to run, by repository path. */
   approvedSetups: Record<string, string>;
-  /** Sessions Erka stopped to save memory (hibernation, sleeping worktrees): resumed when shown. */
+  /** Sessions Kelpie stopped to save memory (hibernation, sleeping worktrees): resumed when shown. */
   hibernated: string[];
   inbox: InboxItem[];
   /** Diff review notes by project id. */

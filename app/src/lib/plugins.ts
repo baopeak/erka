@@ -1,4 +1,4 @@
-// Plugins (Settings → Plugins): folders with an `erka-plugin.json` manifest that add agents,
+// Plugins (Settings → Plugins): folders with an `kelpie-plugin.json` manifest that add agents,
 // palette commands, quick commands, terminal themes, layouts and status-bar items. The app
 // (app/src-tauri/src/plugins.rs) lists them and keeps approvals; only approved plugins — the
 // exact manifest the user reviewed — contribute anything here.
@@ -44,6 +44,8 @@ export interface PluginInfo {
   approved: boolean;
   changed: boolean;
   error: string | null;
+  /** The manifest's file name (`kelpie-plugin.json`, or `erka-plugin.json` from before the rename). */
+  file: string;
 }
 
 export const pluginList = () => invoke<PluginInfo[]>("plugin_list");

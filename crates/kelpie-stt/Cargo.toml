@@ -1,0 +1,23 @@
+[package]
+name = "kelpie-stt"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Kelpie's local speech-to-text helper (sherpa-onnx), driven by the app over stdin/stdout"
+
+[[bin]]
+name = "kelpie-stt"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+# The speech engine downloads its prebuilt static library at build time (see the crate's
+# build.rs; SHERPA_ONNX_ARCHIVE_DIR points it at a local copy for offline builds).
+sherpa-onnx = "1.13.8"
+cpal = "0.18.2"
+ureq = "2.12"
+sha2 = "0.10"
+tar = "0.4"
+bzip2 = "0.5"

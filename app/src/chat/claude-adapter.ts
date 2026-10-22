@@ -202,7 +202,7 @@ export function createClaudeAdapter(ctx: AdapterContext): Adapter {
       ctx.write({ type: "user", message: { role: "user", content: [{ type: "text", text }] } });
     },
     interrupt() {
-      ctx.write({ type: "control_request", request_id: `erka-interrupt-${++interruptSeq}`, request: { subtype: "interrupt" } });
+      ctx.write({ type: "control_request", request_id: `kelpie-interrupt-${++interruptSeq}`, request: { subtype: "interrupt" } });
     },
     respond(id, option) {
       const pending = pendingInputs.get(id);

@@ -1,18 +1,18 @@
 [package]
-name = "erka"
+name = "kelpie"
 version.workspace = true
 edition.workspace = true
-description = "Erka - multi-project agent workbench"
+description = "Kelpie - multi-project agent workbench"
 
 [lib]
-name = "erka_lib"
+name = "kelpie_lib"
 crate-type = ["cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2.6", features = [] }
 
 [dependencies]
-erka-proto = { path = "../../crates/erka-proto" }
+kelpie-proto = { path = "../../crates/kelpie-proto" }
 tauri = { version = "2.12", features = ["unstable", "devtools"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-notification = "2"

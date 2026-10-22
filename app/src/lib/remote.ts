@@ -1,5 +1,5 @@
 // Remote projects over SSH (backend: app/src-tauri/src/remote.rs; sessions: the daemon runs
-// `ssh -t`, see crates/erkad/src/agents.rs). A remote project's `path` is its root
+// `ssh -t`, see crates/kelpied/src/agents.rs). A remote project's `path` is its root
 // `ssh://[user@]host[:port]/abs/path`; its `remote` field says how to reach it.
 import { invoke } from "@tauri-apps/api/core";
 import { store } from "./store";
@@ -31,7 +31,7 @@ export function remoteRoot(dest: string, port: number | undefined, path: string)
   return `ssh://${dest}${port ? `:${port}` : ""}${clean === "/" ? "/" : clean}`;
 }
 
-/** Erka's generated ssh config (saved hosts + an include of the user's config); every remote
+/** Kelpie's generated ssh config (saved hosts + an include of the user's config); every remote
  *  session reads it. Set at startup (`loadSshConfigPath`). */
 let sshConfigPath: string | undefined;
 export async function loadSshConfigPath() {

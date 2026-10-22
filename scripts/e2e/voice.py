@@ -2,9 +2,9 @@
 
     python -X utf8 scripts/e2e/voice.py <screenshot-dir> <scratch-dir>
 
-Needs the speech helper (`cargo build --release -p erka-stt`), Windows (the English clip is made
+Needs the speech helper (`cargo build --release -p kelpie-stt`), Windows (the English clip is made
 with its speech synthesizer) and tauri-driver started with
-ERKA_STT_TEST_INPUT=<scratch>/../stt-input.wav — the "microphone" plays that file, which this
+KELPIE_STT_TEST_INPUT=<scratch>/../stt-input.wav — the "microphone" plays that file, which this
 script swaps between a Vietnamese clip, an English SAPI recording and silence. Models are really
 downloaded (Vietnamese 26 MB, Whisper tiny 104 MB) and checked against their pinned SHA-256.
 
@@ -27,10 +27,10 @@ sys.path.insert(0, os.path.dirname(__file__))
 from smoke_support import Run, daemon  # noqa: E402
 
 shots, scratch = sys.argv[1], sys.argv[2]
-S = "window.__erka.store"
-V = "window.__erka.voice"
-INPUT = os.environ.get("ERKA_STT_TEST_INPUT") or os.path.join(os.path.dirname(os.path.abspath(scratch)), "stt-input.wav")
-SAPI_EN = os.environ.get("ERKA_TEST_EN_WAV") or os.path.join(scratch, "sapi-en.wav")
+S = "window.__kelpie.store"
+V = "window.__kelpie.voice"
+INPUT = os.environ.get("KELPIE_STT_TEST_INPUT") or os.path.join(os.path.dirname(os.path.abspath(scratch)), "stt-input.wav")
+SAPI_EN = os.environ.get("KELPIE_TEST_EN_WAV") or os.path.join(scratch, "sapi-en.wav")
 if not os.path.isfile(SAPI_EN):
     # English speech from Windows' own synthesizer (16 kHz mono).
     os.makedirs(os.path.dirname(SAPI_EN), exist_ok=True)
@@ -122,7 +122,7 @@ try:
     run.check("four models offered, none downloaded", [m["id"] for m in models] == ["vi-zipformer", "whisper-tiny", "whisper-base", "whisper-small"] and not any(m["installed"] for m in models), str(models))
 
     # ---------- no model yet ----------
-    d.js("window.__erka.commands.find(c => c.id === 'voice.toggle').run()")
+    d.js("window.__kelpie.commands.find(c => c.id === 'voice.toggle').run()")
     ok = wait(lambda: d.js("return !!document.querySelector('[data-setting=\"voice-models\"]')"), 10)
     run.check("dictating without a model opens Settings → Voice", ok and "Download a speech model" in (wait(toast, 5) or ""))
     run.check("still idle", phase() == "idle")
@@ -157,12 +157,12 @@ try:
     # ---------- dictate into a terminal (Vietnamese) ----------
     d.js(f"{S}.setOverlay(null)")
     sh = js_await(f"{S}.newSession(arguments[0], 'shell')", pid)
-    sid = wait(lambda: d.js(f"const s = {S}; const t = s.activeTab(arguments[0]); return t && window.__erka.layout.allPanes(t.root).map(p => p.sessionId).find(Boolean)", pid), 15)
+    sid = wait(lambda: d.js(f"const s = {S}; const t = s.activeTab(arguments[0]); return t && window.__kelpie.layout.allPanes(t.root).map(p => p.sessionId).find(Boolean)", pid), 15)
     sess = wait(lambda: next((s for s in daemon(d, "session.list") if s["id"] == sid), None), 10)
     run.check("terminal pane has a mic button", wait(lambda: d.js("return !!document.querySelector('.pane .mic-btn')"), 5))
     speak(os.path.join(models_dir, "vi-zipformer", "test_wavs", "1.wav"))
     d.js(f"{S}.revealSession(arguments[0])", sid)
-    d.js("window.__erka.commands.find(c => c.id === 'voice.toggle').run()")
+    d.js("window.__kelpie.commands.find(c => c.id === 'voice.toggle').run()")
     rec = wait(lambda: phase() == "recording", 30)
     pill = wait(lambda: d.js("const p = document.querySelector('.voice-pill'); return p && p.innerText"), 5)
     lvl = wait(lambda: d.js(f"return {V}.voiceLevel()") > 0.01, 5)
@@ -170,7 +170,7 @@ try:
     run.check("pill shows the microphone level", lvl)
     run.shot("voice-recording")
     time.sleep(3)
-    d.js("window.__erka.commands.find(c => c.id === 'voice.toggle').run()")
+    d.js("window.__kelpie.commands.find(c => c.id === 'voice.toggle').run()")
     run.check("then transcribing", wait(lambda: phase() == "transcribing" or d.js("const p = document.querySelector('.voice-pill'); return p && p.innerText.includes('Transcribing')"), 5) or phase() == "idle")
     wait(lambda: phase() == "idle", 120)
     txt = wait(lambda: "Những nơi đã khống chế được căn bệnh" in screen(sess["handle"]), 15)

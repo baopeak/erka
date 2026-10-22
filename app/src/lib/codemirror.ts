@@ -32,7 +32,7 @@ const themeSpec = {
     ".cm-activeLineGutter": { backgroundColor: "var(--bg-hover)", color: "var(--text-dim)" },
     ".cm-activeLine": { backgroundColor: "var(--cm-active-line)" },
     "&.cm-focused .cm-cursor": { borderLeftColor: "var(--accent)", borderLeftWidth: "2px" },
-    "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection": { backgroundColor: "rgba(108,182,255,0.25) !important" },
+    "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection": { backgroundColor: "rgba(232,116,59,0.25) !important" },
     ".cm-selectionMatch": { backgroundColor: "rgba(242,201,109,0.18)" },
     ".cm-searchMatch": { backgroundColor: "rgba(242,201,109,0.28)", outline: "1px solid rgba(242,201,109,0.5)" },
     ".cm-panels": { backgroundColor: "var(--bg-elev-2)", color: "var(--text)", borderColor: "var(--border-strong)" },
@@ -42,7 +42,7 @@ const themeSpec = {
     ".cm-foldGutter span": { color: "var(--text-faint)" },
     ".cm-tooltip": { backgroundColor: "var(--bg-elev-2)", border: "1px solid var(--border-strong)" },
     // merge view
-    ".cm-changedLine": { backgroundColor: "rgba(108,182,255,0.06)" },
+    ".cm-changedLine": { backgroundColor: "rgba(232,116,59,0.06)" },
     ".cm-insertedLine, .cm-changedText": { backgroundColor: "rgba(139,213,139,0.14)" },
     ".cm-deletedChunk, .cm-deletedLine": { backgroundColor: "rgba(255,107,122,0.12)" },
     ".cm-merge-a .cm-changedText": { backgroundColor: "rgba(255,107,122,0.22)" },
@@ -50,7 +50,7 @@ const themeSpec = {
 };
 
 // Colours come from CSS variables; the dark flag picks CodeMirror's matching base theme for
-// everything Erka does not style (fold placeholders, completion lists, merge gutters).
+// everything Kelpie does not style (fold placeholders, completion lists, merge gutters).
 const darkTheme = EditorView.theme(themeSpec, { dark: true });
 const lightTheme = EditorView.theme(themeSpec, { dark: false });
 const themeSlot = new Compartment();

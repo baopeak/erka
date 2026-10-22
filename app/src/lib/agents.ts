@@ -1,4 +1,4 @@
-// Agent CLIs Erka can launch. The daemon owns the table (crates/erkad/src/agents.rs PRESETS)
+// Agent CLIs Kelpie can launch. The daemon owns the table (crates/kelpied/src/agents.rs PRESETS)
 // and reports which are installed; the UI adds glyphs and decides what launchers show.
 import { createSignal } from "solid-js";
 import { daemon } from "./ipc";
@@ -15,7 +15,7 @@ export interface AgentPreset {
   installed: boolean;
 }
 
-/** Always offered: Erka integrates them deeply (hooks, chat view, history). */
+/** Always offered: Kelpie integrates them deeply (hooks, chat view, history). */
 export const CORE_AGENTS = ["claude", "codex", "omp"];
 
 const [presets, setPresets] = createSignal<AgentPreset[]>([]);

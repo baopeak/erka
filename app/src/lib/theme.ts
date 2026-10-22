@@ -2,16 +2,16 @@ import type { ITheme } from "@xterm/xterm";
 import { findTerminalTheme, toXtermTheme } from "./terminal-themes";
 
 /**
- * Terminal palette. Keep in sync with `default_color` in crates/erkad/src/vt.rs — the daemon
+ * Terminal palette. Keep in sync with `default_color` in crates/kelpied/src/vt.rs — the daemon
  * answers colour queries (OSC 10/11/4) with these values while no view is attached.
  */
 export const terminalTheme: ITheme = {
-  background: "#0e1117",
+  background: "#141823",
   foreground: "#d7dce6",
-  cursor: "#6cb6ff",
-  cursorAccent: "#0e1117",
-  selectionBackground: "rgba(108, 182, 255, 0.30)",
-  selectionInactiveBackground: "rgba(108, 182, 255, 0.16)",
+  cursor: "#e8743b",
+  cursorAccent: "#141823",
+  selectionBackground: "rgba(232, 116, 59, 0.30)",
+  selectionInactiveBackground: "rgba(232, 116, 59, 0.16)",
   black: "#1d202a",
   red: "#ff6b7a",
   green: "#8bd58b",
@@ -37,10 +37,10 @@ export const terminalTheme: ITheme = {
 export const terminalThemeLight: ITheme = {
   background: "#ffffff",
   foreground: "#1d2330",
-  cursor: "#2f6fde",
+  cursor: "#b4501f",
   cursorAccent: "#ffffff",
-  selectionBackground: "rgba(47, 111, 222, 0.22)",
-  selectionInactiveBackground: "rgba(47, 111, 222, 0.12)",
+  selectionBackground: "rgba(180, 80, 31, 0.22)",
+  selectionInactiveBackground: "rgba(180, 80, 31, 0.12)",
   black: "#1d2330",
   red: "#c4303f",
   green: "#2b8a4b",

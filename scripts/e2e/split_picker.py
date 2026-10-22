@@ -10,7 +10,7 @@ operation the tree is checked: shares sum to 1, and no split sits directly in a 
 direction.
 
 Starts no agent: the picker is only driven to "Terminal" (the dialog's default kind is Claude).
-Needs the dev environment as the other scripts do (ERKA_ENDPOINT / ERKA_DATA_DIR set for both
+Needs the dev environment as the other scripts do (KELPIE_ENDPOINT / KELPIE_DATA_DIR set for both
 tauri-driver and this script).
 """
 import os
@@ -21,7 +21,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from smoke_support import Run, daemon  # noqa: E402
 
 shots, scratch = sys.argv[1], sys.argv[2]
-S = "window.__erka.store"
+S = "window.__kelpie.store"
 proj = os.path.join(scratch, "split-picker-proj")
 os.makedirs(proj, exist_ok=True)
 with open(os.path.join(proj, "README.md"), "w", encoding="utf-8") as f:
@@ -129,12 +129,12 @@ def tab_rect(tab_id):
 
 
 def view_state(sid):
-    """The terminal view of a session (window.__erka.views lists the live TermViews)."""
-    return d.js("const v = window.__erka.views().find(x => x.sessionId === arguments[0]); return v ? {visible: v.visible, attached: v.attached, handle: v.handle} : null;", sid)
+    """The terminal view of a session (window.__kelpie.views lists the live TermViews)."""
+    return d.js("const v = window.__kelpie.views().find(x => x.sessionId === arguments[0]); return v ? {visible: v.visible, attached: v.attached, handle: v.handle} : null;", sid)
 
 
 def view_text(sid):
-    return d.js("const v = window.__erka.views().find(x => x.sessionId === arguments[0]); if (!v) return null; const b = v.term.buffer.active; const out = []; for (let i = 0; i < b.length; i++) out.push(b.getLine(i)?.translateToString(true) ?? ''); return out.join('\\n');", sid)
+    return d.js("const v = window.__kelpie.views().find(x => x.sessionId === arguments[0]); if (!v) return null; const b = v.term.buffer.active; const out = []; for (let i = 0; i < b.length; i++) out.push(b.getLine(i)?.translateToString(true) ?? ''); return out.join('\\n');", sid)
 
 
 def dom_tab_order():
@@ -222,7 +222,7 @@ try:
     # ---------- picker guards: one start per pane, no repeats, focus after dialogs and Esc ----------
     def close_session_pane(sid):
         js_await(f"""(() => {{ const p = {S}.state.activeProject;
-            for (const t of {S}.workspace(p).tabs) for (const x of window.__erka.layout.allPanes(t.root))
+            for (const t of {S}.workspace(p).tabs) for (const x of window.__kelpie.layout.allPanes(t.root))
               if (x.sessionId === arguments[0]) return {S}.closePane(p, t.id, x.id);
             return null; }})()""", sid)
 
@@ -315,9 +315,9 @@ try:
     run.check("moveTab moves a tab to an index", tab_order().index(tb) == 1, str(tab_order()))
     d.js(f"{S}.selectTab(arguments[0], arguments[1])", pid, tc)
     i0 = tab_order().index(tc)
-    d.js("window.__erka.commands.find(c => c.id === 'tab.moveRight').run()")
+    d.js("window.__kelpie.commands.find(c => c.id === 'tab.moveRight').run()")
     run.check("palette Move Tab Right", tab_order().index(tc) == i0 + 1, str(tab_order()))
-    d.js("window.__erka.commands.find(c => c.id === 'tab.moveLeft').run()")
+    d.js("window.__kelpie.commands.find(c => c.id === 'tab.moveLeft').run()")
     run.check("palette Move Tab Left", tab_order().index(tc) == i0, str(tab_order()))
 
     # ---------- movePaneToTab: existing tab, emptied source, new tab, live session ----------
@@ -371,7 +371,7 @@ try:
     # ---------- pointer tests on a fresh project: the store tests above leave many tabs ----------
     for s in sessions():
         daemon(d, "session.close", {"handle": s["handle"]})
-    d.js(f"window.__erka.store.removeProject(arguments[0])", pid)
+    d.js(f"window.__kelpie.store.removeProject(arguments[0])", pid)
     pid = d.js(f"return {S}.addProject(arguments[0])", proj)
 
     # ---------- pointer: tab reorder by dragging along the bar ----------

@@ -11,6 +11,7 @@ import { hostLabel } from "../lib/remote";
 import type { Project, SessionKind } from "../lib/types";
 import { t, msg } from "../lib/i18n";
 import { openHosts } from "./hosts-page";
+import { BrandWordmark, Kip } from "./brand";
 
 const kbd = (id: string) => {
   const c = commands.find((x) => x.id === id);
@@ -22,8 +23,8 @@ export function Welcome() {
   return (
     <div class="empty">
       <div class="welcome">
-        <span class="brand-logo" style={{ width: "54px", height: "54px", "font-size": "26px", "border-radius": "15px" }}>E</span>
-        <h1>Erka</h1>
+        <Kip mood="peek" size={150} />
+        <h1><BrandWordmark height={34} /></h1>
         <div style={{ color: "var(--text-dim)" }}>
           {t("Run many coding agents across many projects. Sessions live in a background daemon, so switching projects or closing this window never stops them.")}
         </div>

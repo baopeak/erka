@@ -10,6 +10,7 @@ import { pullRequests, prLabel } from "../lib/pull-requests";
 import { switchToChat, switchToTerminal, supportsChat } from "../chat/mode-switch";
 import { daemon } from "../lib/ipc";
 import { Icon, KindGlyph } from "./icons";
+import { BrandMark, BrandWordmark } from "./brand";
 import { findPane } from "../lib/layout";
 import { sessionAccount } from "../lib/accounts";
 import { hostLabel } from "../lib/remote";
@@ -187,7 +188,7 @@ function projectMenu(p: Project): MenuItem[] {
     null,
     ...(worktree ? [{ label: t("Remove worktree…"), danger: true, run: () => void confirmRemoveWorktree(p) }] : []),
     {
-      label: t("Remove from Erka"), danger: true,
+      label: t("Remove from Kelpie"), danger: true,
       run: () => {
         const kids = store.childrenOf(p.id).length;
         const text = !kids
@@ -358,9 +359,9 @@ export function Sidebar() {
   return (
     <aside class={`sidebar${collapsed() ? " collapsed" : ""}`}>
       <div class="brand">
-        <span class="brand-logo">E</span>
+        <BrandMark />
         <Show when={!collapsed()}>
-          <span>Erka</span>
+          <BrandWordmark />
           <span class="spacer" />
           <button class="icon-btn mini" title={t("Back") + navHint("nav.back")} disabled={!canGoBack()} onClick={navBack}><Icon name="back" size={14} /></button>
           <button class="icon-btn mini" title={t("Forward") + navHint("nav.forward")} disabled={!canGoForward()} onClick={navForward}><Icon name="forward" size={14} /></button>

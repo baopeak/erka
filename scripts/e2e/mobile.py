@@ -1,4 +1,4 @@
-"""E2E for the mobile companion: Erka (tauri-driver) plus a phone-sized Edge (msedgedriver).
+"""E2E for the mobile companion: Kelpie (tauri-driver) plus a phone-sized Edge (msedgedriver).
 
     python -X utf8 scripts/e2e/mobile.py <screenshot-dir> <scratch-dir> [--edgedriver PATH]
 
@@ -24,8 +24,8 @@ sys.path.insert(0, os.path.dirname(__file__))
 from smoke_support import Run, daemon  # noqa: E402
 
 shots, scratch = sys.argv[1], sys.argv[2]
-edgedriver = sys.argv[sys.argv.index("--edgedriver") + 1] if "--edgedriver" in sys.argv else os.environ.get("ERKA_EDGEDRIVER", r"D:\Works\edgedriver\msedgedriver.exe")
-S = "window.__erka.store"
+edgedriver = sys.argv[sys.argv.index("--edgedriver") + 1] if "--edgedriver" in sys.argv else os.environ.get("KELPIE_EDGEDRIVER", r"D:\Works\edgedriver\msedgedriver.exe")
+S = "window.__kelpie.store"
 PORT = 48170
 
 
@@ -152,7 +152,7 @@ try:
     run.check("the phone opens the pairing page (code taken out of the address bar)", "#p=" not in phone.js("return location.href"))
     phone.js("const i = document.querySelector('.card input'); i.value = 'Test phone';")
     phone.js("document.querySelector('.card .btn.primary').click()")
-    run.check("Erka asks to approve the phone", bool(d.wait("return [...document.querySelectorAll('.mobile-approve h2')].some(h => h.textContent.includes('Test phone'))", 15)))
+    run.check("Kelpie asks to approve the phone", bool(d.wait("return [...document.querySelectorAll('.mobile-approve h2')].some(h => h.textContent.includes('Test phone'))", 15)))
     run.shot("03-approve")
     d.js("[...document.querySelectorAll('.mobile-approve .btn.primary')].find(b => b.textContent.includes('typing')).click()")
     run.check("approved phone connects and lists sessions", bool(phone.wait("return document.getElementById('conn').className.includes('on')", 20)))

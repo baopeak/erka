@@ -3,7 +3,7 @@
     python -X utf8 scripts/e2e/browser.py <screenshot-dir> <scratch-dir> [--port 47812]
 
 A local test site is served on 127.0.0.1:<port>. The page lives in a native child webview the
-WebDriver session cannot see into, so the checks use Erka's own events and commands, and
+WebDriver session cannot see into, so the checks use Kelpie's own events and commands, and
 clicks / keys go into the page as trusted input through the WebView2 DevTools protocol
 (`browser_test_input`, dev and e2e builds only) — the same events a real mouse produces, without
 needing the window on screen or touching the user's mouse.
@@ -29,11 +29,11 @@ from smoke_support import Run, daemon  # noqa: E402
 
 shots, scratch = sys.argv[1], sys.argv[2]
 port = int(sys.argv[sys.argv.index("--port") + 1]) if "--port" in sys.argv else 47812
-S = "window.__erka.store"
-B = "window.__erka.browser"
+S = "window.__kelpie.store"
+B = "window.__kelpie.browser"
 BASE = f"http://127.0.0.1:{port}"
 
-PAGE1 = """<!doctype html><html><head><title>Erka Test Shop</title>
+PAGE1 = """<!doctype html><html><head><title>Kelpie Test Shop</title>
 <style>body{margin:0;font:16px sans-serif} #save{position:absolute;left:60px;top:80px;width:160px;height:48px;background:#2d7ff9;color:#fff;border:0;border-radius:8px}
 #popup{position:absolute;left:60px;top:200px}</style></head>
 <body><main class="shell"><button id="save" class="btn primary" data-testid="save-btn" aria-label="Save cart" title="Save">Save cart</button>
@@ -103,7 +103,7 @@ def wait(cond, timeout=20, interval=0.3):
 
 
 def pane():
-    return d.js(f"const t = {S}.activeTab({S}.state.activeProject); return t ? window.__erka.layout.allPanes(t.root).find(p => p.kind === 'browser') ?? null : null")
+    return d.js(f"const t = {S}.activeTab({S}.state.activeProject); return t ? window.__kelpie.layout.allPanes(t.root).find(p => p.kind === 'browser') ?? null : null")
 
 
 def info(label):
@@ -129,16 +129,16 @@ try:
     pid = d.js(f"return {S}.addProject(arguments[0])", proj)
 
     # ---------- open ----------
-    d.js("window.__erka.commands.find(c => c.id === 'browser.open').run()")
+    d.js("window.__kelpie.commands.find(c => c.id === 'browser.open').run()")
     d.wait("return !!document.querySelector('.browser-address input')", 10)
     p = pane()
     label = f"browser-{p['id']}"
     run.check("Open Browser adds a browser pane with an address bar", p is not None)
     d.js("const i = document.querySelector('.browser-address input'); i.value = arguments[0]; i.dispatchEvent(new InputEvent('input', {bubbles: true})); i.form.dispatchEvent(new Event('submit', {bubbles: true, cancelable: true}));", f"127.0.0.1:{port}")
-    ok = wait(lambda: d.js(f"return {B}.browserState[arguments[0]]?.title === 'Erka Test Shop'", p["id"]), 20)
-    run.check("page loads; its title reaches Erka", bool(ok))
+    ok = wait(lambda: d.js(f"return {B}.browserState[arguments[0]]?.title === 'Kelpie Test Shop'", p["id"]), 20)
+    run.check("page loads; its title reaches Kelpie", bool(ok))
     run.check("a bare host:port opens as http://", (info(label) or {}).get("url", "").startswith(f"{BASE}/"))
-    run.check("pane header / tab shows the page title", wait(lambda: d.js("return [...document.querySelectorAll('.tab .title')].some(t => t.textContent.includes('Erka Test Shop'))"), 10))
+    run.check("pane header / tab shows the page title", wait(lambda: d.js("return [...document.querySelectorAll('.tab .title')].some(t => t.textContent.includes('Kelpie Test Shop'))"), 10))
     run.check("the page is kept in the layout", wait(lambda: (pane() or {}).get("url", "").startswith(BASE), 10))
     host = d.js("const r = document.querySelector('.browser-host').getBoundingClientRect(); return {x: r.left, y: r.top, width: r.width, height: r.height}")
     i1 = info(label)
@@ -151,13 +151,13 @@ try:
     run.check("navigate: title follows", bool(wait(lambda: d.js(f"return {B}.browserState[arguments[0]]?.title === 'Second Page'", p["id"]), 15)))
     run.check("navigate: address bar follows", bool(wait(lambda: d.js("return document.querySelector('.browser-address input').value.endsWith('/page2')"), 10)))
     d.js("document.querySelector('.browser-bar .icon-btn[title=\"Back\"]').click()")
-    run.check("back", bool(wait(lambda: d.js(f"return {B}.browserState[arguments[0]]?.title === 'Erka Test Shop'", p["id"]), 15)))
+    run.check("back", bool(wait(lambda: d.js(f"return {B}.browserState[arguments[0]]?.title === 'Kelpie Test Shop'", p["id"]), 15)))
     d.js("document.querySelector('.browser-bar .icon-btn[title=\"Forward\"]').click()")
     run.check("forward", bool(wait(lambda: d.js(f"return {B}.browserState[arguments[0]]?.title === 'Second Page'", p["id"]), 15)))
     d.js("document.querySelector('.browser-bar .icon-btn[title=\"Back\"]').click()")
-    wait(lambda: d.js(f"return {B}.browserState[arguments[0]]?.title === 'Erka Test Shop'", p["id"]), 15)
+    wait(lambda: d.js(f"return {B}.browserState[arguments[0]]?.title === 'Kelpie Test Shop'", p["id"]), 15)
     d.js("document.querySelector('.browser-bar .icon-btn[title=\"Reload\"]').click()")
-    run.check("reload keeps the page", bool(wait(lambda: d.js(f"return {B}.browserState[arguments[0]]?.title === 'Erka Test Shop'", p["id"]), 15)))
+    run.check("reload keeps the page", bool(wait(lambda: d.js(f"return {B}.browserState[arguments[0]]?.title === 'Kelpie Test Shop'", p["id"]), 15)))
 
     # ---------- follows the layout; hides under dialogs ----------
     js_await(f"{S}.newSession(arguments[0], 'shell', {{ where: 'right' }})", pid)
@@ -170,7 +170,7 @@ try:
     d.js(f"{S}.setOverlay(null)")
     run.check("closing the dialog shows the page again", bool(d.wait("return ![...document.querySelectorAll('.browser-host .empty')].some(e => e.textContent.includes('hidden'))", 5)))
     # Back to one pane so the page has room.
-    sh = d.js(f"const t = {S}.activeTab({S}.state.activeProject); return window.__erka.layout.allPanes(t.root).find(p => p.kind === 'terminal').id")
+    sh = d.js(f"const t = {S}.activeTab({S}.state.activeProject); return window.__kelpie.layout.allPanes(t.root).find(p => p.kind === 'terminal').id")
     js_await(f"{S}.closePane({S}.state.activeProject, {S}.activeTab({S}.state.activeProject).id, arguments[0])", sh)
     time.sleep(1)
 
@@ -178,7 +178,7 @@ try:
     page_click(100, 208)
     run.check("a link with target=_blank opens in the same pane", bool(wait(lambda: d.js(f"return {B}.browserState[arguments[0]]?.title === 'Second Page'", p["id"]), 15)))
     js_await(f"{B}.browserNavigate(arguments[0], arguments[1])", label, BASE + "/")
-    wait(lambda: d.js(f"return {B}.browserState[arguments[0]]?.title === 'Erka Test Shop'", p["id"]), 15)
+    wait(lambda: d.js(f"return {B}.browserState[arguments[0]]?.title === 'Kelpie Test Shop'", p["id"]), 15)
 
     # ---------- design mode with real input ----------
     d.js("document.querySelector('.browser-bar .icon-btn[title^=\"Design mode\"]').click()")
@@ -195,7 +195,7 @@ try:
         run.check("pick: text, tag, accessible name", pk["text"] == "Save cart" and pk["tag"] == "button" and pk["name"] == "Save cart")
         run.check("pick: allowlisted attributes (data-testid, aria-label)", pk["attributes"].get("data-testid") == "save-btn" and pk["attributes"].get("aria-label") == "Save cart", str(pk["attributes"]))
         run.check("pick: box and key styles", abs(pk["rect"]["width"] - 160) < 2 and abs(pk["rect"]["height"] - 48) < 2 and pk["styles"]["background-color"] == "rgb(45, 127, 249)", str(pk["rect"]))
-        run.check("pick: page url and title", pk["page"]["title"] == "Erka Test Shop" and pk["page"]["url"].startswith(BASE))
+        run.check("pick: page url and title", pk["page"]["title"] == "Kelpie Test Shop" and pk["page"]["url"].startswith(BASE))
         w, h = png_size(note["shot"]["data"]) if note.get("shot") else (0, 0)
         dpr_page = pk["page"]["dpr"]
         run.check("pick: screenshot of the element (with a small margin)", note.get("shot") and abs(w - (160 + 16) * dpr_page) <= 4 and abs(h - (48 + 16) * dpr_page) <= 4, f"{w}x{h} dpr {dpr_page}")
@@ -211,7 +211,7 @@ try:
     # The prompt for both.
     d.js("const t = document.querySelector('.browser-note textarea'); t.value = 'Make this button green'; t.dispatchEvent(new InputEvent('input', {bubbles: true}));")
     prompt = d.js(f"return {B}.annotationPrompt({B}.browserState[arguments[0]].notes)", p["id"])
-    run.check("agent prompt: request, selector, HTML, screenshot path", all(x in prompt for x in ["Make this button green", "`#save`", "```html", "Screenshot: ", "Erka Test Shop"]), prompt[:300])
+    run.check("agent prompt: request, selector, HTML, screenshot path", all(x in prompt for x in ["Make this button green", "`#save`", "```html", "Screenshot: ", "Kelpie Test Shop"]), prompt[:300])
 
     # The page stays usable after design mode: an ordinary link navigates.
     page_click(20, 9)

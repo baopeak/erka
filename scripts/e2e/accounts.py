@@ -20,8 +20,8 @@ sys.path.insert(0, os.path.dirname(__file__))
 from smoke_support import Run, daemon  # noqa: E402
 
 shots, scratch = sys.argv[1], sys.argv[2]
-S = "window.__erka.store"
-A = "window.__erka.accounts"
+S = "window.__kelpie.store"
+A = "window.__kelpie.accounts"
 proj = os.path.join(scratch, "accounts-proj")
 os.makedirs(proj, exist_ok=True)
 
@@ -62,7 +62,7 @@ try:
     # ---------- add accounts ----------
     work = js_await(f"{A}.addAccount('claude', 'Work')")
     run.check("claude account added with its own home under the data dir", isinstance(work, dict) and "accounts" in work["dir"].replace("\\", "/") and os.path.isdir(work["dir"]), str(work))
-    run.check("account folder carries Erka's marker", os.path.isfile(os.path.join(work["dir"], ".erka-account")))
+    run.check("account folder carries Kelpie's marker", os.path.isfile(os.path.join(work["dir"], ".kelpie-account")))
     default_settings = os.path.join(os.path.expanduser("~"), ".claude", "settings.json")
     if os.path.isfile(default_settings):
         run.check("claude settings copied from the default account", os.path.isfile(os.path.join(work["dir"], "settings.json")))
