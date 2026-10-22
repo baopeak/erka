@@ -558,10 +558,63 @@ mod conversation_tests {
     }
 }
 
+/// The command a launch runs as plain words joined by spaces. On Unix the argv is wrapped in the
+/// login shell (`$SHELL -l -c "exec …"`, quoted by `shell_quote`); that layer is undone here so
+/// tests read the same on every platform.
+#[cfg(test)]
+fn command_line(argv: &[String]) -> String {
+    match argv {
+        [_, l, c, cmd] if cfg!(unix) && l == "-l" && c == "-c" => match cmd.strip_prefix("exec ") {
+            Some(rest) => shell_words(rest).join(" "),
+            None => argv.join(" "),
+        },
+        _ => argv.join(" "),
+    }
+}
+
+/// Splits a POSIX shell string of single-quoted and `\`-escaped words (what `shell_quote` writes).
+#[cfg(test)]
+fn shell_words(s: &str) -> Vec<String> {
+    let (mut words, mut cur) = (Vec::new(), String::new());
+    let (mut quoted, mut escaped, mut in_word) = (false, false, false);
+    for c in s.chars() {
+        if escaped {
+            cur.push(c);
+            escaped = false;
+            continue;
+        }
+        match c {
+            '\\' if !quoted => (escaped, in_word) = (true, true),
+            '\'' => (quoted, in_word) = (!quoted, true),
+            ' ' if !quoted => {
+                if in_word {
+                    words.push(std::mem::take(&mut cur));
+                    in_word = false;
+                }
+            }
+            _ => {
+                cur.push(c);
+                in_word = true;
+            }
+        }
+    }
+    if in_word {
+        words.push(cur);
+    }
+    words
+}
+
 #[cfg(test)]
 mod remote_tests {
     use super::*;
     use crate::session::RemoteSpec;
+
+    #[test]
+    fn shell_words_undo_shell_quote() {
+        let args = ["ssh", "-t", "a b", "it's", r#"exec "${SHELL:-/bin/sh}" -lc 'cd '\''/x y'\'''"#];
+        let quoted = args.iter().map(|a| format!("'{}'", a.replace('\'', "'\\''"))).collect::<Vec<_>>().join(" ");
+        assert_eq!(shell_words(&quoted), args);
+    }
 
     fn remote(tmux: bool) -> RemoteSpec {
         RemoteSpec { dest: "me@box".into(), port: Some(2222), config: None, tmux }
@@ -570,11 +623,11 @@ mod remote_tests {
     #[test]
     fn remote_shell_and_agent_commands() {
         let l = build_remote_launch("shell", &[], Resume::None, None, &remote(false), "/srv/my app", "abc").unwrap();
-        let j = l.argv.join(" ");
+        let j = command_line(&l.argv);
         assert!(j.contains("-t") && j.contains("-p 2222") && j.contains("me@box --"), "{j}");
         assert!(j.ends_with(r#"exec "${SHELL:-/bin/sh}" -lc 'cd '\''/srv/my app'\'' && exec "${SHELL:-/bin/sh}" -l'"#), "{j}");
         let l = build_remote_launch("claude", &["--model".into(), "haiku".into()], Resume::Latest, None, &remote(false), "/srv/x", "abc").unwrap();
-        let j = l.argv.join(" ");
+        let j = command_line(&l.argv);
         assert!(j.contains("exec '\\''claude'\\'' '\\''--continue'\\'' '\\''--model'\\'' '\\''haiku'\\''"), "{j}");
         assert!(!j.contains("--settings"), "no local hook settings on a remote host: {j}");
     }
@@ -582,7 +635,7 @@ mod remote_tests {
     #[test]
     fn remote_tmux_reattaches_by_session() {
         let l = build_remote_launch("claude", &[], Resume::None, Some("fix it"), &remote(true), "/srv/x", "1234-5678-abcd").unwrap();
-        let j = l.argv.join(" ");
+        let j = command_line(&l.argv);
         assert!(j.contains("tmux new-session -A -s \"$n\""), "{j}");
         // Quoted once more inside the remote shell's -c argument.
         assert!(j.contains(r"n='\''kelpie-12345678abcd'\''"), "{j}");
@@ -612,10 +665,10 @@ mod custom_tests {
         assert_eq!((p.bin, p.launch, p.resume_latest), (bin, &["chat"][..], &["--continue"][..]));
         let dir = std::env::temp_dir();
         let l = build_launch("acme-bot", &[], Resume::None, Some("do it"), Path::new("kelpied"), &dir).unwrap();
-        let j = l.argv.join(" ");
+        let j = command_line(&l.argv);
         assert!(j.contains("chat --ask do it"), "{j}");
         let l = build_launch("acme-bot", &[], Resume::Latest, None, Path::new("kelpied"), &dir).unwrap();
-        assert!(l.argv.join(" ").contains("chat --continue"));
+        assert!(command_line(&l.argv).contains("chat --continue"));
         assert!(set_custom(&[AgentDef { id: "claude".into(), ..def.clone() }]).is_err(), "built-in ids are taken");
         assert!(set_custom(&[AgentDef { id: "a b".into(), ..def }]).is_err());
         set_custom(&[]).unwrap();
