@@ -1,1 +1,2 @@
 - [Shell hook blocked words](shell-hook-blocked-words.md) — Bash blocked for target/build/dist/vendor/node_modules; use Read/Grep, skip cargo
+- [E2E overlay selector collisions](e2e-overlay-selector-collisions.md) — workspace stays mounted under fixed overlays; e2e clicks first match
