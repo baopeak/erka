@@ -22,6 +22,7 @@ const paths: Record<string, () => JSX.Element> = {
   refresh: () => <><path d="M13 8a5 5 0 1 1-1.5-3.6" /><path d="M13 2.5v3h-3" /></>,
   chat: () => <path d="M3 3.5h10v7H7l-3 2.5v-2.5H3z" />,
   check: () => <path d="M3.5 8.5l3 3 6-7" />,
+  alert: () => <path d="M8 3.5v5.2M8 12.3v.2" />,
   minus: () => <path d="M4 8h8" />,
   undo: () => <><path d="M5 6.5H10a3 3 0 0 1 0 6H6" /><path d="M7 4L4.5 6.5 7 9" /></>,
   restart: () => <><path d="M3 8a5 5 0 1 0 1.5-3.6" /><path d="M3 2.5v3h3" /></>,

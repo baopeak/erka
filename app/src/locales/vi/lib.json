@@ -128,5 +128,6 @@
   "New {agent} session": "Phiên {agent} mới",
   "Move Tab Left": "Chuyển tab sang trái",
   "Move Tab Right": "Chuyển tab sang phải",
-  "Move Pane to New Tab": "Chuyển khung sang tab mới"
+  "Move Pane to New Tab": "Chuyển khung sang tab mới",
+  "Stopped with an error": "Dừng do lỗi"
 }

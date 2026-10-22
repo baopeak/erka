@@ -261,14 +261,22 @@ function createAppStore() {
   }
 
   async function maybeNotify(prev: SessionInfo | undefined, next: SessionInfo) {
-    if (!prev || prev.status !== "working") return;
-    if (next.status !== "idle" && next.status !== "waiting") return;
+    if (!prev) return;
+    // A turn that ended (or a process that died) in an error, reported once when it happens.
+    const failed = !!next.failed && !prev.failed;
+    if (!failed) {
+      if (prev.status !== "working") return;
+      if (next.status !== "idle" && next.status !== "waiting") return;
+    }
     const visible = document.hasFocus() && isSessionVisible(next.id);
     if (visible) return;
     const project = state.projects.find((p) => p.id === next.project_id);
     const title = `${sessionLabel(next)}${next.remote ? " @" + next.remote.dest : ""}${project ? " · " + project.name : ""}`;
-    const body = next.status === "waiting" ? t("Needs your input") : t("Finished");
-    addInbox({ kind: next.status === "waiting" ? "waiting" : "finished", title, body, sessionId: next.id, projectId: next.project_id ?? undefined });
+    const kind = failed ? "error" : next.status === "waiting" ? "waiting" : "finished";
+    const body = failed
+      ? next.alive ? t("Stopped with an error") : t("Exited with code {code}", { code: next.exit_code ?? "" })
+      : kind === "waiting" ? t("Needs your input") : t("Finished");
+    addInbox({ kind, title, body, sessionId: next.id, projectId: next.project_id ?? undefined });
     await desktopNotify(title, body);
   }
 

@@ -25,8 +25,37 @@ import { confirmDialog } from "../lib/confirm-dialog";
 
 export const STATUS_WORDS = { idle: msg("idle"), working: msg("working"), waiting: msg("waiting"), exited: msg("exited") } as const;
 
+/** What a session shows at a glance; each state has its own shape so color is never the only cue. */
+export type SessionState = "waiting" | "error" | "working" | "done" | "idle" | "exited";
+
+export function sessionState(s: SessionInfo): SessionState {
+  if (!s.alive) return s.failed ? "error" : "exited";
+  if (s.status === "waiting") return "waiting";
+  if (s.status === "working") return "working";
+  if (s.failed) return "error";
+  return s.unread ? "done" : "idle";
+}
+
+/** States that ask for the user: they get a glyph, a brighter row and (for the first two) a word. */
+const GLYPH: Partial<Record<SessionState, string>> = { waiting: "alert", error: "close", done: "check" };
+const LABEL: Partial<Record<SessionState, string>> = { waiting: msg("needs you"), error: msg("error") };
+
+function stateTitle(s: SessionInfo) {
+  switch (sessionState(s)) {
+    case "waiting": return t("Needs you");
+    case "error": return s.alive ? t("Last turn failed") : t("Exited with code {code}", { code: s.exit_code ?? "" });
+    case "done": return t("Finished, unread");
+    default: return t(STATUS_WORDS[s.alive ? s.status : "exited"]);
+  }
+}
+
 export function StatusDot(props: { s: SessionInfo }) {
-  return <span class={`dot ${props.s.alive ? props.s.status : "exited"}${props.s.unread ? " unread" : ""}`} title={t(STATUS_WORDS[props.s.alive ? props.s.status : "exited"])} />;
+  const state = () => sessionState(props.s);
+  return (
+    <span class={`dot ${state()}`} title={stateTitle(props.s)}>
+      <Show when={GLYPH[state()]}>{(g) => <Icon name={g()} size={8} />}</Show>
+    </span>
+  );
 }
 
 /** Row being renamed inline: `s:<session id>` or `p:<project id>`. */
@@ -204,9 +233,10 @@ function projectMenu(p: Project): MenuItem[] {
 }
 
 function SessionRow(props: { s: SessionInfo }) {
+  const state = () => sessionState(props.s);
   return (
     <div
-      class={`session-row${store.isSessionVisible(props.s.id) ? " visible" : ""}`}
+      class={`session-row ${state()}${store.isSessionVisible(props.s.id) ? " visible" : ""}`}
       onClick={() => store.revealSession(props.s.id)}
       onContextMenu={(e) => openContextMenu(e, sessionMenu(props.s))}
       title={[props.s.title, props.s.model, props.s.cwd].filter(Boolean).join("\n")}
@@ -221,7 +251,9 @@ function SessionRow(props: { s: SessionInfo }) {
           <span class="model">{[props.s.model && shortModel(props.s.model), sessionAccount(props.s)?.label].filter(Boolean).join(" · ")}</span>
         </Show>
       </span>
-      <span class="age">{relTimeShort(props.s.last_activity || props.s.created_at, now())}</span>
+      <Show when={LABEL[state()]} fallback={<span class="age">{relTimeShort(props.s.last_activity || props.s.created_at, now())}</span>}>
+        {(label) => <span class={`age state-label ${state()}`}>{t(label())}</span>}
+      </Show>
     </div>
   );
 }
@@ -233,14 +265,15 @@ function ProjectRow(props: { project: Project }) {
   const active = () => store.state.activeProject === props.project.id;
   const sessions = createMemo(() => projectSessions(props.project.id));
   const counts = createMemo(() => {
-    let working = 0, waiting = 0, unread = 0;
+    let working = 0, waiting = 0, unread = 0, error = 0;
     for (const s of sessions()) {
-      if (!s.alive) continue;
-      if (s.status === "waiting") waiting++;
-      else if (s.status === "working") working++;
-      else if (s.unread) unread++;
+      const state = sessionState(s);
+      if (state === "waiting") waiting++;
+      else if (state === "error") error++;
+      else if (state === "working") working++;
+      else if (state === "done") unread++;
     }
-    return { working, waiting, unread };
+    return { working, waiting, unread, error };
   });
   const folded = () => !!store.state.collapsed?.[props.project.id];
   const info = () => store.projectInfo[props.project.id];
@@ -298,12 +331,13 @@ function ProjectRow(props: { project: Project }) {
           </span>
           <span class="project-badges">
             <Show when={counts().waiting}><span class="badge waiting" title={t("Needs you")}>{counts().waiting}</span></Show>
+            <Show when={counts().error}><span class="badge error" title={t("Failed")}>{counts().error}</span></Show>
             <Show when={counts().working}><span class="badge working" title={t("Working")}>{counts().working}</span></Show>
             <Show when={counts().unread}><span class="badge unread" title={t("Finished, unread")}>{counts().unread}</span></Show>
           </span>
         </Show>
-        <Show when={collapsedSidebar() && (counts().waiting || counts().unread)}>
-          <span class={`mini-dot ${counts().waiting ? "waiting" : "unread"}`} />
+        <Show when={collapsedSidebar() && (counts().waiting || counts().error || counts().unread)}>
+          <span class={`mini-dot ${counts().waiting ? "waiting" : counts().error ? "error" : "unread"}`} />
         </Show>
       </div>
       <Show when={!collapsedSidebar() && !folded() && sessions().length}>
@@ -338,7 +372,7 @@ export function Sidebar() {
     if (filter !== "all") {
       list = list.filter((p) =>
         family(p).includes(store.state.activeProject ?? "") ||
-        family(p).some((id) => projectSessions(id).some((s) => s.alive && (filter === "running" ? true : s.status === "waiting" || s.unread))),
+        family(p).some((id) => projectSessions(id).some((s) => (filter === "running" ? s.alive : ["waiting", "error", "done"].includes(sessionState(s))))),
       );
     }
     if (store.state.settings.projectSort === "recent") list.sort((a, b) => Math.max(...family(b).map(lastActivity)) - Math.max(...family(a).map(lastActivity)));

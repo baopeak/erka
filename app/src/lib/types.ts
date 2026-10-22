@@ -20,6 +20,8 @@ export interface SessionInfo {
   unread: boolean;
   alive: boolean;
   exit_code: number | null;
+  /** The last agent turn errored, or the process exited with a failure code on its own (absent from older daemons). */
+  failed?: boolean;
   pid: number | null;
   cols: number;
   rows: number;

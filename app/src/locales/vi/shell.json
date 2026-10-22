@@ -304,5 +304,8 @@
   "1–9 to start · Esc to close": "1–9 để bắt đầu · Esc để đóng",
   "This pane": "Khung này",
   "Merge tab here": "Gộp tab vào đây",
-  "Drag to reorder, or onto a pane edge to merge": "Kéo để sắp xếp lại, hoặc thả vào cạnh một khung để gộp"
+  "Drag to reorder, or onto a pane edge to merge": "Kéo để sắp xếp lại, hoặc thả vào cạnh một khung để gộp",
+  "needs you": "cần bạn",
+  "Last turn failed": "Lượt gần nhất bị lỗi",
+  "Exited with code {code}": "Đã thoát với mã {code}"
 }
