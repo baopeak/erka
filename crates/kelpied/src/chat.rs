@@ -21,7 +21,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 use crate::proc_tree::ProcTree;
 use crate::session::{json_out, ClientTx, Outgoing, SessionInfo, SessionSpec, SUB_BUDGET};
-use crate::status::{Activity, Status, MIN_WORK_FOR_UNREAD};
+use crate::status::{exit_failed, Activity, Status, MIN_WORK_FOR_UNREAD};
 
 const LOG_MAX_LINES: usize = 20_000;
 /// Base64 of the replayed log must stay well under `kelpie_proto::MAX_FRAME_LEN`.
@@ -48,6 +48,8 @@ struct Inner {
     pid: Option<u32>,
     alive: bool,
     exit_code: Option<i32>,
+    /// Kelpie stopped the process, so its exit code says nothing about failure.
+    stopped: bool,
     activity: Activity,
     focused: bool,
     unread: bool,
@@ -86,6 +88,7 @@ impl ChatSession {
                 focused: false,
                 unread: false,
                 last_status: Status::Exited,
+                stopped: false,
                 last_broadcast: None,
                 working_since: None,
                 last_activity: 0,
@@ -128,6 +131,7 @@ impl ChatSession {
             g.pid = pid;
             g.alive = true;
             g.exit_code = None;
+            g.stopped = false;
             g.interrupted = false;
             g.activity = Activity { alive: true, ..Default::default() };
             g.last_status = Status::Idle;
@@ -185,6 +189,7 @@ impl ChatSession {
         }
         let now = Instant::now();
         let derived = classify(&line);
+        let failed_turn = derived == Some(Status::Idle) && turn_failed(&line);
         line.push('\n');
         let bytes: Arc<[u8]> = Arc::from(line.into_bytes());
         let mut g = self.inner.lock();
@@ -203,7 +208,7 @@ impl ChatSession {
         g.activity.on_output(now);
         g.last_activity = crate::session::now_millis();
         if let Some(status) = derived {
-            g.activity.hook = Some((status, now));
+            g.activity.on_hook(status, failed_turn, now);
         }
         if g.subs.is_empty() {
             return;
@@ -264,7 +269,8 @@ impl ChatSession {
     }
 
     pub fn kill(&self) {
-        let g = self.inner.lock();
+        let mut g = self.inner.lock();
+        g.stopped = true;
         if let Some(tree) = &g.tree {
             tree.kill();
         } else if let Some(pid) = g.pid {
@@ -295,6 +301,10 @@ impl ChatSession {
             unread: g.unread,
             alive: g.alive,
             exit_code: g.exit_code,
+            failed: match g.exit_code {
+                Some(code) => !g.stopped && exit_failed(code),
+                None => g.activity.failed,
+            },
             pid: g.pid,
             cols: 0,
             rows: 0,
@@ -391,6 +401,12 @@ fn classify(line: &str) -> Option<Status> {
     None
 }
 
+/// Whether a turn-ending line reports an error (Claude `result.is_error`, Codex failed turn).
+fn turn_failed(line: &str) -> bool {
+    let Ok(v) = serde_json::from_str::<Value>(line) else { return false };
+    v.get("is_error").and_then(Value::as_bool) == Some(true) || v.pointer("/params/turn/status").and_then(Value::as_str) == Some("failed")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -406,5 +422,13 @@ mod tests {
         assert_eq!(classify(r#"{"method":"item/commandExecution/requestApproval","id":3}"#), Some(Status::Waiting));
         assert_eq!(classify(r#"{"id":4,"result":{"stopReason":"end_turn"}}"#), Some(Status::Idle));
         assert_eq!(classify("not json"), None);
+    }
+
+    #[test]
+    fn detects_failed_turns() {
+        assert!(turn_failed(r#"{"type":"result","subtype":"error_during_execution","is_error":true}"#));
+        assert!(!turn_failed(r#"{"type":"result","subtype":"success","is_error":false}"#));
+        assert!(turn_failed(r#"{"method":"turn/completed","params":{"turn":{"status":"failed"}}}"#));
+        assert!(!turn_failed(r#"{"method":"turn/completed","params":{"turn":{"status":"completed"}}}"#));
     }
 }

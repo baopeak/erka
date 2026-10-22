@@ -39,11 +39,13 @@ pub struct Activity {
     pub last_input: Option<Instant>,
     pub bell: Option<Instant>,
     pub hook: Option<(Status, Instant)>,
+    /// The last agent turn ended in an error (API failure, rate limit); cleared once it works again.
+    pub failed: bool,
 }
 
 impl Default for Activity {
     fn default() -> Self {
-        Activity { alive: true, last_output: None, burst_start: None, last_input: None, bell: None, hook: None }
+        Activity { alive: true, last_output: None, burst_start: None, last_input: None, bell: None, hook: None, failed: false }
     }
 }
 
@@ -54,6 +56,17 @@ impl Activity {
             self.burst_start = Some(now);
         }
         self.last_output = Some(now);
+    }
+
+    /// Records an agent-reported state. A failed turn stays failed through later idle reports
+    /// and clears as soon as the agent works or asks for something again.
+    pub fn on_hook(&mut self, status: Status, failed: bool, now: Instant) {
+        self.hook = Some((status, now));
+        if failed {
+            self.failed = true;
+        } else if status != Status::Idle {
+            self.failed = false;
+        }
     }
 
     pub fn status(&self, now: Instant) -> Status {
@@ -105,6 +118,17 @@ pub fn hook_event_status(agent: &str, event: &str, payload: &serde_json::Value) 
     }
 }
 
+/// Whether a hook event means the agent's turn ended in an error.
+pub fn hook_event_failed(event: &str) -> bool {
+    event == "StopFailure"
+}
+
+/// Whether a process exit code is a failure rather than a normal or Ctrl+C exit.
+pub fn exit_failed(code: i32) -> bool {
+    // 130 / 143: shell-reported SIGINT / SIGTERM; 0xC000013A: Windows STATUS_CONTROL_C_EXIT.
+    !matches!(code, 0 | 130 | 143) && code as u32 != 0xC000_013A
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -147,5 +171,28 @@ mod tests {
         assert_eq!(hook_event_status("claude", "Stop", &none), Some(Status::Idle));
         let ask = serde_json::json!({"tool_name": "AskUserQuestion"});
         assert_eq!(hook_event_status("claude", "PreToolUse", &ask), Some(Status::Waiting));
+        assert!(hook_event_failed("StopFailure"));
+        assert!(!hook_event_failed("Stop"));
+    }
+
+    #[test]
+    fn failure_survives_idle_and_clears_on_work() {
+        let t0 = Instant::now();
+        let mut a = Activity::default();
+        a.on_hook(Status::Idle, true, t0);
+        assert!(a.failed);
+        a.on_hook(Status::Idle, false, t0);
+        assert!(a.failed);
+        a.on_hook(Status::Working, false, t0);
+        assert!(!a.failed);
+    }
+
+    #[test]
+    fn ctrl_c_exits_are_not_failures() {
+        assert!(!exit_failed(0));
+        assert!(!exit_failed(130));
+        assert!(!exit_failed(0xC000_013Au32 as i32));
+        assert!(exit_failed(1));
+        assert!(exit_failed(-1));
     }
 }

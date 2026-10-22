@@ -24,7 +24,7 @@ use serde_json::{json, Value};
 
 use crate::agents::{Launch, TypedPrompt};
 use crate::proc_tree::ProcTree;
-use crate::status::{Activity, Status, MIN_WORK_FOR_UNREAD};
+use crate::status::{exit_failed, Activity, Status, MIN_WORK_FOR_UNREAD};
 use crate::vt::{Vt, VtEvent};
 
 /// Raw output kept for cheap, exact replays.
@@ -88,6 +88,8 @@ pub struct SessionInfo {
     pub unread: bool,
     pub alive: bool,
     pub exit_code: Option<i32>,
+    /// The last agent turn errored, or the process exited with a failure code on its own.
+    pub failed: bool,
     pub pid: Option<u32>,
     pub cols: u16,
     pub rows: u16,
@@ -172,6 +174,8 @@ struct Inner {
     unread: bool,
     last_status: Status,
     exit_code: Option<i32>,
+    /// Kelpie stopped the process, so its exit code says nothing about failure.
+    stopped: bool,
     pty: Option<Pty>,
     generation: u64,
     persisted_seq: u64,
@@ -228,6 +232,7 @@ impl Session {
                 unread: false,
                 last_status: Status::Exited,
                 exit_code: None,
+                stopped: false,
                 pty: None,
                 generation: 0,
                 persisted_seq: 0,
@@ -280,6 +285,7 @@ impl Session {
             }
             g.generation += 1;
             g.exit_code = None;
+            g.stopped = false;
             g.interrupted = false;
             g.activity = Activity { alive: true, ..Default::default() };
             g.last_status = Status::Idle;
@@ -478,7 +484,8 @@ impl Session {
     }
 
     pub fn kill(&self) {
-        let g = self.inner.lock();
+        let mut g = self.inner.lock();
+        g.stopped = true;
         if let Some(pty) = &g.pty {
             match &pty.tree {
                 Some(tree) => tree.kill(),
@@ -494,8 +501,8 @@ impl Session {
         self.inner.lock().pty.is_some()
     }
 
-    pub fn set_hook_status(&self, status: Status) {
-        self.inner.lock().activity.hook = Some((status, Instant::now()));
+    pub fn set_hook_status(&self, status: Status, failed: bool) {
+        self.inner.lock().activity.on_hook(status, failed, Instant::now());
     }
 
     pub fn screen_text(&self) -> String {
@@ -558,6 +565,10 @@ impl Session {
             unread: g.unread,
             alive: g.pty.is_some(),
             exit_code: g.exit_code,
+            failed: match g.exit_code {
+                Some(code) => !g.stopped && exit_failed(code),
+                None => g.activity.failed,
+            },
             pid: g.pty.as_ref().and_then(|p| p.pid),
             cols,
             rows,

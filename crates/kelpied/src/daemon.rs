@@ -20,7 +20,7 @@ use crate::status::Status;
 use crate::persist::{write_atomic, SavedSession, Store};
 use crate::runs::{self, Action, NewRun, Runs, SessionView, TaskStatus};
 use crate::session::{json_out, now_millis, ClientTx, Session, SessionInfo, SessionSpec};
-use crate::status::hook_event_status;
+use crate::status::{hook_event_failed, hook_event_status};
 
 #[derive(Clone)]
 pub enum Entry {
@@ -668,7 +668,7 @@ impl Daemon {
             }
         }
         if let Some(status) = hook_event_status(agent, event, &payload) {
-            session.set_hook_status(status);
+            session.set_hook_status(status, hook_event_failed(event));
         }
         Ok(())
     }
