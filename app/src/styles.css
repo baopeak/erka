@@ -50,6 +50,9 @@
   --scroll-thumb-hover: rgba(255,255,255,0.14);
   --checker-a: #1a1f2c;
   --checker-b: #151925;
+  /* Multi-pane layouts: the ground between pane cards, and the veil over unfocused panes. */
+  --pane-ground: #0b0d13;
+  --pane-veil: rgba(9, 11, 17, .28);
   color-scheme: dark;
 }
 
@@ -99,6 +102,8 @@
   --scroll-thumb-hover: rgba(0,0,0,0.26);
   --checker-a: #efeee9;
   --checker-b: #ffffff;
+  --pane-ground: #e4e2db;
+  --pane-veil: rgba(246, 246, 243, .38);
   color-scheme: light;
 }
 :root[data-theme="light"] .overlay { background: rgba(30,35,45,.25); }
@@ -181,7 +186,7 @@ input, textarea, select { font: inherit; color: var(--text); }
 }
 .project:hover { background: var(--bg-hover); color: var(--text); }
 .project.active { background: var(--bg-active); color: var(--text); }
-.project-swatch { width: 22px; height: 22px; border-radius: 6px; display: grid; place-items: center; font-weight: 700; font-size: 11px; color: #141823; flex: none; }
+.project-swatch { width: 22px; height: 22px; border-radius: 6px; display: grid; place-items: center; font-weight: 700; font-size: 11px; color: #fff; text-shadow: 0 1px 1px rgb(0 0 0 / .35); flex: none; }
 .project-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .project-badges { display: flex; gap: 4px; align-items: center; }
 .badge { min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; font-size: 10px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; color: #141823; }
@@ -248,16 +253,31 @@ input, textarea, select { font: inherit; color: var(--text); }
 .split { display: flex; width: 100%; height: 100%; min-width: 0; min-height: 0; }
 .split.col { flex-direction: column; }
 .split > .child { position: relative; min-width: 0; min-height: 0; overflow: hidden; }
-.gutter { flex: none; background: var(--border); position: relative; z-index: 2; }
-.split.row > .gutter { width: 1px; cursor: col-resize; }
-.split.col > .gutter { height: 1px; cursor: row-resize; }
+/* Several panes: each is a card on a darker ground, separated by a --gutter gap. */
+.multi { --gutter: 4px; padding: var(--gutter); background: var(--pane-ground); }
+.gutter { flex: none; background: var(--pane-ground); position: relative; z-index: 2; }
+.split.row > .gutter { width: var(--gutter); cursor: col-resize; }
+.split.col > .gutter { height: var(--gutter); cursor: row-resize; }
 .gutter::before { content: ""; position: absolute; inset: -3px; }
-.split.row > .gutter::before { inset: 0 -4px; }
-.split.col > .gutter::before { inset: -4px 0; }
-.gutter:hover, .gutter.dragging { background: var(--accent); }
-.pane { position: absolute; inset: 0; display: flex; flex-direction: column; }
-.pane.focused::after { content: ""; position: absolute; inset: 0; pointer-events: none; box-shadow: inset 0 0 0 1px rgba(232,116,59,.45); z-index: 5; }
-.multi .pane:not(.focused) .pane-body { opacity: .92; }
+.split.row > .gutter::before { inset: 0 -3px; }
+.split.col > .gutter::before { inset: -3px 0; }
+/* Resize affordance: a hairline down the middle of the gap, not a slab of accent. */
+.gutter::after { content: ""; position: absolute; border-radius: 1px; background: var(--accent); opacity: 0; transition: opacity .12s; }
+.split.row > .gutter::after { top: 0; bottom: 0; left: calc(50% - 1px); width: 2px; }
+.split.col > .gutter::after { left: 0; right: 0; top: calc(50% - 1px); height: 2px; }
+.gutter:hover::after, .gutter.dragging::after { opacity: 1; }
+/* --pane-color is the pane's agent colour (set from its session kind). */
+.pane { position: absolute; inset: 0; display: flex; flex-direction: column; --pane-color: var(--accent); }
+/* The header is tinted by its agent; the focused pane is lit (full-strength edge, top rule and
+   title) while the others step back under a soft veil, so the active one reads at a glance. */
+.multi .pane { border-radius: 6px; overflow: hidden; }
+.multi .pane::after { content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; box-shadow: inset 0 0 0 1px var(--border-strong); z-index: 5; }
+.multi .pane.focused::after { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--pane-color) 75%, transparent); }
+.multi .pane-header { background: color-mix(in srgb, var(--pane-color) 5%, var(--bg-elev)); box-shadow: inset 0 2px 0 color-mix(in srgb, var(--pane-color) 30%, transparent); transition: background .15s, color .15s; }
+.multi .pane.focused .pane-header { background: color-mix(in srgb, var(--pane-color) 13%, var(--bg-elev)); box-shadow: inset 0 2px 0 var(--pane-color); color: var(--text); }
+.multi .pane.focused .pane-header .title { font-weight: 600; }
+.multi .pane-body::after { content: ""; position: absolute; inset: 0; pointer-events: none; background: var(--pane-veil); opacity: 0; transition: opacity .15s; z-index: 4; }
+.multi .pane:not(.focused) .pane-body::after { opacity: 1; }
 .pane-header { height: 28px; flex: none; display: flex; align-items: center; gap: 8px; padding: 0 6px 0 10px; font-size: 12px; color: var(--text-dim); border-bottom: 1px solid var(--border); background: var(--bg-elev); }
 .pane-header .title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pane-header .icon-btn { width: 22px; height: 22px; }
@@ -266,6 +286,9 @@ input, textarea, select { font: inherit; color: var(--text); }
 .term-host { width: 100%; height: 100%; }
 .term-host .xterm { height: 100%; }
 .term-host .xterm-viewport { background: transparent !important; }
+/* Keep the scrollbar visible: xterm fades it out when idle (`invisible fade`), which hides that
+   history exists. A bare `invisible` means there is nothing to scroll, so that one stays hidden. */
+.term-host .xterm-scrollable-element > .scrollbar.vertical.invisible.fade { opacity: 1; pointer-events: auto; transition: none; }
 .pane-overlay { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(11,13,18,.55); z-index: 6; }
 .exit-card { background: var(--bg-elev-2); border: 1px solid var(--border-strong); border-radius: 12px; padding: 16px 18px; display: flex; flex-direction: column; gap: 10px; align-items: center; box-shadow: 0 20px 50px rgba(0,0,0,.45); }
 .exit-card .msg { color: var(--text-dim); }
@@ -285,7 +308,7 @@ input, textarea, select { font: inherit; color: var(--text); }
 .launcher { display: grid; grid-template-columns: repeat(2, minmax(180px, 1fr)); gap: 10px; margin-top: 6px; }
 .launch-card { text-align: left; padding: 14px; border-radius: 12px; border: 1px solid var(--border-strong); background: var(--bg-elev); cursor: pointer; display: flex; gap: 12px; align-items: center; }
 .launch-card:hover { border-color: var(--accent); background: var(--bg-hover); }
-.launch-card .glyph { width: 34px; height: 34px; border-radius: 9px; display: grid; place-items: center; font-weight: 700; color: #141823; }
+.launch-card .glyph { width: 34px; height: 34px; border-radius: 9px; display: grid; place-items: center; font-weight: 700; color: #fff; }
 .launch-card .sub { font-size: 11.5px; color: var(--text-faint); }
 .launch-card .ssh-glyph { width: 34px; height: 34px; border-radius: 5px; display: grid; place-items: center; flex: none; background: var(--accent); color: #fff; }
 
@@ -754,7 +777,11 @@ input, textarea, select { font: inherit; color: var(--text); }
 .pane-header { cursor: default; }
 .multi .pane-header { cursor: grab; }
 .multi .pane-header:active { cursor: grabbing; }
-.pane.broadcast::before { content: ""; position: absolute; inset: 0; pointer-events: none; box-shadow: inset 0 0 0 1px rgba(255,190,90,.55); z-index: 5; }
+.pane.broadcast::before { content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; box-shadow: inset 0 0 0 1px rgba(255,190,90,.55); z-index: 5; }
+/* A split tab's panes as dots in their agent colours: how many, which agents, which is focused. */
+.tab-panes { display: inline-flex; align-items: center; gap: 3px; flex: none; }
+.tab-panes i { width: 5px; height: 5px; border-radius: 3px; opacity: .5; transition: width .15s, opacity .15s; }
+.tab-panes i.on { width: 12px; opacity: 1; }
 .broadcast-badge { background: var(--waiting); padding: 0 6px; }
 .empty-pane { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 12px; background: var(--term-bg); overflow: auto; }
 .empty-pane-title { color: var(--text-faint); font-size: 12px; }

@@ -66,7 +66,7 @@ export function PaneView(props: { pane: Pane; project: Project; tab: Tab }) {
 
   return (
     <div class={`pane${focused() && multi() ? " focused" : ""}${broadcasting() ? " broadcast" : ""}${target() ? " on-host" : ""}`} data-pane={props.pane.id} data-tab={props.tab.id} data-pane-host={target()?.dest}
-      style={hostColor() ? { "--host-color": hostColor() } : undefined} onPointerDown={focus}>
+      style={{ "--host-color": hostColor(), "--pane-color": session() ? kindInfo(session()!.kind).color : undefined }} onPointerDown={focus}>
       {/* Above the pane's opaque children (::before / ::after mark broadcast and focus). */}
       <Show when={hostColor()}><div class="pane-host-stripe" /></Show>
       <Show when={!hasHeader()}>

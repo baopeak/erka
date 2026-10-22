@@ -12,6 +12,7 @@ import { openLayoutMenu } from "./layout-menu";
 import { browserState, openBrowser } from "../lib/browser";
 import { HostChip } from "./host-target";
 import { projectTarget, sessionTarget } from "../lib/remote";
+import { kindInfo } from "../lib/agents";
 import type { Pane, Project, Tab } from "../lib/types";
 import { t } from "../lib/i18n";
 import { confirmDialog } from "../lib/confirm-dialog";
@@ -34,6 +35,12 @@ export function paneTitle(pane: Pane): string {
   return t("Empty pane");
 }
 
+/** A pane's agent colour; panes without a session (files, browser, empty) stay neutral. */
+const paneColor = (pane: Pane) => {
+  const s = pane.sessionId ? store.sessions[pane.sessionId] : undefined;
+  return s ? kindInfo(s.kind).color : "var(--text-faint)";
+};
+
 function TabTitle(props: { tab: Tab; project: Project }) {
   const panes = createMemo(() => allPanes(props.tab.root));
   const focus = () => panes().find((p) => p.id === props.tab.focus) ?? panes()[0];
@@ -51,10 +58,12 @@ function TabTitle(props: { tab: Tab; project: Project }) {
       <Show when={session()}>{(s) => <KindGlyph kind={s().kind} size={14} />}</Show>
       <Show when={host()}>{(tg) => <HostChip target={tg()} />}</Show>
       <Show when={props.tab.broadcast}><span class="badge broadcast-badge" title={t("Broadcast input is on")}>⇶</span></Show>
-      <span class="title">
-        {props.tab.name ?? paneTitle(focus())}
-        <Show when={panes().length > 1}> <span style={{ color: "var(--text-faint)" }}>+{panes().length - 1}</span></Show>
-      </span>
+      <span class="title">{props.tab.name ?? paneTitle(focus())}</span>
+      <Show when={panes().length > 1}>
+        <span class="tab-panes">
+          <For each={panes()}>{(p) => <i classList={{ on: p.id === focus()?.id }} style={{ background: paneColor(p) }} />}</For>
+        </span>
+      </Show>
     </>
   );
 }
