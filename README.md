@@ -306,6 +306,7 @@ End-to-end tests drive the real app through WebDriver (`tauri-driver` + a matchi
 | `scripts/e2e/phase1.py` … `phase5.py` | key hints, explorer, sidebar, search, history, usage, quick commands, settings, shortcuts, navigation, themes, worktrees, board, state migration |
 | `scripts/e2e/parity.py` | agent presets and Yolo, startup prompts, `kelpied terminal` / `worktree` CLI, push / pull / sync / abort, worktree copy / link, review notes, inbox, floating terminal, hibernation, keep-awake, themes, viewers, automations (`--ai`: one real one-shot call) |
 | `scripts/e2e/layouts.py` | grids, per-row counts, drag to swap / move, equalize, broadcast, saved layouts, resume after a daemon restart (real Claude, terminal and chat) |
+| `scripts/e2e/tabs_panes.py` | a lone pane has no header; Tile all gathers one-pane tabs into an even grid (4 → 2 × 2, 5th → 3 + 2), Spread into tabs undoes it; split tabs stay |
 | `scripts/e2e/accounts.py`, `runs.py`, `integrations.py` | several accounts; orchestration runs (real agent reporting, AI planning); Linear / Jira / GitLab (GitLab live) |
 | `scripts/e2e/browser.py`, `remote.py`, `mobile.py` | browser panes and design mode (trusted page input via DevTools); SSH projects (local test host); phone pairing and replies |
 | `scripts/e2e/ssh_hosts.py` | SSH hosts page against a local test host: password login through askpass, fingerprint check, terminal and Claude Code on the host, files, port forwards, keys installed and used, known hosts, config import (set `KELPIE_SSH_DIR`) |

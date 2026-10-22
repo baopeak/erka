@@ -6,7 +6,7 @@ import { isPermissionGranted, requestPermission, sendNotification } from "@tauri
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import * as ipc from "./ipc";
 import { t } from "./i18n";
-import { allPanes, buildGrid, cellCount, equalize, findPane, fromTemplate, insertBeside, leaf, migrateLayout, moveGutter, movePane, removePane, replacePane, splitPane, swapPanes, templateLeaves, toTemplate, type GridSpec, type Side } from "./layout";
+import { allPanes, autoGrid, buildGrid, cellCount, equalize, findPane, fromTemplate, insertBeside, leaf, migrateLayout, moveGutter, movePane, removePane, replacePane, splitPane, swapPanes, templateLeaves, toTemplate, type GridSpec, type Side } from "./layout";
 import { basename, isMac, normPath, uid } from "./platform";
 import { projectColors } from "./theme";
 import { disposeView, peekView, resetStreams, setInputFanout } from "./terminal-host";
@@ -686,6 +686,85 @@ function createAppStore() {
     }
   }
 
+  /** Panes that hold something (empty launcher cells do not count). */
+  const realPanes = (tab: Tab) => allPanes(tab.root).filter((p) => p.kind !== "empty");
+
+  /** The tabs (other than `tabId`) that "Tile all" would pull into that tab: tabs holding one CLI
+   *  (terminal or chat). Tabs with a split are deliberate layouts; file, diff and browser tabs are
+   *  not CLIs. */
+  function tileCandidates(projectId: string, tabId: string): Tab[] {
+    return workspace(projectId).tabs.filter((t) => {
+      if (t.id === tabId) return false;
+      const panes = allPanes(t.root);
+      return panes.length === 1 && !!panes[0].sessionId;
+    });
+  }
+
+  /** Tile all would change something: gather another tab, or re-even this tab's own panes. */
+  function canTile(projectId: string, tabId: string) {
+    const tab = workspace(projectId).tabs.find((t) => t.id === tabId);
+    return !!tab && (realPanes(tab).length > 1 || (realPanes(tab).length === 1 && tileCandidates(projectId, tabId).length > 0));
+  }
+
+  function canSpread(projectId: string, tabId: string) {
+    const tab = workspace(projectId).tabs.find((t) => t.id === tabId);
+    return !!tab && realPanes(tab).length > 1;
+  }
+
+  /** Tile all: this tab's panes, then every one-CLI tab in tab-bar order, in the most even grid.
+   *  Tabs whose pane joined close; their sessions keep running. Broadcast goes off when other
+   *  tabs join, so keystrokes never start reaching agents the user did not pick. */
+  function tileTab(projectId: string, tabId: string) {
+    const tab = workspace(projectId).tabs.find((t) => t.id === tabId);
+    if (!tab || !canTile(projectId, tabId)) return;
+    if (zoomed()[tab.id]) toggleZoom(tab.id, zoomed()[tab.id]);
+    const cap = cellCount(autoGrid(Infinity));
+    const own = realPanes(tab);
+    // More panes than the biggest grid: the arrange path spills the rest into new tabs.
+    if (own.length >= cap) return arrangeTab(projectId, tabId, autoGrid(cap));
+    const others = tileCandidates(projectId, tabId);
+    const joining = others.slice(0, cap - own.length);
+    const panes = [...own, ...joining.map((t) => allPanes(t.root)[0])];
+    const joined = new Set(joining.map((t) => t.id));
+    const taken = new Set(panes.map((p) => p.id));
+    const root = buildGrid(autoGrid(panes.length), panes, emptyPane);
+    update((s) => {
+      const w = s.workspaces[projectId];
+      w.tabs = w.tabs.filter((t) => !joined.has(t.id));
+      const t = w.tabs.find((x) => x.id === tabId)!;
+      t.root = root;
+      if (!taken.has(t.focus)) t.focus = panes[0].id;
+      if (joined.size) t.broadcast = false;
+      w.activeTab = tabId;
+    });
+    if (joined.size) notify(joined.size === 1 ? t("{n} tab joined this grid", { n: joined.size }) : t("{n} tabs joined this grid", { n: joined.size }));
+    const left = others.length - joining.length;
+    if (left) notify(left === 1 ? t("{n} tab did not fit and stays as it is", { n: left }) : t("{n} tabs did not fit and stay as they are", { n: left }));
+  }
+
+  /** Spread into tabs: every pane of this tab gets a tab of its own, right after it; the focused
+   *  pane stays here. Empty panes (launchers) are dropped; the tab's name and broadcast described
+   *  the group, so they go with it. */
+  function spreadTab(projectId: string, tabId: string) {
+    const tab = workspace(projectId).tabs.find((t) => t.id === tabId);
+    if (!tab || !canSpread(projectId, tabId)) return;
+    const panes = realPanes(tab);
+    if (zoomed()[tab.id]) toggleZoom(tab.id, zoomed()[tab.id]);
+    const keep = panes.find((p) => p.id === tab.focus) ?? panes[0];
+    const rest: Tab[] = panes.filter((p) => p.id !== keep.id).map((p) => ({ id: uid(), root: leaf(p), focus: p.id }));
+    update((s) => {
+      const w = s.workspaces[projectId];
+      const i = w.tabs.findIndex((x) => x.id === tabId);
+      if (i < 0) return;
+      w.tabs[i].root = leaf(keep);
+      w.tabs[i].focus = keep.id;
+      w.tabs[i].broadcast = false;
+      delete w.tabs[i].name;
+      w.tabs.splice(i + 1, 0, ...rest);
+      w.activeTab = tabId;
+    });
+  }
+
   /** Opens a new tab with a grid; cell i runs `kinds[i]` (null = an empty pane with a
    *  launcher). `prompt` goes to every agent started. */
   async function launchGrid(projectId: string, spec: GridSpec, kinds: (SessionKind | null)[], opts: { prompt?: string; args?: string[]; account?: string; target?: SessionTarget } = {}) {
@@ -1290,7 +1369,7 @@ function createAppStore() {
     state, sessions, connected, overlay, setOverlay, loaded, toast, notify, lastSwitchMs,
     init, activeProject, workspace, activeTab, addProject, removeProject, renameProject, moveProject, switchProject,
     addTab, selectTab, cycleTab, focusPane, placePane, newSession, startSession, revealSession, openFile, closePane,
-    arrangeTab, launchGrid, saveLayout, deleteLayout, renameLayout, applyLayout, equalizeTab, dropPane, setBroadcast, renameTab,
+    arrangeTab, tileCandidates, canTile, canSpread, tileTab, spreadTab, launchGrid, saveLayout, deleteLayout, renameLayout, applyLayout, equalizeTab, dropPane, setBroadcast, renameTab,
     splitPicker, moveTab, movePaneToTab, mergeTab,
     resumeSession, resumeInterrupted, setChatResumer,
     replacePaneIn, updatePane, resizeSplit, setRightPanel, showRightPanel, setSettings, zoomed, toggleZoom,

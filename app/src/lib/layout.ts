@@ -227,6 +227,17 @@ export function validGrid(spec: GridSpec): boolean {
   return spec.counts.length >= 1 && spec.counts.length <= MAX_GRID && spec.counts.every((n) => Number.isInteger(n) && n >= 1 && n <= MAX_GRID);
 }
 
+/** The most even grid for `n` panes: about as many columns as rows, longer rows first
+ *  (4 → 2 + 2, 5 → 3 + 2, 7 → 3 + 2 + 2). Never more than MAX_GRID per line. */
+export function autoGrid(n: number): GridSpec {
+  const count = Math.max(1, Math.min(n, MAX_GRID * MAX_GRID));
+  const cols = Math.min(MAX_GRID, Math.ceil(Math.sqrt(count)));
+  const rows = Math.ceil(count / cols);
+  const base = Math.floor(count / rows);
+  const extra = count % rows;
+  return { mode: "rows", counts: Array.from({ length: rows }, (_, i) => base + (i < extra ? 1 : 0)) };
+}
+
 /** Lays `panes` out in the grid, in reading order. Missing cells get `filler()`. */
 export function buildGrid(spec: GridSpec, panes: Pane[], filler: () => Pane): LayoutNode {
   const queue = [...panes];

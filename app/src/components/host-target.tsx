@@ -69,7 +69,7 @@ export function OsBadge(props: { os: string; size?: number }) {
 export function HostChip(props: { target: SessionTarget; path?: boolean }) {
   const host = () => hostOf(props.target);
   return (
-    <span class="host-chip" title={t("Runs on {host} over SSH", { host: host()?.label ?? props.target.dest })} style={{ "--host-color": host()?.color || "var(--accent)" }}>
+    <span class="host-chip" title={`${t("Runs on {host} over SSH", { host: host()?.label ?? props.target.dest })}${props.target.path ? ` · ${props.target.path}` : ""}`} style={{ "--host-color": host()?.color || "var(--accent)" }}>
       <span class="host-dot" />
       <span class="host-chip-name">{host()?.label ?? props.target.dest}</span>
       <Show when={props.path}><span class="host-chip-path">{props.target.path}</span></Show>

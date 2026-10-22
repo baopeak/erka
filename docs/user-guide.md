@@ -211,6 +211,20 @@ the window is closed; *Run now* tries one immediately. Runs missed by more than 
 
 ### Layouts
 
+**Tabs and panes.** A tab is one piece of work; panes are what you look at side by side inside
+it. A new terminal or session opens in a new tab; *Split right / down* halves the focused pane
+and asks what to run there. A tab with one pane has no pane header — the tab shows its agent,
+title and host, and the pane's buttons (chat view, dictation, split, close) appear when you hover
+its top-right corner. As soon as a tab holds two or more panes, each gets a header and the tab
+shows one coloured dot per pane.
+
+**Tile all** (layout menu, or the palette) puts the tab's panes and every tab that holds a
+single CLI (terminal or chat) into one even grid: 4 CLIs become 2 × 2, a 5th makes it 3 + 2,
+7 make 3 + 2 + 2. It also evens out a grid that splitting made lopsided. Tabs that already hold
+a split, and file, diff or browser tabs, are left alone; *Broadcast input* turns off when other
+tabs join. **Spread into tabs** does the opposite: each pane of the tab gets its own tab.
+Sessions keep running through both.
+
 The grid button in the tab bar (or `Ctrl+Shift+L` / `⌘⇧L`) arranges the tab: presets from
 2 columns to 3×3, any number of rows or columns, or per-row counts such as `3,2` (three panes
 on top, two below). Existing panes keep their place; new cells are empty panes with a launcher.

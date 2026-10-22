@@ -35,9 +35,18 @@ export function PaneView(props: { pane: Pane; project: Project; tab: Tab }) {
     focus();
     store.splitPicker(props.project.id, where);
   };
-  const zoomedHere = () => store.zoomed()[props.tab.id] === props.pane.id;
+  // A maximize left over after the other panes closed means nothing for a lone pane.
+  const zoomedHere = () => multi() && store.zoomed()[props.tab.id] === props.pane.id;
   const tools = () => (
     <>
+      <Show when={chatable()}>
+        <Show
+          when={props.pane.kind === "chat"}
+          fallback={<button class="icon-btn" title={t("Open in chat view")} onClick={() => void switchToChat(props.project, props.tab, props.pane)}><Icon name="chat" size={14} /></button>}
+        >
+          <button class="icon-btn" title={t("Back to terminal (TUI)")} onClick={() => void switchToTerminal(props.project, props.tab, props.pane)}><Icon name="terminal" size={14} /></button>
+        </Show>
+      </Show>
       <Show when={props.pane.kind === "terminal" && session()?.alive}>
         <MicButton sessionId={props.pane.sessionId} size={13} />
       </Show>
@@ -52,14 +61,16 @@ export function PaneView(props: { pane: Pane; project: Project; tab: Tab }) {
     </>
   );
   /** The host this pane's session runs on, when it is not where the project is (a remote pane in
-   *  a local project, or a pane on another host): always named in the header. */
+   *  a local project, or a pane on another host): named in the header of a split, and by the tab
+   *  chip when the pane is alone. */
   const target = () => (session() ? sessionTarget(session()!) : undefined);
   const elsewhere = () => !!target() && target()!.dest !== projectTarget(props.project)?.dest;
   const hostColor = () => (target() ? hostOf(target())?.color || "var(--accent)" : undefined);
-  // File/diff viewers have their own top bar: give them the header instead of a floating
-  // toolbar so the two never overlap.
-  const hasHeader = () =>
-    multi() || zoomedHere() || props.pane.kind === "file" || props.pane.kind === "diff" || (session() && chatable()) || elsewhere();
+  // A header only where it tells something the tab does not: which pane is which in a split
+  // (or a maximized one), and a bar for file/diff viewers so their own top bar never sits under
+  // the floating toolbar. A lone pane is named by its tab (glyph, title, host chip) and keeps its
+  // controls in the hover toolbar.
+  const hasHeader = () => multi() || zoomedHere() || props.pane.kind === "file" || props.pane.kind === "diff";
   // Chat view runs the agent as a local process: not for sessions on another machine.
   const chatable = () => !!session() && supportsChat(session()!.kind) && !session()!.remote;
   const broadcasting = () => !!props.tab.broadcast && props.pane.kind === "terminal";
@@ -81,14 +92,6 @@ export function PaneView(props: { pane: Pane; project: Project; tab: Tab }) {
           <span class="title">{paneTitle(props.pane)}</span>
           <Show when={broadcasting()}>
             <span class="badge broadcast-badge" title={t("Typing here goes to every terminal in this tab")}>{t("Broadcast")}</span>
-          </Show>
-          <Show when={chatable()}>
-            <Show
-              when={props.pane.kind === "chat"}
-              fallback={<button class="icon-btn" title={t("Open in chat view")} onClick={() => void switchToChat(props.project, props.tab, props.pane)}><Icon name="chat" size={14} /></button>}
-            >
-              <button class="icon-btn" title={t("Back to terminal (TUI)")} onClick={() => void switchToTerminal(props.project, props.tab, props.pane)}><Icon name="terminal" size={14} /></button>
-            </Show>
           </Show>
           {tools()}
         </div>

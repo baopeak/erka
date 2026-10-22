@@ -127,6 +127,8 @@ export const commands: Command[] = [
   { id: "tab.prev", label: msg("Previous Tab"), win: "ctrl+shift+tab", mac: "ctrl+shift+tab", run: () => store.cycleTab(-1) },
   { id: "tab.moveLeft", label: msg("Move Tab Left"), when: () => !!focusedPane(), run: () => moveActiveTab(-1) },
   { id: "tab.moveRight", label: msg("Move Tab Right"), when: () => !!focusedPane(), run: () => moveActiveTab(1) },
+  { id: "layout.tile", label: msg("Tile All (this tab and one-CLI tabs)"), when: () => { const f = focusedPane(); return !!f && store.canTile(f.projectId, f.tab.id); }, run: () => { const f = focusedPane(); if (f) store.tileTab(f.projectId, f.tab.id); } },
+  { id: "layout.spread", label: msg("Spread Panes into Tabs"), when: () => { const f = focusedPane(); return !!f && store.canSpread(f.projectId, f.tab.id); }, run: () => { const f = focusedPane(); if (f) store.spreadTab(f.projectId, f.tab.id); } },
   { id: "pane.toNewTab", label: msg("Move Pane to New Tab"), when: () => { const f = focusedPane(); return !!f && allPanes(f.tab.root).length > 1; }, run: () => { const f = focusedPane(); if (f) store.movePaneToTab(f.projectId, f.tab.id, f.paneId, null); } },
   { id: "panel.files", label: msg("Toggle Explorer"), win: "mod+shift+e", mac: "mod+shift+e", run: () => store.setRightPanel("files"), when: hasProject },
   { id: "panel.git", label: msg("Toggle Source Control"), win: "mod+shift+g", mac: "mod+shift+g", run: () => store.setRightPanel("git"), when: hasProject },
