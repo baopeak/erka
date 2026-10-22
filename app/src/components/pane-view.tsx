@@ -16,6 +16,7 @@ import { paneTitle } from "./workspace-view";
 import { switchToChat, switchToTerminal, supportsChat } from "../chat/mode-switch";
 import { startPaneDrag } from "./split-view";
 import { BrowserPane } from "./browser-pane";
+import { Kip, kipShown } from "./brand";
 import { kindInfo } from "../lib/agents";
 import type { Pane, Project, Tab } from "../lib/types";
 import { t } from "../lib/i18n";
@@ -177,6 +178,7 @@ function EmptyPane(props: { project: Project; tab: Tab; pane: Pane; focused: boo
   };
   return (
     <div class="empty-pane" ref={el} tabindex={-1} onKeyDown={onKey}>
+      <Show when={kipShown()}><Kip mood="peek" size={56} /></Show>
       <div class="empty-pane-title">{t("What should run in this pane?")}</div>
       <Show when={vault().hosts.length || props.project.remote}>
         <RunOnPicker project={props.project} value={runOn()} onChange={setRunOn} />

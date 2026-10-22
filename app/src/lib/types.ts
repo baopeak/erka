@@ -192,6 +192,9 @@ export interface Settings {
   hibernateMinutes: number;
   /** Prevent idle sleep: never, while an agent works, or always. */
   keepAwake: "off" | "agents" | "always";
+  /** Sessions not on screen run below normal CPU priority, so typing stays quick when the
+   *  machine is busy (Windows). */
+  prioritizeVisible: boolean;
   /** A short chime with desktop notifications. */
   notificationSound: boolean;
   /** Terminal colour theme id (lib/terminal-themes.ts); "default" follows the app theme. */
@@ -202,6 +205,10 @@ export interface Settings {
   aiAgent: "claude" | "codex";
   /** Global floating terminal (not tied to a project). */
   floatingTerminal: boolean;
+  /** Kip, the mascot: in the sidebar footer (agent status) and on empty screens. */
+  mascot: boolean;
+  /** Kip's animations: always, as the OS's animation setting says, or never. */
+  mascotMotion: "on" | "system" | "off";
   /** Layouts saved from a tab, offered in the layout menu and the launcher. */
   layouts: SavedLayout[];
   /** After the session daemon restarts (reboot, update, crash): resume sessions when they are

@@ -10,7 +10,7 @@ import { pullRequests, prLabel } from "../lib/pull-requests";
 import { switchToChat, switchToTerminal, supportsChat } from "../chat/mode-switch";
 import { daemon } from "../lib/ipc";
 import { Icon, KindGlyph } from "./icons";
-import { BrandMark, BrandWordmark } from "./brand";
+import { BrandMark, BrandWordmark, KipCompanion, kipShown } from "./brand";
 import { findPane } from "../lib/layout";
 import { sessionAccount } from "../lib/accounts";
 import { hostLabel } from "../lib/remote";
@@ -436,6 +436,7 @@ export function Sidebar() {
         <button class="icon-btn" data-tip="hosts" title={t("SSH hosts") + navHint("hosts")} onClick={() => openHosts()}><Icon name="server" /></button>
         <button class="icon-btn" title={t("Settings")} onClick={() => store.openSettings()}><Icon name="settings" /></button>
         <span style={{ flex: 1 }} />
+        <Show when={kipShown()}><KipCompanion /></Show>
         <button class="icon-btn" title={t("Toggle sidebar")} onClick={() => store.setSettings({ sidebarCollapsed: !collapsed() })}><Icon name="sidebar" /></button>
       </div>
     </aside>

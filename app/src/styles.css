@@ -171,7 +171,6 @@ input, textarea, select { font: inherit; color: var(--text); }
 .brand-word { height: 15px; display: block; }
 /* Logo artwork drawn for one ground: hidden on the other theme. */
 :root[data-theme="light"] .on-dark, :root:not([data-theme="light"]) .on-light { display: none; }
-.kip { display: block; width: 168px; height: auto; }
 .welcome h1 .brand-word { height: 34px; }
 .inbox-empty { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 18px 16px; text-align: center; }
 .brand .spacer { flex: 1; }

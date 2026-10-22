@@ -48,6 +48,23 @@ A kelpie peeking out of a terminal window. One file per agent state:
 | `kip-done.svg` | Agent done |
 | `kip-sleep.svg` | Idle / hibernated |
 
+In the app (`app/src/components/brand.tsx`, `kip.css`), Kip peeks over the sidebar footer and
+follows the agents: one needs you, they work, one finished, all quiet, or a nap after 10 quiet
+minutes. Clicking Kip opens the session it reacts to. Kip also greets you on empty screens (no
+project, a project without tabs, an empty pane, an empty inbox).
+
+The SVG files mark the parts that move (`kip-ear-l`, `kip-ear-r`, `kip-eyes`); the app inlines
+them. Motion has to stay light, because Kelpie must cost almost nothing while agents run:
+
+- Nothing loops. A mood plays its entry once; after that a single timer adds one short gesture
+  (blink, ear twitch, bob, nudge, hop, breath) every few seconds, and nothing runs in between. A
+  looping animation, however small, made the webview redraw the window every frame: about 18%
+  of a core while agents worked, against about 3% with gestures (`scripts/e2e/mascot.py`
+  measures it).
+- No gestures while the window is hidden or another app has the focus.
+- Settings → Appearance: **Kip, the mascot** (off: no Kip and no timers at all) and **Kip
+  animations** (Always / Follow system / Off; Follow system honours the OS's animation setting).
+
 ## Voice
 
 Clear, short and warm, like a teammate: say what happened and what to do next.

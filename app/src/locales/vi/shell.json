@@ -315,5 +315,11 @@
   "Drag to reorder, or onto a pane edge to merge": "Kéo để sắp xếp lại, hoặc thả vào cạnh một khung để gộp",
   "needs you": "cần bạn",
   "Last turn failed": "Lượt gần nhất bị lỗi",
-  "Exited with code {code}": "Đã thoát với mã {code}"
+  "Exited with code {code}": "Đã thoát với mã {code}",
+  "{n} finished": "{n} đã xong",
+  "All quiet": "Mọi thứ yên ắng",
+  "All quiet. Kip is napping.": "Mọi thứ yên ắng. Kip đang chợp mắt.",
+  "Open the agent that needs you": "Mở agent đang cần bạn",
+  "Open the agent that finished": "Mở agent vừa xong",
+  "Open the agent dashboard": "Mở bảng điều khiển agent"
 }

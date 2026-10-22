@@ -14,7 +14,7 @@ import { RunOnPicker, resolveRunOn, runOnAgents, type RunOn } from "./host-targe
 import type { Project, SessionKind } from "../lib/types";
 import { t, msg } from "../lib/i18n";
 import { openHosts } from "./hosts-page";
-import { BrandWordmark, Kip } from "./brand";
+import { BrandWordmark, Kip, kipShown } from "./brand";
 
 const kbd = (id: string) => {
   const c = commands.find((x) => x.id === id);
@@ -26,7 +26,7 @@ export function Welcome() {
   return (
     <div class="empty">
       <div class="welcome">
-        <Kip mood="peek" size={150} />
+        <Show when={kipShown()}><Kip mood="peek" size={150} /></Show>
         <h1><BrandWordmark height={34} /></h1>
         <div style={{ color: "var(--text-dim)" }}>
           {t("Run many coding agents across many projects. Sessions live in a background daemon, so switching projects or closing this window never stops them.")}
@@ -84,6 +84,7 @@ export function Launcher(props: { project: Project }) {
   return (
     <div class="empty">
       <div class="welcome">
+        <Show when={kipShown()}><Kip mood="peek" size={96} /></Show>
         <h1>{props.project.name}</h1>
         <div style={{ color: "var(--text-faint)", "font-family": "var(--font-mono)", "font-size": "12px" }}>{props.project.path}</div>
         <RunOnPicker project={props.project} value={runOn()} onChange={setRunOn} />

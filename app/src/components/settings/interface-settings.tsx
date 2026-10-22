@@ -1,6 +1,6 @@
 // Terminal, Appearance and Notifications sections.
 import { t } from "../../lib/i18n";
-import { For } from "solid-js";
+import { For, Show } from "solid-js";
 import { store } from "../../lib/store";
 import { terminalThemes } from "../../lib/terminal-themes";
 import { applySettings, Choice, SettingRow, Toggle } from "./setting-row";
@@ -67,6 +67,14 @@ export function AppearanceSettings() {
       <SettingRow id="word-wrap">
         <Toggle on={s().wordWrap} onChange={(on) => store.setSettings({ wordWrap: on })} />
       </SettingRow>
+      <SettingRow id="mascot">
+        <Toggle on={s().mascot !== false} onChange={(on) => store.setSettings({ mascot: on })} />
+      </SettingRow>
+      <Show when={s().mascot !== false}>
+        <SettingRow id="mascot-motion">
+          <Choice value={s().mascotMotion ?? "system"} options={[["on", t("Always")], ["system", t("Follow system")], ["off", t("Off")]]} onChange={(v) => store.setSettings({ mascotMotion: v })} />
+        </SettingRow>
+      </Show>
     </>
   );
 }

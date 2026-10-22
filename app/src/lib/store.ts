@@ -47,11 +47,14 @@ export const defaultSettings: Settings = {
   hibernate: false,
   hibernateMinutes: 30,
   keepAwake: "off",
+  prioritizeVisible: true,
   notificationSound: false,
   terminalTheme: "default",
   wordWrap: false,
   aiAgent: "claude",
   floatingTerminal: true,
+  mascot: true,
+  mascotMotion: "system",
   layouts: [],
   resumeSessions: "shown",
   accounts: [],
@@ -1292,6 +1295,7 @@ function createAppStore() {
     void loadAgentPresets();
     void loadMeta();
     void ipc.daemon("daemon.set_awake", { mode: state.settings.keepAwake ?? "off" }).catch(() => {});
+    void ipc.daemon("daemon.set_priority", { enabled: state.settings.prioritizeVisible ?? true }).catch(() => {});
     resumeInterrupted();
   }
 

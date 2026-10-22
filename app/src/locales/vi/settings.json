@@ -66,6 +66,8 @@
   "Input device for dictation.": "Thiết bị đầu vào cho đọc chính tả.",
   "Try it": "Dùng thử",
   "Click the microphone (or press the Dictate shortcut), speak, then click it again: the words appear at the cursor. Esc cancels.": "Bấm vào micrô (hoặc nhấn phím tắt Đọc chính tả), nói, rồi bấm lại: chữ sẽ hiện tại con trỏ. Esc để hủy.",
+  "Prioritize visible terminals": "Ưu tiên terminal đang hiển thị",
+  "When the computer is busy, terminals on screen get the CPU first, so typing into an agent stays quick while agents in the background build and test. Windows only.": "Khi máy bận, terminal đang hiển thị được dùng CPU trước, nên gõ vào agent vẫn nhanh trong lúc các agent chạy nền đang build và test. Chỉ trên Windows.",
   "Keep computer awake": "Giữ máy luôn thức",
   "Prevent idle sleep while an agent is working, or always (the display may still turn off).": "Ngăn máy ngủ khi rảnh trong lúc agent đang làm việc, hoặc luôn luôn (màn hình vẫn có thể tắt).",
   "Scheduled automations": "Tự động hóa theo lịch",
@@ -348,5 +350,10 @@
   "Downloaded": "Đã tải xuống",
   "System default": "Mặc định của hệ thống",
   "Click the microphone and speak…": "Bấm vào micrô và nói…",
-  "Download a model above first": "Hãy tải một mô hình ở trên trước"
+  "Download a model above first": "Hãy tải một mô hình ở trên trước",
+  "Kip, the mascot": "Kip, linh vật",
+  "Kip peeks over the sidebar footer and shows how your agents are doing; it also greets you on empty screens.": "Kip ló lên ở chân thanh bên và cho biết các agent đang thế nào; Kip cũng chào bạn ở các màn hình trống.",
+  "Kip animations": "Hiệu ứng của Kip",
+  "Small, light animations when agents work, need you or finish. Follow system: only when the operating system's animation effects are on.": "Hiệu ứng nhỏ, nhẹ khi agent làm việc, cần bạn hoặc xong việc. Theo hệ thống: chỉ chạy khi hiệu ứng hoạt ảnh của hệ điều hành đang bật.",
+  "Follow system": "Theo hệ thống"
 }
