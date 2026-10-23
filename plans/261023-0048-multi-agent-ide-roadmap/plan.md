@@ -120,6 +120,11 @@ Status keeps colour + shape. Destructive actions preview and confirm. Shortcuts 
 - Dependencies updated: 6 ← 1, 5; 10 ← 8, 9; 11 ← 1, 7; 12 ← 1, 3, 5; 15 ← 1, 2. Execution order still satisfies every dependency.
 - Unresolved contradictions: none.
 
+## Contract from phase 2 (updates keep sessions running)
+After an update the new app runs against the previous daemon until its sessions end. Every later
+phase that adds a daemon RPC must check `daemon.info.api` in the app and hide (not break) the
+feature on an older daemon; never assume app and daemon are the same release.
+
 ## Follow-ups carried from completed phases
 - Phase 1: re-baseline cold start and idle CPU on a quiet machine (`perf_gate.py --update-baseline --reason`); the committed values were taken under load.
 - Phase 1: e2e evidence for hand-off, quick-command typing and the Copy Context menu click (`phase3.py` needs an agent transcript folder); covered today by unit tests and `ipc.redact` checks.
