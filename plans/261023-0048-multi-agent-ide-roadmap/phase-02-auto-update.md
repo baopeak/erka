@@ -1,7 +1,7 @@
 ---
 phase: 2
 title: "Auto-update"
-status: in-progress
+status: completed
 priority: P1
 effort: "3d"
 dependencies: [1]
@@ -108,9 +108,9 @@ stopped for an update; `kelpied stop --wait` stays for the legacy migration and 
 - No timer when checks are off; check runs in Rust off the UI thread; entry chunk +≤ 3 KB gz (dialog lazy).
 
 ## Success Criteria
-- [ ] Installing over a running Kelpie never fails on files in use and never touches daemons outside `$INSTDIR`.
-- [ ] A signed update installs from GitHub Releases; resumable agents resume; a bad signature never installs.
-- [ ] The release build has no override path (CI check).
+- [x] Installing over a running Kelpie never fails on files in use and never touches daemons outside `$INSTDIR`.
+- [x] A signed update installs from GitHub Releases; resumable agents resume; a bad signature never installs.
+- [x] The release build has no override path (CI check).
 
 ## Risk Assessment
 - Lost private key = no more updates for existing installs → offline backup by the user; signal: release job fails to sign.

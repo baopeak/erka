@@ -1,7 +1,7 @@
 ---
 phase: 3
 title: "Attention queue & quick answer"
-status: pending
+status: completed
 priority: P1
 effort: "3d"
 dependencies: [1]
@@ -79,9 +79,9 @@ Activity::status: hook (fresh) > bell > screen_prompt (no input since) > output 
   popover lazy; dashboard with 50 sessions renders within one frame; global budgets.
 
 ## Success Criteria
-- [ ] Codex / Gemini / Aider approval prompts appear under Needs you without hooks.
-- [ ] Answer from anywhere in ≤ 2 keystrokes; stale answers never land.
-- [ ] No false "needs you" on the negative fixtures.
+- [x] Codex / Gemini / Aider approval prompts appear under Needs you without hooks.
+- [x] Answer from anywhere in ≤ 2 keystrokes; stale answers never land.
+- [x] No false "needs you" on the negative fixtures.
 
 ## Risk Assessment
 - False Waiting on output that looks like a menu → prompt must sit at the cursor, fixtures per vendor; signal: users dismissing;

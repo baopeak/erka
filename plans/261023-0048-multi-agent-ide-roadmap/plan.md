@@ -36,8 +36,8 @@ tests and a performance budget. Supersedes [261023-0036-vibe-coder-gaps](../2610
 | # | Phase | Prio | Effort | Depends | Status |
 |---|---|---|---|---|---|
 | 1 | [Foundation: perf gate, tests, daemon capabilities, outbound text safety](phase-01-perf-gate-foundation.md) | P1 | 5d | — | completed |
-| 2 | [Auto-update](phase-02-auto-update.md) | P1 | 3d | 1 | pending |
-| 3 | [Attention queue & quick answer](phase-03-attention-queue.md) | P1 | 3d | 1 | pending |
+| 2 | [Auto-update](phase-02-auto-update.md) | P1 | 3d | 1 | completed |
+| 3 | [Attention queue & quick answer](phase-03-attention-queue.md) | P1 | 3d | 1 | completed |
 | 4 | [Universal ACP chat](phase-04-universal-acp-chat.md) | P1 | 4d | 1 | pending |
 | 5 | [Context, tokens & cost](phase-05-context-cost.md) | P1 | 3d | 4 | pending |
 | 6 | [Turn checkpoints & artifacts](phase-06-turn-checkpoints.md) | P1 | 5d | 1, 5 | pending |
