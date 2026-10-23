@@ -163,6 +163,14 @@ kelpied terminal wait <session>          # until it stops working
 
 `<session>` is a handle, a session id (prefix) or a session name.
 
+Inside a Kelpie session `kelpied` speaks for that session: it can drive other sessions while
+Settings → Agents → **Agents can control other sessions** is on (the default) and only its own
+session when it is off. Kelpie's settings, automations, custom agents and phone access are never
+reachable from inside a session; run `kelpied` from a terminal outside Kelpie for those.
+Prompts Kelpie types for you (quick commands, review notes, hand-offs) drop control characters,
+and hand-offs, Copy Context and notes or issues sent to an agent have recognisable credentials
+(API keys, tokens, private keys, `PASSWORD=` values) replaced by `[redacted]`.
+
 **Long output.** Scrolled up in a long conversation, a pill in the corner counts the lines that
 arrived meanwhile and takes you back to the bottom. Every line you submit (Enter) is a mark:
 `Ctrl+Shift+↑ / ↓` (`⌘↑ / ↓`) jumps to the previous / next prompt you sent, so a Claude Code

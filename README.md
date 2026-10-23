@@ -245,6 +245,12 @@ kelpied call session.input  '{"handle":3,"data":"run the tests\r"}'
 kelpied call session.read   '{"handle":3,"lines":200}'
 ```
 
+`kelpied` authenticates on its own: outside Kelpie with the user token the daemon writes for its
+endpoint, inside a session with that session's token. Programs in a session get the commands above
+(hook and run reports always for their own session); Settings → Agents → *Agents can control other
+sessions* limits them to their own session. Settings, automations, custom agents and phone access
+are only reachable from the app or from `kelpied` run outside a Kelpie session.
+
 ## Keyboard shortcuts
 
 App shortcuts use `Ctrl+Shift` on Windows so plain `Ctrl+letter` keys reach the agent TUIs. All of them can be changed in Settings → Shortcuts.
@@ -292,8 +298,14 @@ The full list is in the [user guide](docs/user-guide.md#keyboard-shortcuts).
 
 ```bash
 cargo test --workspace             # protocol, daemon, app backend
-cd app && pnpm typecheck && pnpm i18n:check
+cd app && pnpm typecheck && pnpm test && pnpm i18n:check   # test: vitest (layout maths, paste sanitiser)
 kelpied bench --sessions 20 --mb 2   # daemon throughput
+```
+
+The performance gate measures the release build and compares it with `scripts/perf/baseline.json`: cold start, project switch and keystroke echo (timed inside the page), idle CPU and memory with 20 shells, long tasks, bundle size and daemon throughput. It exits non-zero over budget; see [scripts/perf/README.md](scripts/perf/README.md).
+
+```bash
+python scripts/perf/perf_gate.py --label my-change --compare scripts/perf/baseline.json
 ```
 
 End-to-end tests drive the real app through WebDriver (`tauri-driver` + a matching `msedgedriver`), against an isolated daemon (`KELPIE_ENDPOINT` / `KELPIE_DATA_DIR`):
@@ -311,8 +323,12 @@ End-to-end tests drive the real app through WebDriver (`tauri-driver` + a matchi
 | `scripts/e2e/browser.py`, `remote.py`, `mobile.py` | browser panes and design mode (trusted page input via DevTools); SSH projects (local test host); phone pairing and replies |
 | `scripts/e2e/ssh_hosts.py` | SSH hosts page against a local test host: password login through askpass, fingerprint check, terminal and Claude Code on the host, files, port forwards, keys installed and used, known hosts, config import (set `KELPIE_SSH_DIR`) |
 | `scripts/e2e/ssh_panes.py` | SSH panes in a local project against a local test host: "Run on" in the launcher, splits that keep the host, a local and a remote pane in one tab, host links per project, "Open in" the current project, saved layouts on a host, quick connect, OS badge, host theme (set `KELPIE_SSH_DIR`) |
+| `scripts/e2e/daemon_auth.py` | who may call the daemon: anonymous and forged callers refused, session tokens get scripting but no admin methods, hook reports bound to the caller's session, the "agents can control other sessions" policy and restricted sessions (daemon only) |
 | `scripts/e2e/agent_resume.py` | Claude / Codex / OMP resume the same conversation after the daemon is killed (real model calls, daemon only) |
 | `scripts/e2e/scrollback.py` | long output: back-to-bottom with a new-lines count, jumping between the prompts sent |
+| `scripts/perf/perf_gate.py` | the performance gate above (release build, `pip install psutil`) |
+| `scripts/e2e/typing_latency.py` | keystroke → rendered frame through the whole app (shell, Claude Code), idle and with busy background sessions, *Prioritize visible terminals* off and on |
+| `scripts/e2e/chat_parity.py` | chat view: each agent's `/` commands, `@` files, Codex `$` skills, model / effort / mode pickers, `/context` answered in chat, terminal-only commands handed to the TUI |
 | `scripts/e2e/plugins.py`, `voice.py` | plugin install / review / every contribution; speech-model download, dictation into terminals and fields |
 | `scripts/e2e/i18n.py` | Vietnamese interface: no untranslated text on 30 surfaces, dates, switching languages without a reload |
 | `scripts/e2e/ui_tour.py` | screenshots of every surface in dark, light, compact and small-window layouts |

@@ -47,6 +47,33 @@ Local socket only — no TCP port. Windows: named pipe `\\.\pipe\kelpie-<user>-v
 protected DACL (SYSTEM + owner). macOS: `kelpied-v1.sock` (mode 0600) in the data dir.
 Single instance is enforced with an exclusive lock file.
 
+**Callers** (`crates/kelpied/src/auth.rs`). A connection names itself with `auth` before
+anything but `daemon.info` answers:
+- the **user token**, written at start to `<data base>/Kelpie/auth/<endpoint>.token` (owner-only,
+  new per daemon run, keyed by endpoint so a dev app and dev daemon agree): the app, `kelpied`
+  outside a session, `scripts/kelpie-call.py`. Full access; raw Input frames are accepted from it only.
+- a **session token** (`KELPIE_SESSION_ID` + `KELPIE_SESSION_TOKEN`, derived from a per-daemon
+  secret, set in each session's environment with `KELPIE_SESSION_ENDPOINT`): `kelpied` inside a
+  session of that daemon (against another endpoint it uses that daemon's user token). The scripting
+  surface (`session.list|read|input|create`, `meta.*`, `run.*` except `approve` — approval gates wait
+  for the user — and `delete`, `hook.report`); `hook.report` and `run.report` always speak for the
+  caller's own session, and `session.list` leaves other sessions' `env` out. With *Agents can control
+  other sessions* off (`daemon.set_policy`, saved in `policy.json`) or a session created `restricted`,
+  only its own session (`meta.set` compared on canonical paths, `..` refused). Everything else
+  (settings, custom agents, automations, phone access, closing sessions) is the user's.
+- a **claimed** session (`KELPIE_SESSION_ID` without its token, which some agents strip from the
+  programs they run): hook reports for that session only. `kelpied` never falls back to the user
+  token inside a session.
+
+Programs run as the same OS user and could read the user token if not sandboxed: this scopes
+what agents do through Kelpie by default; it is not a boundary against deliberate same-user code.
+
+Text Kelpie types into a session as a prompt, and every paste into a terminal view (clipboard,
+drops, inserted paths, quick commands), drops control characters first (`session::typed_text`,
+`typedText` in `typed-text.ts`, applied in `TerminalHost.paste`), so quoted content cannot end a
+bracketed paste early. Text sent out of a
+session (hand-off, Copy Context, notes or issues sent to an agent) passes `kelpie_proto::redact`.
+
 Frames (`crates/kelpie-proto`): `u32 LE length | u8 kind | payload`
 
 | kind | direction | payload |
@@ -55,7 +82,7 @@ Frames (`crates/kelpie-proto`): `u32 LE length | u8 kind | payload`
 | 2 Output | daemon → app | `u32 handle \| u64 seq \| bytes` (`seq` = stream offset after the bytes) |
 | 3 Input | app → daemon | `u32 handle \| bytes` |
 
-RPC methods: `daemon.info|set_theme|set_awake|shutdown`, `session.list|create|attach|detach|input|resize|focus|kill|close|restart|update|read|set_unread`, `chat.close_stdin`, `hook.report`, `agent.presets|run|set_custom`, `meta.list|get|set`, `automation.list|save|delete|run`, `run.list|get|create|approve|retry|task_done|task_skip|cancel|delete|report`, `mobile.status|enable|disable|pair_start|approve|revoke|set_write|set_projects`.
+RPC methods: `auth`, `daemon.info|set_theme|set_awake|policy|set_policy|shutdown`, `session.list|create|attach|detach|input|resize|focus|kill|close|restart|update|read|set_unread`, `chat.close_stdin`, `hook.report`, `agent.presets|run|set_custom`, `meta.list|get|set`, `automation.list|save|delete|run`, `run.list|get|create|approve|retry|task_done|task_skip|cancel|delete|report`, `mobile.status|enable|disable|pair_start|approve|revoke|set_write|set_projects`.
 `daemon.info` reports an `api` feature level (`kelpie_proto::API_LEVEL`); an app built for a
 higher level offers to restart an older daemon still running from a previous version.
 Events: `session.updated` (coalesced, 250 ms), `session.closed`, `session.resync`, `session.clipboard`, `meta.updated`, `automation.ran`, `run.updated`, `mobile.pair_request`.
