@@ -16,6 +16,25 @@ export function allPanes(node: LayoutNode): Pane[] {
   return node.type === "leaf" ? [node.pane] : node.children.flatMap(allPanes);
 }
 
+/** Panes as the eye reads them: top to bottom, then left to right on the same line — whatever
+ *  way the tree nests (a grid can be rows of columns or columns of rows). */
+export function readingOrder(node: LayoutNode): Pane[] {
+  const placed: { pane: Pane; x: number; y: number }[] = [];
+  const walk = (n: LayoutNode, x: number, y: number, w: number, h: number) => {
+    if (n.type === "leaf") return void placed.push({ pane: n.pane, x, y });
+    let at = 0;
+    n.children.forEach((child, i) => {
+      const share = n.sizes[i] ?? 1 / n.children.length;
+      if (n.dir === "row") walk(child, x + at * w, y, share * w, h);
+      else walk(child, x, y + at * h, w, share * h);
+      at += share;
+    });
+  };
+  walk(node, 0, 0, 1, 1);
+  // Tops within a hair of each other are one line (sizes are fractions that rarely add up exactly).
+  return placed.sort((a, b) => (Math.abs(a.y - b.y) > 1e-6 ? a.y - b.y : a.x - b.x)).map((p) => p.pane);
+}
+
 export function findPane(node: LayoutNode, paneId: string): Pane | undefined {
   return allPanes(node).find((p) => p.id === paneId);
 }

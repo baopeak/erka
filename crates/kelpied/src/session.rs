@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::agents::{Launch, TypedPrompt};
-use crate::proc_tree::ProcTree;
+use crate::proc_tree::{console_hosts, Priority, ProcTree};
 use crate::status::{exit_failed, Activity, Status, MIN_WORK_FOR_UNREAD};
 use crate::vt::{Vt, VtEvent};
 
@@ -34,6 +34,9 @@ pub const REPLAY_LIMIT: u64 = 256 * 1024;
 /// Unsent bytes allowed per subscriber before it must resync.
 pub const SUB_BUDGET: usize = 4 << 20;
 pub const SCROLLBACK: usize = 5000;
+
+/// Held while a pseudoconsole is created, so its console host can be told apart (`spawn`).
+static CONSOLE_SPAWN: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
 pub const SNAPSHOT_HISTORY: usize = 2000;
 
 
@@ -135,7 +138,7 @@ enum Ctl {
 struct Pty {
     ctl: std::sync::mpsc::Sender<Ctl>,
     killer: Box<dyn ChildKiller + Send + Sync>,
-    tree: Option<ProcTree>,
+    tree: Option<Arc<ProcTree>>,
     pid: Option<u32>,
 }
 
@@ -206,6 +209,9 @@ struct PendingPrompt {
 const PROMPT_MIN_WAIT: Duration = Duration::from_millis(2500);
 const PROMPT_QUIET: Duration = Duration::from_millis(1200);
 const PROMPT_MAX_WAIT: Duration = Duration::from_secs(30);
+/// After pasting a prompt, this much quiet (the paste drawn) before Enter; at most the max.
+const PASTE_SETTLE: Duration = Duration::from_millis(300);
+const PASTE_MAX_WAIT: Duration = Duration::from_secs(3);
 
 pub struct Session {
     pub handle: u32,
@@ -254,9 +260,16 @@ impl Session {
     pub fn spawn(self: &Arc<Self>, launch: &Launch) -> Result<()> {
         let spec = self.spec.lock().clone();
         let (cols, rows) = self.inner.lock().vt.size();
-        let pair = native_pty_system()
-            .openpty(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })
-            .context("open pty")?;
+        // The pseudoconsole starts its console host right away; the one that was not there
+        // before is this session's (serialised, so two spawns cannot swap them).
+        let (pair, console) = {
+            let _one_at_a_time = CONSOLE_SPAWN.lock();
+            let before = console_hosts();
+            let pair = native_pty_system()
+                .openpty(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })
+                .context("open pty")?;
+            (pair, console_hosts().into_iter().find(|p| !before.contains(p)))
+        };
         let mut cmd = CommandBuilder::new(&launch.argv[0]);
         cmd.args(&launch.argv[1..]);
         if std::path::Path::new(&spec.cwd).is_dir() {
@@ -277,7 +290,9 @@ impl Session {
         let mut writer = pair.master.take_writer()?;
         let master = pair.master;
         let pid = child.process_id();
-        let tree = pid.and_then(|p| ProcTree::adopt(p).map_err(|e| tracing::warn!("job object: {e}")).ok());
+        let agent = crate::agents::preset_for(&spec.kind).map(|p| p.bin);
+        let tree = pid.and_then(|p| ProcTree::adopt(p, console, agent).map(Arc::new).map_err(|e| tracing::warn!("job object: {e}")).ok());
+        let quiet = tree.as_ref().map(|t| t.quiet_flag());
         let killer = child.clone_killer();
         let (ctl_tx, ctl_rx) = std::sync::mpsc::channel::<Ctl>();
 
@@ -322,10 +337,19 @@ impl Session {
         let me = Arc::clone(self);
         std::thread::Builder::new().name(format!("{name}-r")).spawn(move || {
             let mut buf = vec![0u8; 64 * 1024];
+            let mut quiet_now = false;
             loop {
                 match reader.read(&mut buf) {
                     Ok(0) | Err(_) => break,
-                    Ok(n) => me.ingest(&buf[..n]),
+                    Ok(n) => {
+                        // A session out of sight parses its output at the priority of other
+                        // programs, not ahead of them (the daemon itself runs above normal).
+                        if let Some(q) = quiet.as_ref().map(|q| q.load(std::sync::atomic::Ordering::Relaxed)).filter(|&q| q != quiet_now) {
+                            crate::proc_tree::set_current_thread_quiet(q);
+                            quiet_now = q;
+                        }
+                        me.ingest(&buf[..n]);
+                    }
                 }
             }
         })?;
@@ -489,6 +513,22 @@ impl Session {
         }
     }
 
+    /// With `prioritize`, a session on screen runs ahead of other work and one no view shows
+    /// yields to it (see `proc_tree`). Returned rather than applied: the Win32 calls run off
+    /// the session lock and the async ticker. A custom command's own process is usually the
+    /// workload itself (a dev server), so it is never raised.
+    pub fn priority(&self, prioritize: bool) -> Option<(Arc<ProcTree>, Priority)> {
+        let custom = self.spec.lock().kind == "custom";
+        let g = self.inner.lock();
+        let tree = g.pty.as_ref().and_then(|p| p.tree.clone())?;
+        Some((tree, match (prioritize, g.focused) {
+            (false, _) => Priority::Normal,
+            (true, true) if custom => Priority::Normal,
+            (true, true) => Priority::Foreground,
+            (true, false) => Priority::Background,
+        }))
+    }
+
     pub fn kill(&self) {
         let mut g = self.inner.lock();
         g.stopped = true;
@@ -532,14 +572,21 @@ impl Session {
             return;
         };
         if p.pasted {
-            if now.duration_since(p.since) >= Duration::from_millis(400) {
+            // Enter only once the program has drawn the paste: a TUI still busy (redrawing a
+            // resumed conversation) takes an early Enter as part of the paste and never submits.
+            let since = now.duration_since(p.since);
+            let settled = g.last_output.is_none_or(|t| now.duration_since(t) >= PASTE_SETTLE);
+            if (since >= Duration::from_millis(400) && settled) || since >= PASTE_MAX_WAIT {
                 let _ = pty.ctl.send(Ctl::Input(b"\r".to_vec()));
                 g.pending_prompt = None;
             }
             return;
         }
         let waited = now.duration_since(p.since);
-        let quiet = g.last_output.map_or(waited, |t| now.duration_since(t));
+        // Quiet only counts once the program has drawn something: an agent resuming a
+        // conversation can be silent for seconds while it loads, and keys typed then reach its
+        // input before it handles Enter (the text shows up, the Enter is lost).
+        let quiet = g.last_output.map_or(Duration::ZERO, |t| now.duration_since(t));
         if (waited >= PROMPT_MIN_WAIT && quiet >= PROMPT_QUIET) || waited >= PROMPT_MAX_WAIT {
             let body = typed_text(&p.prompt.text);
             let bytes = if p.prompt.paste { format!("\x1b[200~{body}\x1b[201~") } else { body.replace('\n', "\r") };

@@ -44,11 +44,14 @@ pub struct Activity {
     pub hook: Option<(Status, Instant)>,
     /// The last agent turn ended in an error (API failure, rate limit); cleared once it works again.
     pub failed: bool,
+    /// The agent's hooks report when a turn starts too (Claude Code), not only when it ends
+    /// (Codex): once it says it is idle, it says so again when it works.
+    pub hooks_report_start: bool,
 }
 
 impl Default for Activity {
     fn default() -> Self {
-        Activity { alive: true, last_output: None, burst_start: None, last_input: None, bell: None, hook: None, failed: false }
+        Activity { alive: true, last_output: None, burst_start: None, last_input: None, bell: None, hook: None, failed: false, hooks_report_start: false }
     }
 }
 
@@ -71,6 +74,7 @@ impl Activity {
     /// and clears as soon as the agent works or asks for something again.
     pub fn on_hook(&mut self, status: Status, failed: bool, now: Instant) {
         self.hook = Some((status, now));
+        self.hooks_report_start |= status == Status::Working;
         if failed {
             self.failed = true;
         } else if status != Status::Idle {
@@ -83,9 +87,19 @@ impl Activity {
             return Status::Exited;
         }
         if let Some((hook_status, at)) = self.hook {
-            let output_after_hook = self.last_output.is_some_and(|o| o > at);
-            if !(output_after_hook && now.duration_since(at) > HOOK_STALE) {
-                return hook_status;
+            if hook_status == Status::Idle {
+                // An idle agent repaints its screen now and then (a fullscreen TUI's status line):
+                // that is not work. One whose hooks announce its turns stays idle until the next
+                // hook; one that reports only their end (Codex) works again once the user types.
+                if self.hooks_report_start || self.last_input.is_none_or(|i| i <= at) {
+                    return Status::Idle;
+                }
+            } else {
+                // A turn whose end was never reported (interrupted): after a while, output decides.
+                let output_after_hook = self.last_output.is_some_and(|o| o > at);
+                if !(output_after_hook && now.duration_since(at) > HOOK_STALE) {
+                    return hook_status;
+                }
             }
         }
         if let Some(bell) = self.bell {
@@ -171,6 +185,35 @@ mod tests {
         assert_eq!(a.status(t0), Status::Waiting);
         a.last_input = Some(t0 + Duration::from_millis(1));
         assert_eq!(a.status(t0 + Duration::from_secs(5)), Status::Idle);
+    }
+
+    #[test]
+    fn an_idle_agent_repainting_is_not_working() {
+        let t0 = Instant::now();
+        let burst = |a: &mut Activity, from: Duration| {
+            for i in 0..10 {
+                a.on_output(t0 + from + Duration::from_millis(i * 100));
+            }
+        };
+        // Claude Code: hooks announce turns; minutes later its fullscreen view repaints.
+        let mut claude = Activity::default();
+        claude.on_hook(Status::Working, false, t0);
+        claude.on_hook(Status::Idle, false, t0 + Duration::from_secs(1));
+        burst(&mut claude, Duration::from_secs(300));
+        assert_eq!(claude.status(t0 + Duration::from_millis(300_900)), Status::Idle);
+        // Codex reports only turn ends: a repaint is not work, a typed prompt starts a turn.
+        let mut codex = Activity::default();
+        codex.on_hook(Status::Idle, false, t0);
+        burst(&mut codex, Duration::from_secs(10));
+        assert_eq!(codex.status(t0 + Duration::from_millis(10_900)), Status::Idle);
+        codex.last_input = Some(t0 + Duration::from_secs(20));
+        burst(&mut codex, Duration::from_secs(21));
+        assert_eq!(codex.status(t0 + Duration::from_millis(21_900)), Status::Working);
+        // A turn never reported finished still falls back to output after a while.
+        let mut cut = Activity::default();
+        cut.on_hook(Status::Working, false, t0);
+        cut.on_output(t0 + Duration::from_secs(1));
+        assert_eq!(cut.status(t0 + Duration::from_secs(200)), Status::Idle);
     }
 
     #[test]

@@ -51,6 +51,8 @@ Agents live in a background session daemon, so switching projects, closing the w
 - **Hand-off**: start another agent seeded with a bounded transcript of the current session (terminal context menu).
 - **Hibernation** (opt-in): finished agents idle in background projects are stopped and resume their conversation when you show them again; *Sleep* a project or worktree on demand.
 - **Keep the computer awake**: off, while agents are working, or always — from the coffee cup in the status bar.
+- **Typing stays quick on a busy machine** (Windows): the session on screen runs its agent and console host above normal priority, so a keystroke is not stuck behind other agents' builds and tests or other programs; nothing else is slowed down (Settings → Agents → *Prioritize visible terminals*, on by default).
+- **Conversation upkeep**: *Compact conversation*, *Clear conversation* and *Restart, keeping the conversation* (a fresh process, same conversation) from a session's menu or the command palette.
 
 | | |
 |---|---|
@@ -74,6 +76,7 @@ Agents live in a background session daemon, so switching projects, closing the w
 ### Chat view and past conversations
 
 - Any Claude Code, Codex or OMP session can continue in a chat UI — messages, tool cards with diffs, Allow / Deny prompts, cost — and switch back to the TUI. Kelpie stops one front-end before starting the other, so a conversation never has two writers.
+- **The agent's own commands in chat**: `/` completes the commands the agent reports (Claude Code's built-ins, skills, custom and plugin commands, MCP prompts; OMP's commands; Codex's `/compact`, `/review`, `/new`, `/model`), `$` completes Codex skills and `@` the folder's files; pickers under the message field switch model, effort and permission mode. A command only the terminal UI has (`/doctor`, say) offers to continue there and runs it.
 - **Past conversations**: the Sessions panel lists earlier Claude, Codex and OMP conversations from their own transcripts (this folder / project / all), searchable, resumable in a terminal or in chat view. 1.2 GB of transcripts list in 0.5 s the first time and in ~30 ms afterwards.
 
 | | |
@@ -191,15 +194,19 @@ Measured on Windows 10 (numbers and method in [`plans/reports/`](plans/reports))
 | 20 sessions × 2 MiB output through the daemon | 40 MiB in 3.9 s, 0 sequence gaps |
 | Re-attach with snapshot | p50 4.4 ms, p95 5.8 ms |
 | Session history, 421 transcripts / 1.2 GB | first scan 0.5 s, later launches 34 ms |
+| Keystroke → screen, Claude Code, 4 cores saturated by other sessions (`kelpied bench-echo`) | p50 ≈ 6 ms (370 ms without *Prioritize visible terminals*) |
+| … saturated by programs outside Kelpie | p50 ≈ 9 ms, p95 ≈ 65 ms (300 ms / 550 ms without) |
 
 ## Install
 
 Agents are not bundled: install the CLIs you use (`claude`, `codex`, `gemini`, `opencode`, …) as usual. Kelpie finds them on your PATH (Windows) or through your login shell (macOS); Settings → Agents shows which ones it found.
 
-Installers are produced by CI (`.github/workflows/ci.yml`) as build artifacts:
+Installers are published on [GitHub Releases](https://github.com/baopeak/kelpie/releases) (`.github/workflows/release.yml`, signed) and produced by CI on every push (`.github/workflows/ci.yml`, build artifacts):
 
-- **Windows**: `Kelpie_x.y.z_x64-setup.exe` (per-user NSIS installer, no admin needed).
-- **macOS**: `.dmg` — drag Kelpie to Applications.
+- **Windows**: `Kelpie_x.y.z_x64-setup.exe` (per-user NSIS installer, no admin needed). Installing over a running Kelpie restarts only the app: running sessions keep going (from 0.1.x, once, sessions stop and agents resume).
+- **macOS**: `.dmg` (one universal build for Apple Silicon and Intel) — drag Kelpie to Applications.
+
+**Updates**: Kelpie checks GitHub Releases 30 s after start and every 6 hours (Settings → About → *Check for updates*), shows *Update x.y.z* in the status bar, and installs a signed update now or once no agent is working. Only the app restarts: the session daemon and every session keep running, and the updated app reconnects to them.
 
 Optional: the GitHub CLI (`gh`, signed in) for pull requests; VS Code / Cursor / Zed / … for *Open in*; an OpenSSH client (built into Windows 10+ and macOS) and, on remote hosts, `tmux` for remote projects.
 
@@ -298,8 +305,9 @@ The full list is in the [user guide](docs/user-guide.md#keyboard-shortcuts).
 
 ```bash
 cargo test --workspace             # protocol, daemon, app backend
-cd app && pnpm typecheck && pnpm test && pnpm i18n:check   # test: vitest (layout maths, paste sanitiser)
+cd app && pnpm typecheck && pnpm test && pnpm i18n:check   # test: vitest (layout maths, Claude / Codex adapters)
 kelpied bench --sessions 20 --mb 2   # daemon throughput
+kelpied bench-echo --cmd claude --ready ❯ --load 6   # keystroke → screen latency under CPU load
 ```
 
 The performance gate measures the release build and compares it with `scripts/perf/baseline.json`: cold start, project switch and keystroke echo (timed inside the page), idle CPU and memory with 20 shells, long tasks, bundle size and daemon throughput. It exits non-zero over budget; see [scripts/perf/README.md](scripts/perf/README.md).

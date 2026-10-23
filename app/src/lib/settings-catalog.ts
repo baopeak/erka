@@ -91,6 +91,7 @@ export const settingsCatalog: SettingEntry[] = [
   { id: "daemon-info", section: "daemon", label: msg("Daemon status"), description: msg("The process that keeps sessions running when the window closes."), keywords: "kelpied pid endpoint version" },
   { id: "daemon-data", section: "daemon", label: msg("Data directory and logs"), description: msg("Where sessions, snapshots and logs are stored."), keywords: "path folder log" },
   { id: "daemon-stop", section: "daemon", label: msg("Stop daemon and all sessions"), description: msg("Ends every running session."), keywords: "kill quit kelpied shutdown" },
+  { id: "update-checks", section: "about", label: msg("Check for updates"), description: msg("Look for a newer Kelpie on GitHub Releases 30 s after start and every 6 hours. Installing restarts the app only: running sessions keep going."), keywords: "update upgrade release version auto-update new" },
   { id: "version", section: "about", label: msg("Version"), description: msg("Kelpie build and platform."), keywords: "about build" },
 ];
 

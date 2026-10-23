@@ -17,7 +17,7 @@ export function quickCommandsFor(projectId: string | null): QuickCommand[] {
   return [...own, ...pluginQuickCommands()];
 }
 
-function focusedSession(): SessionInfo | undefined {
+export function focusedSession(): SessionInfo | undefined {
   const p = store.state.activeProject;
   const tab = p ? store.activeTab(p) : undefined;
   const pane = tab && allPanes(tab.root).find((x) => x.id === tab.focus);

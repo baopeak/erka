@@ -5,6 +5,7 @@ import { MemoryMeter, UsageMeters } from "./usage-meter";
 import { InboxPanel } from "./inbox";
 import { setCovering } from "../lib/overlays";
 import { activeRuns } from "../lib/runs";
+import { available, whenIdle } from "../lib/updater";
 import { pluginStatus, pluginStatusItems, type PluginInfo, type PluginStatusItem } from "../lib/plugins";
 import { t, msg } from "../lib/i18n";
 
@@ -60,16 +61,30 @@ export function StatusBar() {
         <span class="item clickable" onClick={() => store.setRightPanel("git")}><Icon name="git" size={13} /> {branch()}</span>
       </Show>
       <span class="spacer" />
+      <Show when={store.daemonNeedsSwitch()}>
+        <span class="item clickable daemon-switch" title={t("The session daemon still running lacks a security fix in this release. Running sessions stop for a moment; agents resume.")} onClick={() => void store.switchDaemon()}>
+          <Icon name="alert" size={13} /> {t("Switch session daemon")}
+        </span>
+      </Show>
+      <Show when={available()}>
+        {(u) => (
+          <span class="item clickable update-chip" title={t("A newer Kelpie is ready to install")} onClick={() => store.setOverlay("update")}>
+            <Icon name="down" size={13} /> {whenIdle() ? t("Update {version} when idle", { version: u().version }) : t("Update {version}", { version: u().version })}
+          </span>
+        )}
+      </Show>
       <For each={pluginStatusItems()}>{({ plugin, item }) => <PluginStatus plugin={plugin} item={item} />}</For>
       <Show when={store.state.settings.usageMeters}><UsageMeters /></Show>
       <Show when={store.state.settings.memoryMeter}><MemoryMeter /></Show>
       <Show when={store.lastSwitchMs() != null}>
-        <span class="item" title={t("Time to render the last project switch")}>{t("switch {ms} ms", { ms: store.lastSwitchMs()! })}</span>
+        {/* Room for three digits: a faster or slower switch must not shift the items after it. */}
+        <span class="item fixed" style={{ "min-width": `${t("switch {ms} ms", { ms: 888 }).length}ch` }} title={t("Time to render the last project switch")}>{t("switch {ms} ms", { ms: store.lastSwitchMs()! })}</span>
       </Show>
       <span class="item clickable" onClick={() => store.setOverlay("dashboard")}>
         {counts().alive === 1 ? t("{n} session", { n: 1 }) : t("{n} sessions", { n: counts().alive })}
-        <Show when={counts().working}> · <span style={{ color: "var(--working)" }}>{t("{n} working", { n: counts().working })}</span></Show>
-        <Show when={counts().waiting}> · <span style={{ color: "var(--waiting)" }}>{t("{n} need you", { n: counts().waiting })}</span></Show>
+        {/* Always shown, dimmed at 0: counts coming and going must not shift the bar. */}
+        {" · "}<span style={{ color: counts().working ? "var(--working)" : "var(--text-faint)" }}>{t("{n} working", { n: counts().working })}</span>
+        {" · "}<span style={{ color: counts().waiting ? "var(--waiting)" : "var(--text-faint)" }}>{t("{n} need you", { n: counts().waiting })}</span>
       </span>
       <Show when={activeRuns().length}>
         <span class="item clickable" title={t("Orchestration runs in progress")} onClick={() => store.setOverlay("runs")}>

@@ -6,6 +6,7 @@ mod accounts;
 mod agent_history;
 mod browser;
 mod daemon_client;
+mod daemon_runtime;
 mod external_editor;
 mod fs_ops;
 mod git;
@@ -18,6 +19,7 @@ mod remote;
 mod search;
 mod ssh_hosts;
 mod sys_stats;
+mod updater;
 mod usage;
 mod watcher;
 mod worktree_files;
@@ -112,8 +114,10 @@ fn platform_info() -> Value {
         "os": std::env::consts::OS,
         "home": std::env::var(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).unwrap_or_default(),
         "data_dir": kelpie_proto::data_dir(),
-        // The daemon feature level this app was built against.
+        // The daemon feature level this app was built against, and the release both come from.
         "api": kelpie_proto::API_LEVEL,
+        "version": env!("CARGO_PKG_VERSION"),
+        "security": kelpie_proto::DAEMON_SECURITY_LEVEL,
         // Set by the end-to-end test runner: lets it drive a release build too.
         "e2e": std::env::var_os("KELPIE_E2E").is_some(),
     })
@@ -178,6 +182,8 @@ pub fn run() {
         // the app opens links itself.
         .plugin(tauri_plugin_opener::Builder::new().open_js_links_on_click(false).build())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .manage(updater::PendingUpdate::default())
         .setup(|app| {
             let index = Arc::new(search::FileIndex::default());
             app.manage(DaemonClient::start(app.handle().clone()));
@@ -198,6 +204,8 @@ pub fn run() {
             state_backup,
             platform_info,
             redact_batch,
+            updater::update_check,
+            updater::update_install,
             fs_ops::fs_list_dir,
             fs_ops::fs_is_dir,
             fs_ops::fs_canonical,

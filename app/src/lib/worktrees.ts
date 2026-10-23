@@ -188,6 +188,8 @@ export async function removeWorktree(wt: Project, opts: { force: boolean }): Pro
   if (!repo) throw new Error(t("This worktree's repository is not in the sidebar"));
   if (store.state.activeProject === wt.id) store.switchProject(repo.id);
   if (!(await stopSessions(wt))) throw new Error(t("Some processes in this worktree did not stop; close them and try again"));
+  // The file watcher holds the folder open; leaving the project only stops it in the background.
+  await ipc.unwatchRoot(wt.path).catch(() => {});
   for (let attempt = 0; ; attempt++) {
     try {
       await ipc.gitWorktreeRemove(repo.path, wt.path, opts.force);
@@ -204,5 +206,10 @@ export async function removeWorktree(wt: Project, opts: { force: boolean }): Pro
     }
   }
   store.removeProject(wt.id);
-  return { leftover: await ipc.isDir(wt.path).catch(() => false) };
+  // A deleted folder that something still had open lingers until that handle closes.
+  for (let i = 0; i < 15; i++) {
+    if (!(await ipc.isDir(wt.path).catch(() => false))) return { leftover: false };
+    await sleep(200);
+  }
+  return { leftover: true };
 }

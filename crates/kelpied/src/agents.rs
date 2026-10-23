@@ -189,6 +189,51 @@ pub fn claude_conversation_saved(id: &str, env: &std::collections::BTreeMap<Stri
     std::fs::read_dir(projects).into_iter().flatten().filter_map(|e| e.ok()).any(|d| d.path().join(&file).is_file())
 }
 
+/// Whether Codex saved thread `id` (so `codex resume <id>` finds it). Codex also runs unsaved
+/// background threads of its own (suggestions, skill selection) that report through `notify`
+/// too; their ids must not replace the conversation's. Rollouts live in
+/// `sessions/YYYY/MM/DD/rollout-…-<id>.jsonl`, under the day the thread started: a UUIDv7 id
+/// carries that time, so only the days around it are looked at.
+pub fn codex_thread_saved(id: &str, codex_home: &std::path::Path) -> bool {
+    if id.is_empty() || id.contains(['/', '\\', '.']) {
+        return false;
+    }
+    let sessions = codex_home.join("sessions");
+    let suffix = format!("-{id}.jsonl");
+    let has = |dir: PathBuf| {
+        std::fs::read_dir(dir).into_iter().flatten().filter_map(|e| e.ok()).any(|e| e.file_name().to_string_lossy().ends_with(&suffix))
+    };
+    let hex: String = id.chars().filter(|c| *c != '-').collect();
+    let Some(ms) = (hex.len() == 32 && hex.as_bytes()[12] == b'7').then(|| u64::from_str_radix(&hex[..12], 16).ok()).flatten() else {
+        // Not time-ordered: look through every day.
+        return walk_days(&sessions).into_iter().any(has);
+    };
+    // The folder uses the local date; a day either side of the UTC one covers every zone.
+    let day = (ms / 86_400_000) as i64;
+    (day - 1..=day + 1).any(|d| {
+        let (y, m, dd) = civil_from_days(d);
+        has(sessions.join(format!("{y:04}")).join(format!("{m:02}")).join(format!("{dd:02}")))
+    })
+}
+
+fn walk_days(sessions: &std::path::Path) -> Vec<PathBuf> {
+    let sub = |p: &std::path::Path| -> Vec<PathBuf> { std::fs::read_dir(p).into_iter().flatten().filter_map(|e| e.ok()).map(|e| e.path()).filter(|p| p.is_dir()).collect() };
+    sub(sessions).iter().flat_map(|y| sub(y)).flat_map(|m| sub(&m)).collect()
+}
+
+/// Days since 1970-01-01 → (year, month, day), proleptic Gregorian (Howard Hinnant's algorithm).
+fn civil_from_days(z: i64) -> (i64, u32, u32) {
+    let z = z + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
+    (yoe + era * 400 + i64::from(m <= 2), m, d)
+}
+
 /// POSIX shell single quoting.
 fn sh_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', r"'\''"))
@@ -202,6 +247,9 @@ pub fn build_remote_launch(kind: &str, user_args: &[String], resume: Resume, pro
     anyhow::ensure!(!remote.dest.is_empty() && !remote.dest.starts_with('-'), "invalid ssh destination");
     let startup = || prompt.filter(|t| !t.trim().is_empty()).map(|t| TypedPrompt { text: t.to_string(), paste: false });
     let mut typed_prompt = None;
+    let quote = |argv: &[String]| argv.iter().map(|a| sh_quote(a)).collect::<Vec<_>>().join(" ");
+    // A shell `if` that picks the command on the host, when only the host can tell.
+    let mut choice: Option<String> = None;
     let program: Option<Vec<String>> = match kind {
         "shell" => (!user_args.is_empty()).then(|| user_args.to_vec()),
         "custom" => {
@@ -210,41 +258,56 @@ pub fn build_remote_launch(kind: &str, user_args: &[String], resume: Resume, pro
         }
         other => {
             let p = preset_for(other).ok_or_else(|| anyhow::anyhow!("unknown session kind {other}"))?;
-            let mut argv: Vec<String> = std::iter::once(p.bin).chain(p.launch.iter().copied()).map(str::to_string).collect();
-            match resume {
-                Resume::Id(id) if other == "codex" => argv.extend(["resume".to_string(), id.to_string()]),
-                Resume::Id(id) => argv.extend(["--resume".to_string(), id.to_string()]),
-                Resume::Latest => argv.extend(p.resume_latest.iter().map(|a| a.to_string())),
-                Resume::None => {}
-            }
-            argv.extend(user_args.iter().cloned());
-            if let Some(text) = prompt.filter(|t| !t.trim().is_empty() && resume == Resume::None) {
+            let mut rest: Vec<String> = user_args.to_vec();
+            if let Some(text) = prompt.filter(|t| !t.trim().is_empty()) {
+                let fits = text.len() <= 8000;
                 match p.prompt {
-                    PromptMode::Argv if text.len() <= 8000 && !text.starts_with('-') => argv.push(text.to_string()),
-                    PromptMode::Flag(flag) if text.len() <= 8000 => argv.extend([flag.to_string(), text.to_string()]),
+                    PromptMode::Argv if fits && !text.starts_with('-') => rest.push(text.to_string()),
+                    PromptMode::Flag(flag) if fits => rest.extend([flag.to_string(), text.to_string()]),
                     _ => typed_prompt = Some(TypedPrompt { text: text.to_string(), paste: true }),
                 }
             }
-            Some(argv)
+            let with = |r: &Resume| -> Vec<String> {
+                let base = std::iter::once(p.bin).chain(p.launch.iter().copied()).map(str::to_string);
+                base.chain(resume_args(other, r, Some(p))).chain(rest.iter().cloned()).collect()
+            };
+            // Claude's id is Kelpie's own (`--session-id`), so it may name a conversation that
+            // was never saved (no message sent): resume it when the host has its transcript,
+            // else start it under that id.
+            if let Resume::Id(id) = resume {
+                if other == "claude" && !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+                    choice = Some(format!(
+                        r#"if ls "${{CLAUDE_CONFIG_DIR:-$HOME/.claude}}"/projects/*/{id}.jsonl >/dev/null 2>&1; then exec {}; else exec {}; fi"#,
+                        quote(&with(&Resume::Id(id))),
+                        quote(&with(&Resume::New(id)))
+                    ));
+                }
+            }
+            Some(with(&resume))
         }
     };
     if matches!(kind, "shell" | "custom") {
         typed_prompt = startup();
     }
     let run = match &program {
-        Some(argv) => argv.iter().map(|a| sh_quote(a)).collect::<Vec<_>>().join(" "),
+        Some(argv) => quote(argv),
         None => r#""${SHELL:-/bin/sh}" -l"#.to_string(),
     };
     let dir = sh_quote(cwd);
     // sshd prints the login banner (MOTD) only when it runs no command, so a plain shell prints
     // it itself; `~/.hushlogin` silences it as it does for sshd. Agents start without it.
     let banner = (kind == "shell" && program.is_none()).then_some(r#"[ -e "$HOME/.hushlogin" ] || cat /run/motd.dynamic /etc/motd 2>/dev/null"#);
-    let direct = match banner {
-        Some(b) => format!("cd {dir} && {{ {b}; exec {run}; }}"),
-        None => format!("cd {dir} && exec {run}"),
+    let direct = match (banner, &choice) {
+        (Some(b), _) => format!("cd {dir} && {{ {b}; exec {run}; }}"),
+        (None, Some(c)) => format!("cd {dir} && {c}"),
+        (None, None) => format!("cd {dir} && exec {run}"),
     };
     // tmux runs this only when it starts the session: re-attaching shows the screen as it was.
-    let in_tmux = banner.map_or_else(|| run.clone(), |b| format!("{b}; exec {run}"));
+    let in_tmux = match (banner, &choice) {
+        (Some(b), _) => format!("{b}; exec {run}"),
+        (None, Some(c)) => c.clone(),
+        (None, None) => run.clone(),
+    };
     let body = if remote.tmux {
         let id: String = session_id.chars().filter(|c| c.is_ascii_alphanumeric()).take(12).collect();
         // Sessions started before the rename to Kelpie run in `erka-<id>`: re-attach to that one
@@ -290,12 +353,15 @@ pub enum Resume<'a> {
     None,
     /// The agent's own conversation id (from hooks / transcripts).
     Id(&'a str),
+    /// A new conversation under an id Kelpie chose (Claude Code's `--session-id`), so it is
+    /// known from the start — even if no hook ever reports it. Other agents start plainly.
+    New(&'a str),
     /// The most recent conversation in the folder, for agents that report no id.
     Latest,
 }
 
 /// Builds the argv for `kind`. `user_args` are extra flags from the user/profile; `prompt` is
-/// an optional first message (ignored when resuming).
+/// an optional first message (typed once the agent is ready when resuming or too long).
 pub fn build_launch(
     kind: &str,
     user_args: &[String],
@@ -326,19 +392,14 @@ pub fn build_launch(
         }
     };
     let preset = preset_for(kind);
-    match resume {
-        Resume::Id(id) => match kind {
-            "codex" => argv.extend(["resume".to_string(), id.to_string()]),
-            _ => argv.extend(["--resume".to_string(), id.to_string()]),
-        },
-        Resume::Latest => argv.extend(preset.map_or(&[][..], |p| p.resume_latest).iter().map(|a| a.to_string())),
-        Resume::None => {}
-    }
+    argv.extend(resume_args(kind, &resume, preset));
     argv.extend(user_args.iter().cloned());
     let mut typed_prompt = None;
-    if let Some(text) = prompt.filter(|t| !t.trim().is_empty() && resume == Resume::None) {
+    if let Some(text) = prompt.filter(|t| !t.trim().is_empty()) {
         // A long prompt (a hand-off transcript) is typed instead: Windows command lines stop at
-        // 32 K characters, and batch-file launchers mangle newlines.
+        // 32 K characters, and batch-file launchers mangle newlines. A resumed conversation takes
+        // the argument too (`claude --resume <id> "…"`, `codex resume <id> "…"` run it there), so
+        // the agent submits it itself instead of racing a typed Enter against its start-up.
         let fits = text.len() <= 8000;
         match preset.map_or(PromptMode::Typed, |p| p.prompt) {
             // A prompt that looks like an option would be parsed as one.
@@ -348,6 +409,27 @@ pub fn build_launch(
         }
     }
     Ok(Launch { argv: wrap_for_platform(argv)?, typed_prompt })
+}
+
+/// The arguments that pick the conversation: `codex resume <id>`, `--resume <id>`, Claude's
+/// `--session-id <id>` for a new one, or the preset's "latest in this folder".
+fn resume_args(kind: &str, resume: &Resume, preset: Option<&Preset>) -> Vec<String> {
+    match *resume {
+        Resume::Id(id) if kind == "codex" => vec!["resume".into(), id.into()],
+        Resume::Id(id) => vec!["--resume".into(), id.into()],
+        Resume::New(id) if kind == "claude" => vec!["--session-id".into(), id.into()],
+        Resume::Latest => preset.map_or(&[][..], |p| p.resume_latest).iter().map(|a| a.to_string()).collect(),
+        Resume::New(_) | Resume::None => Vec::new(),
+    }
+}
+
+/// The user's own Claude arguments already choose the conversation (`--resume`, `--continue`,
+/// `--session-id`, `--fork-session`…): Kelpie then names none, as Claude rejects two choices.
+pub fn claude_args_pick_conversation(args: &[String]) -> bool {
+    args.iter().any(|a| {
+        let flag = a.split('=').next().unwrap_or(a);
+        matches!(flag, "--resume" | "-r" | "--continue" | "-c" | "--session-id" | "--fork-session" | "--from-pr")
+    })
 }
 
 /// Claude Code merges `--settings` hooks with the user's own settings, so we never touch
@@ -513,6 +595,16 @@ mod tests {
     }
 
     #[test]
+    fn user_args_that_choose_the_conversation() {
+        let a = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert!(claude_args_pick_conversation(&a(&["--model", "opus", "--continue"])));
+        assert!(claude_args_pick_conversation(&a(&["-r"])));
+        assert!(claude_args_pick_conversation(&a(&["--session-id=1234"])));
+        assert!(claude_args_pick_conversation(&a(&["--resume", "x", "--fork-session"])));
+        assert!(!claude_args_pick_conversation(&a(&["--model", "opus", "--dangerously-skip-permissions"])));
+    }
+
+    #[test]
     fn finds_npm_shim_script() {
         let shim = "IF EXIST \"%dp0%\\node.exe\" (\r\n  SET \"_prog=%dp0%\\node.exe\"\r\n)\r\n\
                     \"%_prog%\"  \"%dp0%\\pkgs\\@openai\\codex\\bin\\codex.js\" %*\r\n";
@@ -535,9 +627,21 @@ mod tests {
             assert!(!argv.contains("fix it"));
             assert_eq!(typed, Some(TypedPrompt { text: "fix it".into(), paste: true }));
         }
-        if let Ok((argv, typed)) = joined("opencode", Resume::Latest, Some("ignored")) {
-            assert!(argv.contains("--continue") && !argv.contains("ignored"));
+        // A resumed conversation takes the prompt as an argument too: the agent runs it there.
+        if let Ok((argv, typed)) = joined("opencode", Resume::Latest, Some("/compact")) {
+            assert!(argv.contains("--continue") && argv.contains("--prompt /compact"), "{argv}");
             assert!(typed.is_none());
+        }
+        if let Ok((argv, typed)) = joined("claude", Resume::Id("abc"), Some("/doctor")) {
+            assert!(argv.contains("--resume abc") && argv.ends_with("/doctor"), "{argv}");
+            assert!(typed.is_none());
+        }
+        // A new conversation under Kelpie's id; other agents cannot be told one.
+        if let Ok((argv, _)) = joined("claude", Resume::New("abc"), Some("hi")) {
+            assert!(argv.contains("--session-id abc") && !argv.contains("--resume") && argv.ends_with("hi"), "{argv}");
+        }
+        if let Ok((argv, _)) = joined("codex", Resume::New("abc"), None) {
+            assert!(!argv.contains("abc") && !argv.contains("resume"), "{argv}");
         }
         assert!(build_launch("nope", &[], Resume::None, None, exe, &dir).is_err());
         assert!(PRESETS.iter().all(|p| !p.id.is_empty() && !p.bin.is_empty()));
@@ -563,6 +667,29 @@ mod conversation_tests {
         assert!(!claude_conversation_saved("never-saved", &env));
         assert!(!claude_conversation_saved("../abc-123", &env));
         std::fs::remove_dir_all(&home).unwrap();
+    }
+
+    #[test]
+    fn only_a_saved_codex_thread_counts() {
+        let home = std::env::temp_dir().join(format!("kelpie-codex-home-{}", std::process::id()));
+        let day = home.join("sessions").join("2026").join("10").join("23");
+        std::fs::create_dir_all(&day).unwrap();
+        // The conversation (saved) and a background thread of the same process 50 s later (not).
+        std::fs::write(day.join("rollout-2026-10-23T14-52-03-01a167be-cb4f-7773-b37a-95835bbafc28.jsonl"), "{}\n").unwrap();
+        assert!(codex_thread_saved("01a167be-cb4f-7773-b37a-95835bbafc28", &home));
+        assert!(!codex_thread_saved("01a167bf-8fbc-7cc3-aa31-c874dd6af1d9", &home));
+        // An id that is not time-ordered is looked for in every day.
+        std::fs::write(day.join("rollout-2026-10-23T09-00-00-5a5f996e-bc9d-4b62-95c9-787b89fd1454.jsonl"), "{}\n").unwrap();
+        assert!(codex_thread_saved("5a5f996e-bc9d-4b62-95c9-787b89fd1454", &home));
+        assert!(!codex_thread_saved("../x", &home));
+        std::fs::remove_dir_all(&home).unwrap();
+    }
+
+    #[test]
+    fn civil_dates() {
+        assert_eq!(civil_from_days(0), (1970, 1, 1));
+        assert_eq!(civil_from_days(20_749), (2026, 10, 23));
+        assert_eq!(civil_from_days(-1), (1969, 12, 31));
     }
 }
 
@@ -663,6 +790,24 @@ mod remote_tests {
         assert!(j.contains("hushlogin"), "{j}");
         let l = build_remote_launch("shell", &["htop".into()], Resume::None, None, &remote(true), "/srv/x", "abc").unwrap();
         assert!(!command_line(&l.argv).contains("motd"), "a shell running a command has no banner");
+    }
+
+    #[test]
+    fn remote_claude_resumes_its_own_id_or_starts_it() {
+        let id = "5a5f996e-bc9d-4b62-95c9-787b89fd1454";
+        for tmux in [false, true] {
+            let j = command_line(&build_remote_launch("claude", &["--model".into(), "haiku".into()], Resume::Id(id), None, &remote(tmux), "/srv/x", "abc").unwrap().argv);
+            // The host decides: its transcript of that id exists, or not yet (nothing sent).
+            assert!(j.contains(&format!("projects/*/{id}.jsonl")), "{j}");
+            assert!(j.contains(&format!(r"exec '\''claude'\'' '\''--resume'\'' '\''{id}'\'' '\''--model'\''")), "{j}");
+            assert!(j.contains(&format!(r"else exec '\''claude'\'' '\''--session-id'\'' '\''{id}'\''")), "{j}");
+            assert!(!j.contains("&& exec if"), "{j}");
+        }
+        let j = command_line(&build_remote_launch("claude", &[], Resume::New(id), None, &remote(false), "/srv/x", "abc").unwrap().argv);
+        assert!(j.contains("--session-id") && !j.contains("--resume") && !j.contains("jsonl"), "{j}");
+        // Codex resumes the id it reported; no choice needed.
+        let j = command_line(&build_remote_launch("codex", &[], Resume::Id(id), None, &remote(false), "/srv/x", "abc").unwrap().argv);
+        assert!(j.contains("'\\''resume'\\''") && !j.contains("jsonl"), "{j}");
     }
 
     #[test]

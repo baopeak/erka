@@ -6,6 +6,7 @@
 
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -27,10 +28,18 @@ struct Pending {
     structural: bool,
 }
 
+/// A root's watcher (kept for as long as it watches; dropping it stops), or the ticket of the
+/// call still creating it.
+enum Slot {
+    Creating(u64),
+    Live { _watcher: RecommendedWatcher },
+}
+
 pub struct Watchers {
     app: AppHandle,
     index: Arc<FileIndex>,
-    active: Mutex<HashMap<String, RecommendedWatcher>>,
+    active: Mutex<HashMap<String, Slot>>,
+    tickets: AtomicU64,
     pending: Arc<Mutex<HashMap<String, Pending>>>,
     wake: Arc<tokio::sync::Notify>,
 }
@@ -41,6 +50,7 @@ impl Watchers {
             app,
             index,
             active: Mutex::new(HashMap::new()),
+            tickets: AtomicU64::new(0),
             pending: Arc::new(Mutex::new(HashMap::new())),
             wake: Arc::new(tokio::sync::Notify::new()),
         });
@@ -63,9 +73,34 @@ impl Watchers {
     }
 
     pub fn watch(&self, root: &str) -> CmdResult<()> {
-        if self.active.lock().contains_key(root) {
-            return Ok(());
+        // Creating a recursive watcher can take seconds (more on a busy machine). An unwatch in
+        // the meantime removes the ticket, and the finished watcher is then dropped instead of
+        // holding the folder open for good (Windows cannot delete a watched folder).
+        let ticket = self.tickets.fetch_add(1, Ordering::Relaxed);
+        {
+            let mut active = self.active.lock();
+            if active.contains_key(root) {
+                return Ok(());
+            }
+            active.insert(root.to_string(), Slot::Creating(ticket));
         }
+        let created = self.create(root);
+        let mut active = self.active.lock();
+        if matches!(active.get(root), Some(Slot::Creating(t)) if *t == ticket) {
+            match created {
+                Ok(watcher) => {
+                    active.insert(root.to_string(), Slot::Live { _watcher: watcher });
+                }
+                Err(e) => {
+                    active.remove(root);
+                    return Err(e);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn create(&self, root: &str) -> CmdResult<RecommendedWatcher> {
         let root_path = PathBuf::from(root);
         let (pending, wake, key) = (self.pending.clone(), self.wake.clone(), root.to_string());
         let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
@@ -100,12 +135,13 @@ impl Watchers {
         })
         .map_err(err)?;
         watcher.watch(Path::new(root), RecursiveMode::Recursive).map_err(err)?;
-        self.active.lock().insert(root.to_string(), watcher);
-        Ok(())
+        Ok(watcher)
     }
 
     pub fn unwatch(&self, root: &str) {
-        self.active.lock().remove(root);
+        // Dropped after the lock is released: stopping a watcher can be slow on Windows.
+        let slot = self.active.lock().remove(root);
+        drop(slot);
     }
 }
 

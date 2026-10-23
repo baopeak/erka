@@ -22,6 +22,10 @@ pub const PROTOCOL_VERSION: u32 = 1;
 /// endpoint, so changing it orphans running daemons) this only lets a newer app notice an
 /// older daemon that is still running and offer to restart it.
 pub const API_LEVEL: u32 = 6;
+/// Raised by a release that fixes a security problem in the daemon. Updates keep the previous
+/// daemon running with its sessions; an app whose level is higher keeps asking the user to switch
+/// (it never stops sessions by itself). Daemons that predate it report none: level 1.
+pub const DAEMON_SECURITY_LEVEL: u32 = 1;
 pub const KIND_JSON: u8 = 1;
 pub const KIND_OUTPUT: u8 = 2;
 pub const KIND_INPUT: u8 = 3;

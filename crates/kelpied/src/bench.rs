@@ -68,7 +68,7 @@ pub fn emit(args: &[String]) {
     let _ = out.flush();
 }
 
-fn pct(sorted: &[Duration], p: f64) -> f64 {
+pub fn pct(sorted: &[Duration], p: f64) -> f64 {
     if sorted.is_empty() {
         return 0.0;
     }

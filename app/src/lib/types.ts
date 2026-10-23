@@ -200,6 +200,10 @@ export interface Settings {
   agentsScripting: boolean;
   /** A short chime with desktop notifications. */
   notificationSound: boolean;
+  /** Look for a newer Kelpie on GitHub Releases (30 s after start, then every 6 hours). */
+  updateChecks: boolean;
+  /** A release the user chose to skip; newer ones are offered again. */
+  skippedUpdate?: string;
   /** Terminal colour theme id (lib/terminal-themes.ts); "default" follows the app theme. */
   terminalTheme: string;
   /** Editor soft wrap. */

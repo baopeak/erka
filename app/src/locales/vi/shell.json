@@ -1,4 +1,6 @@
 {
+  "The session daemon still running lacks a security fix in this release. Running sessions stop for a moment; agents resume.": "Daemon phiên đang chạy thiếu một bản sửa lỗi bảo mật có trong bản này. Các phiên đang chạy sẽ dừng một lát; agent sẽ resume.",
+  "Switch session daemon": "Chuyển daemon phiên",
   "Todo": "Cần làm",
   "In progress": "Đang làm",
   "Review": "Review",
@@ -321,5 +323,14 @@
   "All quiet. Kip is napping.": "Mọi thứ yên ắng. Kip đang chợp mắt.",
   "Open the agent that needs you": "Mở agent đang cần bạn",
   "Open the agent that finished": "Mở agent vừa xong",
-  "Open the agent dashboard": "Mở bảng điều khiển agent"
+  "Open the agent dashboard": "Mở bảng điều khiển agent",
+  "Compact conversation": "Thu gọn hội thoại",
+  "Clear conversation": "Xoá hội thoại",
+  "Restart, keeping the conversation": "Khởi động lại, giữ hội thoại",
+  "Agent: Compact Conversation": "Agent: Thu gọn hội thoại",
+  "Agent: Clear Conversation": "Agent: Xoá hội thoại",
+  "Agent: Restart, Keeping the Conversation": "Agent: Khởi động lại, giữ hội thoại",
+  "{name} is working. Continue anyway?": "{name} đang làm việc. Vẫn tiếp tục?",
+  "{name} did not stop.": "{name} không dừng được.",
+  "{name} is not ready yet.": "{name} chưa sẵn sàng."
 }

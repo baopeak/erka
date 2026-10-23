@@ -5,6 +5,7 @@ import { createStore, produce, reconcile } from "solid-js/store";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import * as ipc from "./ipc";
+import { olderVersion } from "./version";
 import { t } from "./i18n";
 import { allPanes, autoGrid, buildGrid, cellCount, equalize, findPane, fromTemplate, insertBeside, leaf, migrateLayout, moveGutter, movePane, removePane, replacePane, splitPane, swapPanes, templateLeaves, toTemplate, type GridSpec, type Side } from "./layout";
 import { basename, isMac, normPath, uid } from "./platform";
@@ -50,6 +51,7 @@ export const defaultSettings: Settings = {
   prioritizeVisible: true,
   agentsScripting: true,
   notificationSound: false,
+  updateChecks: true,
   terminalTheme: "default",
   wordWrap: false,
   aiAgent: "claude",
@@ -110,7 +112,7 @@ function chime() {
   }
 }
 
-export type Overlay = null | "palette" | "quickopen" | "jump" | "dashboard" | "settings" | "newsession" | "board" | "worktree" | "runs" | "remote" | "hosts";
+export type Overlay = null | "palette" | "quickopen" | "jump" | "dashboard" | "settings" | "newsession" | "board" | "worktree" | "runs" | "remote" | "hosts" | "update";
 
 /** A pane of a tab (an empty pane a new session takes the place of). */
 export type PaneTarget = { tabId: string; paneId: string };
@@ -208,18 +210,58 @@ function createAppStore() {
     }
   }
 
-  /** An older daemon left running across an app upgrade lacks newer RPCs: offer a restart. */
+  /** The connected daemon is from an older release: it keeps serving the sessions it runs (an
+   *  update never stops them) and hands over to this release's daemon once none is running. */
+  let olderDaemon = false;
+  /** The older daemon lacks a security fix this release made: ask until the user switches. */
+  const [daemonNeedsSwitch, setDaemonNeedsSwitch] = createSignal(false);
+
+  async function switchDaemon() {
+    if (!(await confirmDialog(t("Switch to the new session daemon now? Running sessions stop for a moment; agents that can resume continue their conversation.")))) return;
+    olderDaemon = false;
+    setDaemonNeedsSwitch(false);
+    void ipc.daemon("daemon.shutdown", { kill_sessions: false }).catch(() => {});
+  }
+
+  /** Updates keep the daemon — and every session — running; the updated app connects to it.
+   *  An older daemon is replaced as soon as no session runs on it, or now if the user asks (it
+   *  stops gracefully: sessions come back interrupted and agents resume their conversation; the
+   *  app starts the new daemon on its own). */
   async function checkDaemonApi() {
-    const [info, app] = await Promise.all([ipc.daemon<{ api?: number }>("daemon.info", {}), ipc.platformInfo()]).catch(() => [null, null]);
-    if (!info || !app || (info.api ?? 1) >= app.api) return;
-    notify(t("The session daemon is older than this app; some features are unavailable until it restarts."), {
-      label: t("Restart daemon"),
-      run: async () => {
-        if (await confirmDialog(t("Restart the session daemon? Running sessions stop; their screens are kept and they can be restarted."))) {
-          void ipc.daemon("daemon.shutdown", { kill_sessions: true }).catch(() => {});
-        }
-      },
-    }, 15000);
+    olderDaemon = false;
+    setDaemonNeedsSwitch(false);
+    const [info, app] = await Promise.all([ipc.daemon<{ api?: number; version?: string; security?: number }>("daemon.info", {}), ipc.platformInfo()]).catch(() => [null, null]);
+    // Only an older daemon: a dev app and an installed Kelpie may share one, and must not keep
+    // offering to restart each other's.
+    if (!info || !app || ((info.api ?? 1) >= app.api && !(info.version && olderVersion(info.version, app.version)))) return;
+    olderDaemon = true;
+    handOverIfIdle();
+    const fix = (info.security ?? 1) < app.security;
+    setDaemonNeedsSwitch(fix);
+    notify(
+      fix
+        ? t("The session daemon from Kelpie {version} lacks a security fix in this release. Switch when you can: running sessions stop for a moment and agents resume.", { version: info.version ?? "?" })
+        : t("Your sessions keep running on the session daemon from Kelpie {version}; the new one takes over once they have all stopped.", { version: info.version ?? "?" }),
+      { label: t("Switch now"), run: () => void switchDaemon() },
+      15000,
+    );
+  }
+
+  /** Replaces an older daemon once nothing runs on it. A session can be down for a moment
+   *  (restarted to keep its conversation, switched between terminal and chat, resumed at start),
+   *  so it waits for things to settle and asks the daemon itself rather than trusting this
+   *  window's list; `if_idle` lets newer daemons refuse when something started meanwhile. */
+  let handOverTimer: ReturnType<typeof setTimeout> | undefined;
+  function handOverIfIdle() {
+    if (!olderDaemon) return;
+    clearTimeout(handOverTimer);
+    handOverTimer = setTimeout(async () => {
+      if (!olderDaemon) return;
+      const list = await ipc.listSessions().catch(() => null);
+      if (!list || list.some((s) => s.alive)) return;
+      olderDaemon = false;
+      void ipc.daemon("daemon.shutdown", { kill_sessions: false, if_idle: true }).catch(() => {});
+    }, 10_000);
   }
 
   // ---------- sessions ----------
@@ -294,6 +336,7 @@ function createAppStore() {
         // Background projects are not watched: an agent finishing a turn may have committed
         // or switched branch, so refresh that project's subtitle.
         if (prev?.status === "working" && p.status !== "working" && p.project_id) refreshProjectInfo(p.project_id, 1000);
+        if (prev?.alive && !p.alive) handOverIfIdle();
         break;
       }
       case "session.closed": {
@@ -308,6 +351,7 @@ function createAppStore() {
           }
           if (state.recent?.some((r) => r.kind === "session" && r.id === s.id)) update((st) => (st.recent = st.recent.filter((r) => !(r.kind === "session" && r.id === s.id))));
         }
+        handOverIfIdle();
         break;
       }
       case "session.resync": {
@@ -1292,7 +1336,8 @@ function createAppStore() {
 
   /** Per-connection setup: feature check, agent table, folder notes, keep-awake mode. */
   async function onConnected() {
-    void checkDaemonApi();
+    // Before resuming interrupted agents: a hand-over decision must see them start.
+    await checkDaemonApi();
     void loadAgentPresets();
     void loadMeta();
     void ipc.daemon("daemon.set_awake", { mode: state.settings.keepAwake ?? "off" }).catch(() => {});
@@ -1391,6 +1436,7 @@ function createAppStore() {
     projectInfo, refreshProjectInfo, recordRecent, setCollapsed, markUnread, renameSession, profileLaunch, setShortcut, setProfile,
     settingsSection, setSettingsSection, settingsItem, openSettings, paneLocation, isSessionVisible, refreshSessions, setSessions,
     addInbox, markInbox, clearInbox, unreadInbox, desktopNotify, meta, metaFor, setComment, loadMeta,
+    daemonNeedsSwitch, switchDaemon,
     notesFor, addNote, removeNotes, resumable, sleepProject, hibernateIdle, hibernateSessions, wakeVisible,
     newFloating, toggleFloating, selectFloating, closeFloating,
   };

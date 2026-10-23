@@ -8,10 +8,11 @@ import { chordLabel, isMac, relTimeShort } from "../lib/platform";
 import { editorOpen, editorsList, gitBranchDelete, revealEntry } from "../lib/ipc";
 import { pullRequests, prLabel } from "../lib/pull-requests";
 import { switchToChat, switchToTerminal, supportsChat } from "../chat/mode-switch";
+import { conversationCommands, restartKeepingConversation, runConversationCommand } from "../lib/agent-actions";
 import { daemon } from "../lib/ipc";
 import { Icon, KindGlyph } from "./icons";
 import { BrandMark, BrandWordmark, KipCompanion, kipShown } from "./brand";
-import { findPane } from "../lib/layout";
+import { findPane, readingOrder } from "../lib/layout";
 import { sessionAccount } from "../lib/accounts";
 import { hostLabel } from "../lib/remote";
 import { canGoBack, canGoForward, navBack, navForward } from "../lib/nav-history";
@@ -96,10 +97,18 @@ setInterval(() => setNow(Date.now()), 30_000);
 export const shortModel = (m: string | null | undefined) =>
   m ? m.replace(/^(claude|anthropic)[-/]/i, "").replace(/^openai[-/]/i, "").replace(/\[.*\]$/, "") : "";
 
+/** A project's sessions in the order their panes are seen — tab by tab, each read top to bottom
+ *  and left to right — so a session switched to chat view (a new session in the same pane) keeps
+ *  its place. Sessions in no pane follow, oldest first. */
 function projectSessions(projectId: string): SessionInfo[] {
+  const rank = new Map<string, number>();
+  for (const tab of store.workspace(projectId).tabs) {
+    for (const p of readingOrder(tab.root)) if (p.sessionId && !rank.has(p.sessionId)) rank.set(p.sessionId, rank.size);
+  }
+  const at = (s: SessionInfo) => rank.get(s.id) ?? Number.MAX_SAFE_INTEGER;
   return Object.values(store.sessions)
     .filter((s) => s.project_id === projectId)
-    .sort((a, b) => a.created_at - b.created_at);
+    .sort((a, b) => at(a) - at(b) || a.created_at - b.created_at);
 }
 
 const lastActivity = (projectId: string) =>
@@ -123,6 +132,12 @@ function sessionMenu(s: SessionInfo): MenuItem[] {
   if (!s.alive && !s.chat) items.push({ label: store.resumable(s) ? t("Resume") : t("Restart"), run: () => void daemon("session.restart", { handle: s.handle }).catch((e) => store.notify(String(e))) });
   if (s.alive && supportsChat(s.kind)) {
     items.push(s.chat ? { label: t("Continue in terminal (TUI)"), run: () => void inPane(s, switchToTerminal) } : { label: t("Continue in chat view"), run: () => void inPane(s, switchToChat) });
+  }
+  const conv = conversationCommands(s);
+  if (conv) {
+    items.push(null, { label: t("Compact conversation"), run: () => void runConversationCommand(s, "compact") });
+    if (conv.clear) items.push({ label: t("Clear conversation"), run: () => void runConversationCommand(s, "clear") });
+    if (store.resumable(s)) items.push({ label: t("Restart, keeping the conversation"), run: () => void restartKeepingConversation(s) });
   }
   items.push(null, {
     label: s.alive ? t("Stop and close") : t("Close"), danger: true,

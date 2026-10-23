@@ -34,9 +34,13 @@ the app runs without saving rather than overwrite it.
 Closing or crashing the app never stops a session. If `kelpied` itself stops, sessions that
 were running are restored *interrupted* with their last screen; the app resumes them when they
 are shown, all at once, or on request (Settings → Agents). Agents resume their conversation
-(`--resume <id>` / `resume <id>`; a Claude id that was never saved to a transcript is not
-resumed, and the id is recovered from transcripts when hooks never reported it); shells
-restart below their old output.
+(`--resume <id>` / `resume <id>`); shells restart below their old output. A new Claude Code
+terminal session gets its id from Kelpie (`claude --session-id <uuid>`, unless the user's own
+arguments pick the conversation), so the id is known before any hook runs — also on an SSH
+host, where hooks never run. Hooks still follow it when it changes (`/clear`, `/resume` inside
+Claude). An id never saved to a transcript (nothing sent yet) starts again under the same id;
+on an SSH host the remote shell checks for the transcript and runs `--resume` or
+`--session-id`. Other agents' ids come from hooks or are recovered from transcripts.
 
 Data: `%LOCALAPPDATA%\Kelpie` (Windows), `~/Library/Application Support/Kelpie` (macOS).
 `KELPIE_DATA_DIR` and `KELPIE_ENDPOINT` override both (used by the dev scripts and tests).
@@ -82,7 +86,7 @@ Frames (`crates/kelpie-proto`): `u32 LE length | u8 kind | payload`
 | 2 Output | daemon → app | `u32 handle \| u64 seq \| bytes` (`seq` = stream offset after the bytes) |
 | 3 Input | app → daemon | `u32 handle \| bytes` |
 
-RPC methods: `auth`, `daemon.info|set_theme|set_awake|policy|set_policy|shutdown`, `session.list|create|attach|detach|input|resize|focus|kill|close|restart|update|read|set_unread`, `chat.close_stdin`, `hook.report`, `agent.presets|run|set_custom`, `meta.list|get|set`, `automation.list|save|delete|run`, `run.list|get|create|approve|retry|task_done|task_skip|cancel|delete|report`, `mobile.status|enable|disable|pair_start|approve|revoke|set_write|set_projects`.
+RPC methods: `auth`, `daemon.info|set_theme|set_awake|set_priority|policy|set_policy|shutdown`, `session.list|create|attach|detach|input|resize|focus|kill|close|restart|update|read|set_unread`, `chat.close_stdin`, `hook.report`, `agent.presets|run|set_custom`, `meta.list|get|set`, `automation.list|save|delete|run`, `run.list|get|create|approve|retry|task_done|task_skip|cancel|delete|report`, `mobile.status|enable|disable|pair_start|approve|revoke|set_write|set_projects`.
 `daemon.info` reports an `api` feature level (`kelpie_proto::API_LEVEL`); an app built for a
 higher level offers to restart an older daemon still running from a previous version.
 Events: `session.updated` (coalesced, 250 ms), `session.closed`, `session.resync`, `session.clipboard`, `meta.updated`, `automation.ran`, `run.updated`, `mobile.pair_request`.
@@ -141,31 +145,104 @@ writing them.
 ## Agent status
 
 Priority: agent hooks → bell → output activity.
-- Claude Code: launched with `--settings <kelpie hooks file>`; every hook runs `kelpied hook claude`,
-  which reports the event (and the Claude session id) over the socket.
-- Codex: `-c notify=[kelpied, hook, codex]` (turn completion + thread id).
+- Claude Code: launched with `--settings <kelpie hooks file>` (and `--session-id`, see above);
+  every hook runs `kelpied hook claude`, which reports the event (and the Claude session id,
+  which changes on `/clear`) over the socket.
+- Codex: `-c notify=[kelpied, hook, codex]` (turn completion + thread id). Codex also runs
+  unsaved background threads of its own that notify too; `kelpied hook` keeps a thread id only
+  when Codex saved that thread (`$CODEX_HOME/sessions/YYYY/MM/DD/rollout-…-<id>.jsonl`, the day
+  read from the UUIDv7 id), so a restart resumes the conversation, not a helper thread.
 - Others: output activity (≥ 1.5 s of output after the echo window = working) and BEL.
 
 States: `working`, `waiting` (needs you), `idle` (+ `unread` after ≥ 3 s of work while not
 visible), `exited`. Desktop notifications fire on working → idle/waiting when the session is
 not visible.
 
+## CPU priority (Windows)
+
+A keystroke crosses daemon → console host → agent → console host → daemon → webview, and
+Windows' foreground boost goes to Kelpie's window only. On a busy machine every hop queues
+behind other work, so with `daemon.set_priority {enabled}` (the app's *Prioritize visible
+terminals*, on by default) the 250 ms ticker applies `proc_tree::Priority` per session:
+
+| Session | Agent process + its ConPTY host | Rest of the tree |
+|---|---|---|
+| has an interactive view (on screen) | above normal | normal |
+| no view | normal | normal |
+| chat session | normal (its input is the app's own field) | normal |
+
+Nothing is ever lowered: measured, a shell or agent at below-normal priority printed nothing for
+30 s and more while other programs kept a 4-core CPU busy, which would freeze every hidden
+session.
+
+"Agent process" is the session's root, or — when the root only launches the agent (an npm shim
+runs `node codex.js`, which starts `codex.exe`) — the root's child named after the agent's
+binary too. The daemon runs above normal while the policy is on (children still start
+normal); a hidden session's output-reader thread drops to the lowest thread priority, so
+parsing its output does not run ahead of other programs. The console host is the
+`OpenConsole.exe`/`conhost.exe` child that appears while the pseudoconsole is created
+(serialised). A raised session is raised again every 5 s (a launcher starts the agent's own
+process a moment later); other states are applied once. A `custom` session on screen stays
+normal (its root is usually the workload itself). The Win32 calls run in a blocking task, off
+the session locks and the async ticker. Measured with `kelpied bench-echo` (keystroke → daemon screen, optional
+`--load N` busy sessions / `--external N` busy processes) and `scripts/e2e/typing_latency.py`
+(→ rendered frame). Unix: no-op, an unprivileged process cannot raise niceness back.
+
 ## Chat mode
 
 A chat session is a daemon `ChatSession`: the agent runs with piped stdio and the daemon
-relays JSON lines (logged for replay on re-attach). Adapters in `app/src/chat` map each
+relays JSON lines (logged for replay on re-attach). The agents' lines carry no time, so the
+daemon puts a `{"type":"kelpie_time","at":<unix ms>}` line ahead of the first line of each
+second; a replay dates every item from it (Claude history read from its transcript uses the
+entries' own `timestamp`). Adapters in `app/src/chat` map each
 dialect to one item model (user, assistant, thinking, tool card with diff, permission, result):
 
 | Agent | Process | Protocol |
 |---|---|---|
-| Claude Code | `claude -p --input-format stream-json --output-format stream-json --include-partial-messages --replay-user-messages --permission-prompt-tool stdio [--resume id]` | stream-json + `control_request`/`control_response` |
-| Codex | `codex app-server` | JSON-RPC: `initialize`, `thread/start|resume|list`, `turn/start|interrupt`, approvals |
-| OMP | `omp acp` | ACP: `session/new|load|prompt|cancel`, `session/update`, `session/request_permission` |
+| Claude Code | `claude -p --input-format stream-json --output-format stream-json --include-partial-messages --replay-user-messages --permission-prompt-tool stdio [--resume id]` | stream-json + `control_request`/`control_response`: `initialize` (commands, models + effort levels, permission mode), `set_model`, `set_permission_mode`, `apply_flag_settings{effortLevel}`, `interrupt`; slash commands are sent as text and run by the CLI |
+| Codex | `codex app-server` | JSON-RPC: `initialize`, `thread/start|resume|list`, `turn/start|interrupt` (model, effort, approval/sandbox ride on `turn/start`), `model/list`, `skills/list`, `thread/compact/start`, `review/start`, `thread/shellCommand` (`!cmd` typed in the composer — it runs outside the sandbox, as in the TUI; never for text Kelpie sends for the user), approvals; `$skill` adds a `skill` input item |
+| OMP | `omp acp` | ACP: `session/new|load|prompt|cancel`, `session/update` (incl. `available_commands_update`, `config_option_update`), `session/set_config_option`, `session/request_permission` |
+
+The composer (`components/chat-composer.tsx`) completes `/` from the adapter's command list,
+`$` from Codex skills and `@` from Kelpie's file index (`quick_open`), and shows the adapter's
+settings (model / effort / mode) as pickers. A command chat view cannot run (Claude's
+`terminal_slash_commands`, a Codex command without an app-server request) offers *Run it in
+the terminal*: the hand-off below, with the command as the new session's prompt. A resumed
+launch passes it as an argument (`claude --resume <id> "/cmd"`, `codex resume <id> "/cmd"`), so
+the agent runs it in that conversation itself; a typed prompt (too long for a command line) waits
+for the program's first output before the quiet period counts. The daemon keeps the
+command/model/skill answers when it trims a chat's replay log. Streaming replies render
+finished markdown blocks once and only the open block as text; off-screen messages use
+`content-visibility: auto`.
+
+Beyond the items, adapters fill shared state the UI renders the same way for every agent:
+
+| State | Claude | Codex | ACP |
+|---|---|---|---|
+| plan | `TodoWrite` input | `turn/plan/updated` | `plan` update |
+| usage (context used / window, cost) | `assistant.message.usage` (input + cache + output) / `result.modelUsage[model].contextWindow`, `total_cost_usd` | `thread/tokenUsage/updated` (`last.totalTokens` / `modelContextWindow`) | `usage_update` when sent |
+| turn diff | from Edit/Write inputs | `turn/diff/updated` | from `diff` contents |
+| tool category | tool name | `commandActions` (read / listFiles / search) | tool `kind` |
+
+`chat/tool-view.ts` turns a tool item into a row (verb, target, detail, IN/OUT) and diffs
+edit strings line by line. `ChatController` queues what is sent while the agent is busy and
+sends it when the turn ends (adapters set `busy = false` last); *Send now* uses the adapter's
+`steer` (Claude: written mid-turn, the CLI reads it at its next step; Codex: `turn/steer`,
+queued again if refused) or stops the turn; stopping holds the queue. Approvals carry what they
+are about (command, edit diff, plan) and Claude's `AskUserQuestion` / `ExitPlanMode` are
+answered in their card (`updatedInput.answers`, `updatedPermissions: setMode acceptEdits`).
 
 Terminal ↔ chat switching hands off the *conversation*: find the conversation id (hooks,
 transcript directory, or `thread/list`), stop the old front-end (Ctrl+C twice, then kill)
 so there is never a second writer, and start the other front-end resuming the same id in
 the same pane. Claude history from before the switch is read from its transcript file.
+The conversation's settings come along (`chat/agent-settings.ts`): Claude Code restores none of
+them on `--resume`, so its transcript's last `permission-mode` entry and latest reply's `effort` /
+requested model become `--permission-mode` / `--effort` / `--model` for the chat process (and seed
+its pickers until a turn reports the model); back in the terminal, chat view's picks become those
+flags (Codex: `-s`/`-a` or `--dangerously-bypass-approvals-and-sandbox`, `-m`,
+`-c model_reasoning_effort`), replacing the profile's own. Codex's app-server and OMP restore a
+conversation's own settings themselves.
 
 ## App-side services (Rust core)
 
@@ -175,14 +252,52 @@ the same pane. Claude history from before the switch is read from its transcript
 | `usage.rs` | Claude (`api.anthropic.com/api/oauth/usage`) and Codex (`chatgpt.com/backend-api/wham/usage`) plan windows, using the agents' own OAuth sign-in. Tokens never leave this module; the webview gets percentages and reset times only. |
 | `sys_stats.rs` | Memory of the app + WebView tree, the daemon and its descendants (PID-reuse safe). |
 | `git.rs` | Status, branch summary, diffs, staging, commits, worktrees (`add` / `remove` / `prune`, file at a revision, commits only a detached HEAD reaches). |
+| `updater.rs` | Updates through `tauri-plugin-updater`: `latest.json` from GitHub Releases, verified with the minisign public key in `tauri.conf.json`. Install = download (signature checked) → installer (Windows, passive with restart; the app exits) or in-place bundle swap and restart (macOS). The daemon is never stopped. Dev builds and `KELPIE_E2E` runs never check. Endpoint/key overrides and a dry install exist only with the `e2e-updater` feature. |
+
+**Updates keep sessions running.** Windows cannot replace a running program, so the app
+(`daemon_runtime.rs`, release builds) starts the daemon from a copy in one of two fixed slots,
+`<data dir>/daemon/a` or `…/b` (`kelpied.exe`, `conpty.dll`, `OpenConsole.exe` — the sideloaded ConPTY
+starts its console hosts from its own folder; `build.txt`, written last, names the build). A new
+build goes into the slot no daemon runs from; two fixed paths keep firewall rules (phone access)
+and paths an agent was told valid across updates. The installer replaces the install folder while that daemon
+and every session keep running; the installer restarts the app, which reconnects to them.
+`checkDaemonApi` (run before interrupted agents resume) sees the older daemon and keeps it until no
+session runs on it — checked again from the daemon's own list after 10 s of quiet, since a session can
+be down for a moment (restart keeping the conversation, terminal↔chat switch); newer daemons also
+refuse `daemon.shutdown {if_idle}` while anything runs — then it shuts it down and the app starts
+the new copy; or the user picks *Switch now* (graceful stop: sessions come
+back interrupted, agents resume). An updated app therefore has to work with an older daemon (API level
+6 or newer): features that need newer RPCs check `daemon.info.api` and stay hidden until the
+switch. A daemon started from a slot
+removes anything else in `daemon/` no daemon runs from (`runtimes.rs`). A release that fixes a
+daemon security problem raises `DAEMON_SECURITY_LEVEL`; against an older daemon the app then keeps a
+*Switch session daemon* chip in the status bar until the user switches — it never stops sessions
+by itself. macOS replaces
+the bundle in place while the daemon keeps running from the old inode.
+
+The NSIS hooks (`installer/hooks.nsh` → `installer/stop-daemon.ps1`) close the app first (Tauri's
+`CheckIfAppIsRunning`), then stop only programs **directly in `$INSTDIR`** — a daemon started by
+Kelpie 0.1.x before copies existed, gracefully with `kelpied stop --wait` and a wait for its exit —
+compared in 8.3 form. The uninstaller an upgrade runs in place ("uninstall before installing",
+`$EXEDIR == $INSTDIR`) does the same; only a real uninstall also stops and removes the copies in
+`$LOCALAPPDATA\Kelpie\daemon`. `daemon.info.exe` tells the update dialog whether this update still has
+to stop sessions (a daemon from the install folder: the one-time move from 0.1.x). A legacy daemon whose session runs the installer makes it refuse
+(exit 3) rather than end that session. A graceful stop keeps sessions resumable: `persist(true)`
+saves them as running before the process exits, and `restore()` marks them interrupted. Releases: tag `v<version>` → `.github/workflows/release.yml` builds and signs
+(`tauri.updater.json` turns on updater artifacts; macOS as one `universal-apple-darwin` build whose
+sidecars `build-release.sh` joins with `lipo` when `KELPIE_TARGET` says so), and
+`scripts/release/latest_json.py` writes the manifest (`darwin-aarch64` and `darwin-x86_64` both point
+at the universal bundle) into a **draft** release; apps see it once the draft is published.
 
 ## Worktrees
 
 A git worktree is a project with `parentId` (its repository) and `branch`; it has its own
 tabs, layouts and sessions and switches like any project. Removal checks for changes and
 commits only the worktree holds, leaves the worktree, stops sessions in its folder and waits
-for their processes (Windows cannot delete a folder in use), then runs `git worktree remove`
-— never deleting the branch. `.kelpie.yaml` (setup commands, default tabs) is read from the base
+for their processes (Windows cannot delete a folder in use), stops watching the folder (an
+unwatch that arrives while the watcher is still being created cancels it), then runs `git
+worktree remove` — never deleting the branch; a deleted folder that something still holds open
+lingers until the handle closes, so the leftover check waits up to 3 s. `.kelpie.yaml` (setup commands, default tabs) is read from the base
 commit, shown in full, and runs only when the user opts in; approval is remembered per
 repository by the file's hash.
 

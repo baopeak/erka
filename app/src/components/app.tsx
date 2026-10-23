@@ -1,4 +1,4 @@
-import { Match, Show, Switch, createEffect, createMemo, on, onMount } from "solid-js";
+import { Match, Show, Switch, createEffect, createMemo, lazy, on, onMount } from "solid-js";
 import { errorText } from "../lib/i18n";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { store } from "../lib/store";
@@ -37,6 +37,9 @@ import { loadPlugins, syncPluginAgents } from "../lib/plugins";
 import { initVoice } from "../lib/voice";
 import { applyLocale } from "../lib/i18n";
 import { VoicePill } from "./voice";
+import { startUpdater } from "../lib/updater";
+
+const UpdateDialog = lazy(() => import("./update-dialog"));
 
 /** Tells the daemon which palette to answer terminal colour queries with. */
 function syncDaemonTheme() {
@@ -48,6 +51,7 @@ function syncDaemonTheme() {
 
 export function App() {
   createEffect(syncDaemonTheme);
+  startUpdater();
   createEffect(() => applyLocale(store.state.settings.language));
   // Plugin agents go to the daemon on every connection (it may have restarted without them).
   createEffect(() => store.connected() && void syncPluginAgents(true));
@@ -62,6 +66,10 @@ export function App() {
   createEffect(() => {
     const mode = store.state.settings.keepAwake ?? "off";
     if (store.connected()) void daemon("daemon.set_awake", { mode }).catch(() => {});
+  });
+  createEffect(() => {
+    const enabled = store.state.settings.prioritizeVisible ?? true;
+    if (store.connected()) void daemon("daemon.set_priority", { enabled }).catch(() => {});
   });
   createEffect(() => {
     const on = store.state.settings.agentsScripting ?? true;
@@ -139,6 +147,7 @@ export function App() {
         <Match when={store.overlay() === "remote"}><RemoteDialog /></Match>
         <Match when={store.overlay() === "hosts"}><HostsPage /></Match>
         <Match when={store.overlay() === "worktree"}><WorktreeDialog /></Match>
+        <Match when={store.overlay() === "update"}><UpdateDialog /></Match>
         <Match when={["palette", "quickopen", "jump"].includes(store.overlay() ?? "") && store.overlay()} keyed>
           {(o) => <Palette scope={o === "quickopen" ? "files" : o === "jump" ? "sessions" : "all"} />}
         </Match>

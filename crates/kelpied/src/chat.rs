@@ -19,7 +19,7 @@ use parking_lot::Mutex;
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
-use crate::proc_tree::ProcTree;
+use crate::proc_tree::{Priority, ProcTree};
 use crate::session::{json_out, ClientTx, Outgoing, SessionInfo, SessionSpec, SUB_BUDGET};
 use crate::status::{exit_failed, Activity, Status, MIN_WORK_FOR_UNREAD};
 
@@ -27,8 +27,17 @@ const LOG_MAX_LINES: usize = 20_000;
 /// Base64 of the replayed log must stay well under `kelpie_proto::MAX_FRAME_LEN`.
 const LOG_MAX_BYTES: usize = 12 << 20;
 const MAX_LINE: usize = 4 << 20;
-/// Handshake responses the UI adapters need to rebuild state; kept when the log is trimmed.
-const PINNED_IDS: &[&str] = &[r#""id":"kelpie-init""#, r#""id":"kelpie-thread""#, r#""id":"kelpie-session""#];
+/// Handshake responses the UI adapters need to rebuild state (and the agents' command, model
+/// and skill lists the composer offers); kept when the log is trimmed.
+const PINNED_IDS: &[&str] = &[
+    r#""id":"kelpie-init""#,
+    r#""id":"kelpie-thread""#,
+    r#""id":"kelpie-session""#,
+    r#""id":"kelpie-models""#,
+    r#""id":"kelpie-skills""#,
+    r#""request_id":"kelpie-init""#,
+    r#""sessionUpdate":"available_commands_update""#,
+];
 
 struct Sub {
     client: u64,
@@ -38,13 +47,15 @@ struct Sub {
 }
 
 struct Inner {
-    pinned: Vec<Arc<[u8]>>,
+    /// Lines kept from trimmed parts of the log: the latest of each `PINNED_IDS` kind.
+    pinned: Vec<(usize, Arc<[u8]>)>,
+    pinned_bytes: usize,
     log: VecDeque<Arc<[u8]>>,
     log_bytes: usize,
     seq: u64,
     subs: Vec<Sub>,
     stdin: Option<tokio::sync::mpsc::UnboundedSender<Vec<u8>>>,
-    tree: Option<ProcTree>,
+    tree: Option<Arc<ProcTree>>,
     pid: Option<u32>,
     alive: bool,
     exit_code: Option<i32>,
@@ -60,6 +71,8 @@ struct Inner {
     /// `last_activity` as of the last broadcast; output alone re-broadcasts at most every 30 s.
     broadcast_activity: u64,
     interrupted: bool,
+    /// When the log last carried a `kelpie_time` line (unix ms).
+    last_stamp: u64,
 }
 
 pub struct ChatSession {
@@ -75,6 +88,7 @@ impl ChatSession {
             spec: Mutex::new(spec),
             inner: Mutex::new(Inner {
                 pinned: Vec::new(),
+                pinned_bytes: 0,
                 log: VecDeque::new(),
                 log_bytes: 0,
                 seq: 0,
@@ -94,6 +108,7 @@ impl ChatSession {
                 last_activity: 0,
                 broadcast_activity: 0,
                 interrupted: false,
+                last_stamp: 0,
             }),
         })
     }
@@ -121,7 +136,7 @@ impl ChatSession {
         cmd.process_group(0);
         let mut child = cmd.spawn().with_context(|| format!("spawn {argv:?}"))?;
         let pid = child.id();
-        let tree = pid.and_then(|p| ProcTree::adopt(p).ok());
+        let tree = pid.and_then(|p| ProcTree::adopt(p, None, None).ok()).map(Arc::new);
         let mut stdin = child.stdin.take().context("stdin")?;
         let stdout = child.stdout.take().context("stdout")?;
         let stderr = child.stderr.take().context("stderr")?;
@@ -193,19 +208,30 @@ impl ChatSession {
         let derived = classify(&line);
         let failed_turn = derived == Some(Status::Idle) && turn_failed(&line);
         line.push('\n');
-        let bytes: Arc<[u8]> = Arc::from(line.into_bytes());
         let mut g = self.inner.lock();
+        // The agents' lines carry no time: a `kelpie_time` line ahead of the first one of each
+        // second lets a replayed transcript show when every message came.
+        let wall = crate::session::now_millis();
+        if wall >= g.last_stamp + 1000 {
+            g.last_stamp = wall;
+            line.insert_str(0, &format!("{}\n", json!({"type": "kelpie_time", "at": wall})));
+        }
+        let bytes: Arc<[u8]> = Arc::from(line.into_bytes());
         g.seq += bytes.len() as u64;
         g.log_bytes += bytes.len();
         g.log.push_back(bytes.clone());
-        while g.log.len() > LOG_MAX_LINES || g.log_bytes > LOG_MAX_BYTES {
-            if let Some(old) = g.log.pop_front() {
-                g.log_bytes -= old.len();
-                let head = String::from_utf8_lossy(&old[..old.len().min(256)]).into_owned();
-                if PINNED_IDS.iter().any(|id| head.contains(id)) && old.len() < 1 << 20 {
-                    g.pinned.push(old);
-                }
+        while g.log.len() > LOG_MAX_LINES || g.log_bytes + g.pinned_bytes > LOG_MAX_BYTES {
+            let Some(old) = g.log.pop_front() else { break };
+            g.log_bytes -= old.len();
+            let head = String::from_utf8_lossy(&old[..old.len().min(256)]).into_owned();
+            let Some(kind) = PINNED_IDS.iter().position(|id| head.contains(id)).filter(|_| old.len() < 1 << 20) else { continue };
+            // A newer answer of the same kind (a new thread, a later command list) replaces it.
+            if let Some(i) = g.pinned.iter().position(|(k, _)| *k == kind) {
+                let (_, prev) = g.pinned.remove(i);
+                g.pinned_bytes -= prev.len();
             }
+            g.pinned_bytes += old.len();
+            g.pinned.push((kind, old));
         }
         g.activity.on_output(now);
         g.last_activity = crate::session::now_millis();
@@ -235,7 +261,7 @@ impl ChatSession {
         let mut g = self.inner.lock();
         g.subs.retain(|s| s.client != client);
         let mut data = Vec::with_capacity(g.log_bytes);
-        for line in g.pinned.iter().chain(g.log.iter()) {
+        for line in g.pinned.iter().map(|(_, l)| l).chain(g.log.iter()) {
             data.extend_from_slice(line);
         }
         let reply = json!({"id": req_id, "result": {
@@ -284,6 +310,13 @@ impl ChatSession {
         let mut g = self.inner.lock();
         g.unread = unread;
         g.last_broadcast = None;
+    }
+
+    /// See `Session::priority`. Chat view types into its own field, so a shown chat needs no
+    /// boost; one nobody looks at still yields.
+    pub fn priority(&self, prioritize: bool) -> Option<(Arc<ProcTree>, Priority)> {
+        let g = self.inner.lock();
+        Some((g.tree.clone()?, if prioritize && !g.focused { Priority::Background } else { Priority::Normal }))
     }
 
     pub fn set_focus(&self, focused: bool) {

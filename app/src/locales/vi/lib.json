@@ -1,7 +1,9 @@
 {
-  "The session daemon is older than this app; some features are unavailable until it restarts.": "Daemon phiên cũ hơn ứng dụng này; một số tính năng chưa dùng được cho đến khi nó khởi động lại.",
+  "The session daemon from Kelpie {version} lacks a security fix in this release. Switch when you can: running sessions stop for a moment and agents resume.": "Daemon phiên của Kelpie {version} thiếu một bản sửa lỗi bảo mật có trong bản này. Hãy chuyển khi có thể: các phiên đang chạy dừng một lát và agent sẽ resume.",
+  "Your sessions keep running on the session daemon from Kelpie {version}; the new one takes over once they have all stopped.": "Các phiên của bạn vẫn chạy trên daemon phiên của Kelpie {version}; daemon mới sẽ thay khi tất cả các phiên đã dừng.",
+  "Switch now": "Chuyển ngay",
+  "Switch to the new session daemon now? Running sessions stop for a moment; agents that can resume continue their conversation.": "Chuyển sang daemon phiên mới ngay? Các phiên đang chạy sẽ dừng một lát; agent nào hỗ trợ resume sẽ tiếp tục đúng hội thoại.",
   "Restart daemon": "Khởi động lại daemon",
-  "Restart the session daemon? Running sessions stop; their screens are kept and they can be restarted.": "Khởi động lại daemon phiên? Các phiên đang chạy sẽ dừng; màn hình của chúng được giữ lại và có thể khởi động lại.",
   "Needs your input": "Cần bạn xử lý",
   "Finished": "Đã xong",
   "Automation · {name}": "Tự động hóa · {name}",

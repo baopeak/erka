@@ -6,8 +6,9 @@
 //!   kelpied hook <agent>     agent hook callback (reads payload from stdin / last argv)
 //!   kelpied ping             print daemon info if running
 //!   kelpied call <method> [json]  raw RPC (automation: session.list/create/input/read…)
-//!   kelpied stop [--kill-sessions]  ask the daemon to exit
+//!   kelpied stop [--kill-sessions] [--wait [--timeout-ms N]]  ask the daemon to exit (and wait until it has)
 //!   kelpied bench [opts]     throughput / attach benchmark against a running daemon
+//!   kelpied bench-echo [opts]  keystroke-to-echo latency, optionally under CPU load
 //!   kelpied terminal list|read|send|wait …   drive sessions from a script or another agent
 //!   kelpied worktree get|set …               this folder's comment / board status
 
@@ -18,14 +19,17 @@ mod automations;
 mod awake;
 mod bench;
 mod chat;
+mod choices;
 mod cli;
 mod client;
 mod daemon;
+mod echo_bench;
 mod meta;
 mod mobile;
 mod oneshot;
 mod persist;
 mod proc_tree;
+mod runtimes;
 mod runs;
 mod server;
 mod session;
@@ -61,8 +65,18 @@ fn main() -> Result<()> {
         }),
         Some("stop") => runtime()?.block_on(async {
             let kill = args.iter().any(|a| a == "--kill-sessions");
+            let wait = args.iter().any(|a| a == "--wait");
+            let timeout_ms = args.iter().position(|a| a == "--timeout-ms").and_then(|i| args.get(i + 1)).and_then(|v| v.parse().ok()).unwrap_or(15_000);
             let mut c = client::Client::connect().await?;
+            let pid = c.call("daemon.info", serde_json::json!({})).await.ok().and_then(|i| i.get("pid").and_then(serde_json::Value::as_u64)).map(|p| p as u32);
             c.call("daemon.shutdown", serde_json::json!({"kill_sessions": kill})).await?;
+            // An installer replaces the daemon's files: it must be gone, not just asked to go.
+            if let (true, Some(pid)) = (wait, pid) {
+                if !wait_for_exit(pid, std::time::Duration::from_millis(timeout_ms)) {
+                    eprintln!("kelpied stop: the daemon (pid {pid}) is still running after {timeout_ms} ms");
+                    std::process::exit(2);
+                }
+            }
             Ok(())
         }),
         Some("bench-emit") => {
@@ -70,12 +84,50 @@ fn main() -> Result<()> {
             Ok(())
         }
         Some("bench") => runtime()?.block_on(bench::run(&args[1..])),
+        Some("bench-burn") => {
+            echo_bench::burn();
+            Ok(())
+        }
+        Some("bench-echo") => runtime()?.block_on(echo_bench::run(&args[1..])),
         Some("terminal") => runtime()?.block_on(cli::terminal(&args[1..])),
         Some("worktree") => runtime()?.block_on(cli::worktree(&args[1..])),
         Some("run") => runtime()?.block_on(cli::run(&args[1..])),
         // ssh runs its SSH_ASKPASS program with the prompt as the only argument.
         Some(prompt) if std::env::var_os("KELPIE_ASKPASS").is_some() => std::process::exit(askpass::run(prompt)),
         Some(other) => anyhow::bail!("unknown command `{other}`"),
+    }
+}
+
+/// Waits until process `pid` has exited; `false` when it still runs after `timeout`.
+fn wait_for_exit(pid: u32, timeout: std::time::Duration) -> bool {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
+        use windows_sys::Win32::System::Threading::{OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE};
+        // SAFETY: plain Win32 calls on a handle we open and close here.
+        unsafe {
+            let handle = OpenProcess(PROCESS_SYNCHRONIZE, 0, pid);
+            if handle.is_null() {
+                return true; // already gone (or never ours to wait on)
+            }
+            let done = WaitForSingleObject(handle, timeout.as_millis().min(u32::MAX as u128) as u32) == WAIT_OBJECT_0;
+            CloseHandle(handle);
+            done
+        }
+    }
+    #[cfg(unix)]
+    {
+        let deadline = std::time::Instant::now() + timeout;
+        loop {
+            // SAFETY: signal 0 only checks that the process exists.
+            if unsafe { libc::kill(pid as libc::pid_t, 0) } != 0 {
+                return true;
+            }
+            if std::time::Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
     }
 }
 
@@ -171,6 +223,7 @@ fn serve() -> Result<()> {
     // Before any session spawns: their environment carries tokens derived from this daemon's secret.
     auth::init(&kelpie_proto::endpoint())?;
     let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("kelpied"));
+    runtimes::prune(&exe, &data_dir.join("daemon"));
     let daemon = daemon::Daemon::new(data_dir, exe);
     daemon.restore();
     tracing::info!(pid = std::process::id(), "kelpied {} starting", env!("CARGO_PKG_VERSION"));
@@ -231,7 +284,7 @@ fn hook(args: &[String]) {
     let agent = args.first().cloned().unwrap_or_default();
     let Ok(session_id) = std::env::var("KELPIE_SESSION_ID") else { return };
     // Codex passes the JSON as the last argv; Claude writes it to stdin.
-    let payload: serde_json::Value = match args.get(1) {
+    let mut payload: serde_json::Value = match args.get(1) {
         Some(arg) => serde_json::from_str(arg).unwrap_or(serde_json::Value::Null),
         None => {
             use std::io::Read;
@@ -240,6 +293,17 @@ fn hook(args: &[String]) {
             serde_json::from_str(&buf).unwrap_or(serde_json::Value::Null)
         }
     };
+    // Checked here, on the machine Codex runs on: only a thread it saved is the conversation.
+    if agent == "codex" {
+        let home = std::env::var_os("CODEX_HOME").map(std::path::PathBuf::from).or_else(|| dirs::home_dir().map(|h| h.join(".codex")));
+        if let (Some(obj), Some(home)) = (payload.as_object_mut(), home) {
+            let id = obj.get("thread-id").or_else(|| obj.get("thread_id")).and_then(|v| v.as_str()).map(str::to_string);
+            if id.is_some_and(|id| !agents::codex_thread_saved(&id, &home)) {
+                obj.remove("thread-id");
+                obj.remove("thread_id");
+            }
+        }
+    }
     let Ok(rt) = tokio::runtime::Builder::new_current_thread().enable_all().build() else { return };
     rt.block_on(async {
         let send = async {
@@ -252,7 +316,20 @@ fn hook(args: &[String]) {
 
 #[cfg(test)]
 mod tests {
-    use super::inherits_editor_host;
+    use super::{inherits_editor_host, wait_for_exit};
+
+    #[test]
+    fn waits_for_a_process_to_exit() {
+        let mut child = if cfg!(windows) {
+            std::process::Command::new("ping").args(["-n", "3", "127.0.0.1"]).stdout(std::process::Stdio::null()).spawn().unwrap()
+        } else {
+            std::process::Command::new("sleep").arg("2").spawn().unwrap()
+        };
+        let pid = child.id();
+        assert!(!wait_for_exit(pid, std::time::Duration::from_millis(100)), "still running after 100 ms");
+        assert!(wait_for_exit(pid, std::time::Duration::from_secs(10)), "gone within 10 s");
+        let _ = child.wait();
+    }
 
     #[test]
     fn scrubs_editor_host_env() {

@@ -47,7 +47,7 @@ export const stateBackup = (label: string) => invoke<string | null>("state_backu
 /** `text` with recognisable credentials masked (`kelpie_proto::redact`): for anything Kelpie
  *  sends out of a session. */
 export const redact = (text: string) => invoke<string[]>("redact_batch", { texts: [text] }).then((r) => r[0] ?? "");
-export const platformInfo = () => invoke<{ os: string; home: string; data_dir: string; api: number; e2e: boolean }>("platform_info");
+export const platformInfo = () => invoke<{ os: string; home: string; data_dir: string; api: number; version: string; security: number; e2e: boolean }>("platform_info");
 
 export const canonicalPath = (path: string) => invoke<string>("fs_canonical", { path });
 export const isDir = (path: string) => invoke<boolean>("fs_is_dir", { path });

@@ -184,30 +184,29 @@ input, textarea, select { font: inherit; color: var(--text); }
 .project:hover { background: var(--bg-hover); color: var(--text); }
 /* The open project is washed with its own hue from the left, tying the row to its swatch. */
 .project.active { background: linear-gradient(90deg, color-mix(in srgb, var(--kc, var(--accent)) 14%, var(--bg-active)), var(--bg-active) 70%); color: var(--text); }
-/* Agent glyphs and project swatches share one "glossy tile": a top-lit gradient of their own hue,
-   an inner highlight and a soft tinted drop shadow. --kc is set inline per tile. */
+/* Agent glyphs and project swatches share one tile: a gently top-lit gradient of their own hue,
+   a faint inner highlight and a tight neutral shadow (no colored halo). --kc is set inline per tile. */
 .kind-glyph, .project-swatch {
   --kc: #9aa4b5;
   position: relative; display: inline-grid; place-items: center; flex: none;
-  color: #fff; font-weight: 700; text-shadow: 0 1px 1px rgb(0 0 0 / .35);
-  background: linear-gradient(150deg, color-mix(in srgb, var(--kc), #fff 30%) 0%, var(--kc) 55%, color-mix(in srgb, var(--kc), #000 18%) 100%);
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / .35), inset 0 -1px 0 rgb(0 0 0 / .14), 0 1px 3px color-mix(in srgb, var(--kc) 45%, transparent);
-  transition: transform .16s ease, filter .2s ease, opacity .2s ease, box-shadow .2s ease;
+  color: #fff; font-weight: 700; text-shadow: 0 1px 1px rgb(0 0 0 / .3);
+  background: linear-gradient(160deg, color-mix(in srgb, var(--kc), #fff 16%), var(--kc) 60%, color-mix(in srgb, var(--kc), #000 10%));
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / .22), 0 1px 1.5px rgb(0 0 0 / .22);
+  transition: transform .16s ease, filter .2s ease, opacity .2s ease;
 }
 .kind-glyph { border-radius: max(5px, 26%); }
 .project-swatch { width: 22px; height: 22px; border-radius: 7px; font-size: 11px; }
-.project:hover .project-swatch, .session-row:hover .kind-glyph { transform: translateY(-1px) scale(1.06); }
-.project.active .project-swatch {
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / .35), inset 0 -1px 0 rgb(0 0 0 / .14), 0 0 0 2px var(--bg-active), 0 0 0 3.5px color-mix(in srgb, var(--kc) 55%, transparent), 0 2px 8px color-mix(in srgb, var(--kc) 45%, transparent);
-}
-/* A running agent breathes: a halo of its own hue fades in and out (opacity only, so it stays on the compositor). */
-.session-row.working .kind-glyph::after {
-  content: ""; position: absolute; inset: -2px; border-radius: inherit; pointer-events: none;
-  box-shadow: 0 0 7px 1px color-mix(in srgb, var(--kc) 75%, transparent); opacity: 0;
-  animation: breathe 2.4s ease-in-out infinite;
-}
+.project:hover .project-swatch, .session-row:hover .kind-glyph { transform: translateY(-1px) scale(1.05); }
 .session-row.exited .kind-glyph { filter: grayscale(.7); opacity: .6; }
-@keyframes breathe { 50% { opacity: 1; } }
+/* A running row carries a slow light sweep in the working hue behind its text (a transformed
+   pseudo-element, so it runs on the compositor and costs no layout or paint per frame). */
+.session-row.working { position: relative; overflow: hidden; isolation: isolate; }
+.session-row.working::before {
+  content: ""; position: absolute; inset: 0 auto 0 0; width: 45%; z-index: -1; pointer-events: none;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--working) 13%, transparent), transparent);
+  animation: sweep 3s ease-in-out infinite;
+}
+@keyframes sweep { 0% { transform: translateX(-100%); } 65%, 100% { transform: translateX(230%); } }
 .project-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .project-badges { display: flex; gap: 4px; align-items: center; }
 .badge { min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; font-size: 10px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; color: #141823; background-image: linear-gradient(rgb(255 255 255 / .22), transparent); box-shadow: inset 0 1px 0 rgb(255 255 255 / .3); animation: badge-pop .28s cubic-bezier(.3, 1.5, .6, 1); }
@@ -235,17 +234,28 @@ input, textarea, select { font: inherit; color: var(--text); }
 .dot { width: 10px; height: 10px; border-radius: 50%; flex: none; box-sizing: border-box; display: inline-grid; place-items: center; background: var(--exited); color: var(--on-working); }
 .dot svg { stroke-width: 3.2; }
 .dot.idle { background: var(--text-faint); transform: scale(.6); }
-.dot.working { background: transparent; border: 2px solid color-mix(in srgb, var(--working) 25%, transparent); border-top-color: var(--working); animation: spin .9s linear infinite; }
-.dot.waiting { background: var(--waiting); animation: ripple 1.8s ease-out infinite; }
+/* Working: a comet arc (faint tail to bright head) cut into a ring by a mask, spun with transform only. */
+.dot.working {
+  background: conic-gradient(from 0deg, color-mix(in srgb, var(--working) 12%, transparent), var(--working));
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 2.2px), #000 calc(100% - 2px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 2.2px), #000 calc(100% - 2px));
+  animation: spin .9s linear infinite;
+}
+/* Needs you: the ripple is a pseudo-element that scales and fades (no animated box-shadow repaint). */
+.dot.waiting { position: relative; background: var(--waiting); }
+.dot.waiting::after { content: ""; position: absolute; inset: 0; border-radius: 50%; background: var(--waiting); animation: ripple 1.8s ease-out infinite; pointer-events: none; }
 .dot.error { background: var(--danger); }
 .dot.done { background: var(--idle); }
 .dot.exited { background: transparent; border: 1.5px solid var(--exited); transform: scale(.8); }
 @keyframes spin { to { transform: rotate(360deg); } }
-@keyframes ripple { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--waiting) 55%, transparent); } 100% { box-shadow: 0 0 0 6px transparent; } }
+@keyframes ripple { from { transform: scale(1); opacity: .55; } to { transform: scale(2.2); opacity: 0; } }
+/* Reduced motion drops the decorative movement; the working spinner keeps turning, slower,
+   because it is the status itself (a frozen arc reads as "stuck"). */
 @media (prefers-reduced-motion: reduce) {
-  .dot.working { animation: none; border-color: var(--working); border-right-color: transparent; }
-  .dot.waiting { animation: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--waiting) 25%, transparent); }
-  .session-row.working .kind-glyph::after { animation: none; opacity: .6; }
+  .dot.working { animation-duration: 1.8s; }
+  .dot.waiting { box-shadow: 0 0 0 3px color-mix(in srgb, var(--waiting) 25%, transparent); }
+  .dot.waiting::after { display: none; }
+  .session-row.working::before { animation: none; transform: none; width: 100%; background: linear-gradient(90deg, color-mix(in srgb, var(--working) 9%, transparent), transparent 60%); }
   .badge { animation: none; }
   .kind-glyph, .project-swatch, .wt-glyph { transition: none; transform: none !important; }
 }
@@ -445,9 +455,16 @@ input, textarea, select { font: inherit; color: var(--text); }
 .form-row { display: grid; grid-template-columns: 170px 1fr; gap: 12px; align-items: center; }
 .form-row label { color: var(--text-dim); }
 .modal .footer { display: flex; justify-content: flex-end; gap: 8px; }
+.update-notes { margin: 0; max-height: 220px; overflow: auto; white-space: pre-wrap; font: inherit; font-size: 12.5px; color: var(--text-dim); background: var(--bg-elev); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
+.update-error { color: var(--danger); margin: 0; }
+.update-warning { margin: 0; color: var(--waiting); }
+.statusbar .daemon-switch { color: var(--waiting); }
 
 .statusbar { height: 24px; flex: none; display: flex; align-items: center; gap: 14px; padding: 0 12px; font-size: 11.5px; color: var(--text-faint); background: var(--bg-elev); border-top: 1px solid var(--border); }
 .statusbar .item { display: flex; align-items: center; gap: 6px; }
+/* Changing numbers keep their width, so nothing after them jumps. */
+.statusbar { font-variant-numeric: tabular-nums; }
+.statusbar .item.fixed { justify-content: flex-end; }
 .statusbar .spacer { flex: 1; }
 .statusbar .clickable { cursor: pointer; }
 .statusbar .clickable:hover { color: var(--text); }
@@ -526,6 +543,101 @@ input, textarea, select { font: inherit; color: var(--text); }
 .composer-row { display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--text-faint); }
 .composer-row .spacer { flex: 1; }
 .typing { color: var(--text-faint); font-size: 12px; display: flex; gap: 6px; align-items: center; }
+/* Off-screen messages skip layout and paint; `auto` keeps each one's last measured height. */
+.chat-inner > * { content-visibility: auto; contain-intrinsic-size: auto 60px; }
+.composer-box { position: relative; }
+.composer-menu { position: absolute; left: 0; right: 0; bottom: calc(100% + 6px); max-height: 280px; overflow-y: auto; background: var(--bg-elev-2); border: 1px solid var(--border-strong); border-radius: 10px; padding: 4px; box-shadow: 0 12px 32px rgba(0,0,0,.45); z-index: 20; }
+.composer-item { display: flex; align-items: baseline; gap: 8px; padding: 5px 9px; border-radius: 6px; cursor: pointer; font-size: 12.5px; min-width: 0; }
+.composer-item.sel { background: var(--bg-active); }
+.composer-item.dim .name { color: var(--text-faint); }
+.composer-item .name { font-family: var(--font-mono); color: var(--text); flex: none; }
+.composer-item .hint { font-family: var(--font-mono); color: var(--text-faint); flex: none; }
+.composer-item .detail { color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.setting-picker { position: relative; }
+.setting-btn { display: inline-flex; align-items: center; gap: 3px; background: transparent; border: 0; padding: 2px 4px; border-radius: 5px; color: var(--text-faint); font: inherit; cursor: pointer; }
+.setting-btn:hover:not(:disabled) { background: var(--bg-active); color: var(--text); }
+.setting-pop { position: absolute; left: 0; bottom: calc(100% + 6px); width: 280px; background: var(--bg-elev-2); border: 1px solid var(--border-strong); border-radius: 10px; padding: 6px; box-shadow: 0 12px 32px rgba(0,0,0,.45); z-index: 20; display: flex; flex-direction: column; gap: 4px; }
+.setting-title { font-size: 11px; color: var(--text-faint); padding: 2px 6px; }
+.setting-list { max-height: 300px; overflow-y: auto; }
+.setting-opt { padding: 5px 8px; border-radius: 6px; cursor: pointer; font-size: 12.5px; color: var(--text); display: flex; flex-direction: column; }
+.setting-opt:hover { background: var(--bg-active); }
+.setting-opt.sel { color: var(--accent); }
+.setting-opt .detail { font-size: 11px; color: var(--text-faint); }
+/* Transcript rows carry a status dot (inside the row: rows are paint-contained, see above). */
+.tdot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--idle); }
+.trow.running > .tool-head > .tdot { background: var(--working); animation: pulse 1.2s ease-in-out infinite; }
+.trow.error > .tool-head > .tdot { background: var(--danger); }
+.trow.thinking .tdot { background: var(--text-faint); }
+.trow.nested { border: 0; border-radius: 0; border-top: 1px solid var(--border); }
+@keyframes pulse { 50% { opacity: .35; } }
+.tool-head .tdetail { color: var(--text-faint); font-size: 11.5px; white-space: nowrap; }
+.tool-head.plain { padding: 4px 0; color: var(--text-faint); }
+.tool-head .thought { font-style: italic; }
+.tstats { display: inline-flex; gap: 6px; font: 11.5px var(--font-mono); }
+.tstats .add { color: var(--diff-add-text); }
+.tstats .del { color: var(--diff-del-text); }
+.trow.thinking { border: 0; background: none; }
+.msg-thinking.live { max-height: 9.5em; overflow: hidden; }
+.diff-file { color: var(--text); margin: 2px 0 4px; }
+.diff-file .link-btn { padding: 0; font: inherit; }
+.diff-line.gap { color: var(--text-faint); text-align: center; }
+.io { display: flex; gap: 8px; align-items: flex-start; }
+.io + .io { margin-top: 6px; }
+.io-tag { flex: none; width: 30px; font-size: 10px; color: var(--text-faint); padding-top: 2px; }
+.io-text { flex: 1; min-width: 0; }
+.clamp-text { white-space: pre-wrap; word-break: break-word; }
+.tool-body .link-btn { display: block; padding: 2px 0; font-size: 11.5px; }
+.run-items { border-top: 1px solid var(--border); }
+.msg-user-wrap { align-self: flex-end; max-width: 85%; display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
+.msg-user-wrap .msg-user { max-width: 100%; }
+.msg-time { font-size: 10.5px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.msg-reply { display: flex; flex-direction: column; }
+.msg-reply > .msg-time { align-self: flex-end; margin-bottom: -4px; }
+.perm-detail { font-size: 12.5px; color: var(--text-dim); white-space: pre-wrap; }
+.perm-command { margin: 0; background: var(--bg-elev); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font: 12px/1.5 var(--font-mono); white-space: pre-wrap; word-break: break-word; max-height: 200px; overflow: auto; }
+.perm-diff { border: 1px solid var(--border); border-radius: 8px; }
+.perm-plan { max-height: 360px; overflow: auto; border: 1px solid var(--border); border-radius: 8px; padding: 4px 12px; background: var(--term-bg); }
+.perm .btn .key { display: inline-block; min-width: 14px; margin-right: 6px; font: 10.5px var(--font-mono); opacity: .6; }
+.perm-msg { font-size: 12.5px; }
+.ask { display: flex; flex-direction: column; gap: 6px; }
+.ask-q { font-size: 13px; }
+.ask-tag { display: inline-block; font-size: 10.5px; color: var(--text-faint); border: 1px solid var(--border-strong); border-radius: 4px; padding: 0 5px; margin-right: 6px; }
+.ask-opts { display: flex; flex-wrap: wrap; gap: 6px; }
+.ask-opt { height: auto; padding: 5px 10px; flex-direction: column; align-items: flex-start; }
+.ask-opt .detail { font-size: 11px; color: var(--text-faint); }
+.ask-opt.sel { border-color: var(--accent); color: var(--accent); }
+.turn-files { border: 1px solid var(--border); border-radius: 10px; background: var(--bg-elev); }
+.turn-files .spacer { flex: 1; }
+.turn-file { display: flex; align-items: center; gap: 8px; padding: 3px 11px 3px 31px; border-top: 1px solid var(--border); }
+.turn-file .tsum { flex: 1; min-width: 0; text-align: left; overflow: hidden; text-overflow: ellipsis; font: 12px var(--font-mono); }
+.typing .elapsed { font-family: var(--font-mono); }
+.typing .hint { margin-left: auto; opacity: .7; }
+.chat-pill-dock { position: sticky; bottom: 8px; display: flex; justify-content: center; pointer-events: none; z-index: 5; }
+.chat-pill { pointer-events: auto; display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px; border-radius: 999px; border: 1px solid var(--border-strong); background: var(--bg-elev-2); color: var(--text); font: 12px var(--font-ui); cursor: pointer; box-shadow: 0 6px 18px rgba(0,0,0,.35); }
+.chat-pill.warn { border-color: var(--waiting); color: var(--waiting); }
+.plan { max-width: 860px; margin: 0 auto 6px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-elev); font-size: 12.5px; max-height: 40vh; overflow: auto; }
+.plan-head { display: flex; align-items: center; gap: 7px; padding: 6px 11px; cursor: pointer; color: var(--text-dim); min-width: 0; }
+.plan-title { font-weight: 600; color: var(--text); }
+.plan-count { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-faint); }
+.plan-current { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.plan-head .spacer { flex: 1; }
+.plan-why { padding: 0 11px 4px; color: var(--text-faint); }
+.plan-entry { display: flex; gap: 8px; padding: 2px 11px; color: var(--text-dim); }
+.plan-entry:last-child { padding-bottom: 7px; }
+.plan-entry.active { color: var(--text); font-weight: 500; }
+.plan-entry.done { color: var(--text-faint); text-decoration: line-through; }
+.plan-box { flex: none; width: 14px; text-align: center; color: var(--accent); }
+.queue { max-width: 860px; margin: 0 auto 6px; display: flex; flex-direction: column; gap: 4px; }
+.queue-note { font-size: 11.5px; color: var(--text-faint); display: flex; gap: 6px; align-items: center; }
+.queue-chip { display: flex; align-items: center; gap: 8px; padding: 4px 6px 4px 10px; border: 1px dashed var(--border-strong); border-radius: 8px; font-size: 12.5px; color: var(--text-dim); min-width: 0; }
+.queue-text { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.ctx-meter { display: inline-flex; align-items: center; gap: 4px; background: transparent; border: 0; padding: 2px 4px; border-radius: 5px; color: var(--text-faint); font: 11px var(--font-mono); cursor: pointer; }
+.ctx-meter:hover { background: var(--bg-active); color: var(--text); }
+.ctx-meter .ring-bg { fill: none; stroke: var(--border-strong); stroke-width: 2.2; }
+.ctx-meter .ring { fill: none; stroke: var(--text-dim); stroke-width: 2.2; stroke-linecap: round; }
+.ctx-meter.high .ring { stroke: var(--waiting); }
+.ctx-meter.high { color: var(--waiting); }
+:root[data-theme="light"] .composer-menu, :root[data-theme="light"] .setting-pop { box-shadow: 0 12px 32px rgba(20,30,50,.18); }
 
 /* ---------- key hints ---------- */
 .key-hints { display: flex; gap: 14px; align-items: center; padding: 7px 12px; border-top: 1px solid var(--border); font-size: 11.5px; color: var(--text-faint); }

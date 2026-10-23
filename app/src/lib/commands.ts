@@ -18,6 +18,8 @@ import { toggleDictation } from "./voice";
 import type { SessionKind } from "./types";
 import { msg, t } from "./i18n";
 import { confirmDialog } from "./confirm-dialog";
+import { focusedSession } from "./quick-commands";
+import { conversationCommands, restartKeepingConversation, runConversationCommand } from "./agent-actions";
 
 export interface Command {
   id: string;
@@ -36,6 +38,13 @@ function focusedPane() {
   const p = pid();
   const tab = p ? store.activeTab(p) : undefined;
   return p && tab ? { projectId: p, tab, paneId: tab.focus } : null;
+}
+
+/** The focused session when it is a running agent with conversation commands. */
+function agentHere() {
+  const s = focusedSession();
+  const conv = s && conversationCommands(s);
+  return s && conv ? { s, conv } : undefined;
 }
 
 function newSession(kind: SessionKind, where: "tab" | "right" | "down" = "tab") {
@@ -84,6 +93,9 @@ export const commands: Command[] = [
   { id: "new.claude", label: msg("New Claude Code Session"), run: () => newSession("claude"), when: hasProject },
   { id: "new.codex", label: msg("New Codex Session"), run: () => newSession("codex"), when: hasProject },
   { id: "new.omp", label: msg("New OMP Session"), run: () => newSession("omp"), when: hasProject },
+  { id: "agent.compact", label: msg("Agent: Compact Conversation"), when: () => !!agentHere(), run: () => void runConversationCommand(agentHere()!.s, "compact") },
+  { id: "agent.clear", label: msg("Agent: Clear Conversation"), when: () => !!agentHere()?.conv.clear, run: () => void runConversationCommand(agentHere()!.s, "clear") },
+  { id: "agent.restart", label: msg("Agent: Restart, Keeping the Conversation"), when: () => { const s = focusedSession(); return !!s?.alive && store.resumable(s); }, run: () => void restartKeepingConversation(focusedSession()!) },
   // Splits open an empty pane that asks which CLI to start (agent, terminal, or the full dialog).
   { id: "split.right", label: msg("Split Right…"), win: "mod+shift+d", mac: "mod+d", run: () => store.splitPicker(pid()!, "right"), when: hasProject },
   { id: "split.down", label: msg("Split Down…"), win: "mod+shift+s", mac: "mod+shift+d", run: () => store.splitPicker(pid()!, "down"), when: hasProject },

@@ -278,10 +278,11 @@ pub fn daemon_exe() -> std::path::PathBuf {
     })
 }
 
-/// Starts `kelpied` next to our executable, fully detached so closing the app (or its console
-/// job on Windows) never takes the daemon — and every agent — down with it.
+/// Starts `kelpied`, fully detached so closing the app (or its console job on Windows) never
+/// takes the daemon — and every agent — down with it; on Windows from a copy outside the install
+/// folder, so updating Kelpie never has to stop it (`daemon_runtime`).
 fn spawn_daemon() -> Result<()> {
-    let exe = daemon_exe();
+    let exe = crate::daemon_runtime::runnable(&daemon_exe());
     if !exe.exists() {
         return Err(anyhow!("daemon binary not found at {}", exe.display()));
     }

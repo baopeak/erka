@@ -77,6 +77,8 @@ pub struct Daemon {
     pub mobile: crate::mobile::Mobile,
     awake: Awake,
     awake_mode: Mutex<awake::Mode>,
+    /// Sessions no view shows run below normal CPU priority (`daemon.set_priority`).
+    prioritize: AtomicBool,
     /// Programs in a session may script other sessions (`daemon.set_policy`, saved in
     /// `policy.json` so it holds while the app is closed).
     agents_control_others: AtomicBool,
@@ -150,6 +152,8 @@ fn handle_of(params: &Value) -> Result<u32> {
 
 impl Daemon {
     pub fn new(data_dir: PathBuf, exe: PathBuf) -> Arc<Daemon> {
+        // `prioritize` starts on (until the app says otherwise).
+        crate::proc_tree::set_daemon_priority(true);
         Arc::new(Daemon {
             sessions: RwLock::new(BTreeMap::new()),
             next_handle: AtomicU32::new(1),
@@ -161,12 +165,26 @@ impl Daemon {
             mobile: crate::mobile::Mobile::load(&data_dir),
             awake: Awake::new(),
             awake_mode: Mutex::new(awake::Mode::Off),
+            prioritize: AtomicBool::new(true),
             agents_control_others: AtomicBool::new(load_policy(&data_dir)),
             data_dir,
             exe,
             meta_dirty: AtomicBool::new(false),
             shutdown: tokio::sync::Notify::new(),
         })
+    }
+
+    /// A new Claude Code conversation gets its id from Kelpie (`claude --session-id <id>`): known
+    /// from the first moment, so a restart resumes exactly it even when no hook reported it
+    /// (hooks off, Claude stopped before its first hook, a host over SSH where hooks never run).
+    /// Hooks still follow it when it changes (`/clear`, `/resume` inside Claude). True when an
+    /// id was given.
+    fn preset_conversation(spec: &mut SessionSpec) -> bool {
+        if spec.kind != "claude" || spec.agent_session_id.is_some() || agents::claude_args_pick_conversation(&spec.args) {
+            return false;
+        }
+        spec.agent_session_id = Some(uuid::Uuid::new_v4().to_string());
+        true
     }
 
     /// What `restart` resumes: the known conversation, else (agents that report no id) the
@@ -190,9 +208,11 @@ impl Daemon {
             };
         }
         match spec.agent_session_id.as_deref() {
-            // Claude reports its id at start but saves the conversation only with the first
-            // turn: `--resume` of one never saved fails, so that session starts fresh.
-            Some(id) if spec.kind == "claude" && !agents::claude_conversation_saved(id, &spec.env) => Resume::None,
+            // Claude saves a conversation only with its first turn: `--resume` of one never
+            // saved fails, so that session starts it under the same id.
+            Some(id) if spec.kind == "claude" && !agents::claude_conversation_saved(id, &spec.env) => {
+                if agents::claude_args_pick_conversation(&spec.args) { Resume::None } else { Resume::New(id) }
+            }
             Some(id) => Resume::Id(id),
             None if !matches!(spec.kind.as_str(), "claude" | "codex")
                 && agents::preset_for(&spec.kind).is_some_and(|p| !p.resume_latest.is_empty()) =>
@@ -556,7 +576,7 @@ impl Daemon {
     pub fn create(&self, params: Value) -> Result<SessionInfo> {
         let p: CreateParams = serde_json::from_value(params).context("session.create params")?;
         let model = model_from_args(&p.args);
-        let spec = SessionSpec {
+        let mut spec = SessionSpec {
             id: p.id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
             project_id: p.project_id,
             name: p.name,
@@ -580,7 +600,12 @@ impl Daemon {
             chat.spawn(&agents::platform_argv(argv)?)?;
             Entry::Chat(chat)
         } else {
-            let resume = spec.agent_session_id.as_deref().map_or(Resume::None, Resume::Id);
+            let fresh = Self::preset_conversation(&mut spec);
+            let resume = match spec.agent_session_id.as_deref() {
+                Some(id) if fresh => Resume::New(id),
+                Some(id) => Resume::Id(id),
+                None => Resume::None,
+            };
             let launch = Self::launch_for(&spec, resume, p.prompt.as_deref(), &self.exe, &self.data_dir)?;
             let session = Session::new(handle, spec, p.cols, p.rows);
             session.spawn(&launch)?;
@@ -596,14 +621,24 @@ impl Daemon {
     pub fn restart(&self, handle: u32) -> Result<SessionInfo> {
         let Entry::Term(session) = self.entry(handle)? else { bail!("chat sessions cannot be restarted") };
         anyhow::ensure!(!session.is_alive(), "session is still running");
-        let spec = session.spec.lock().clone();
+        // A local session from before ids were preset, whose conversation the app could not
+        // find either, starts a new one with a known id. One over SSH keeps resuming the
+        // folder's latest conversation, which is the one it had.
+        let spec = {
+            let mut spec = session.spec.lock();
+            if spec.remote.is_none() && Self::preset_conversation(&mut spec) {
+                self.meta_dirty.store(true, Ordering::Relaxed);
+            }
+            spec.clone()
+        };
         let launch = Self::launch_for(&spec, Self::resume_for(&spec), None, &self.exe, &self.data_dir)?;
+        // The program starts below the old output, which stays readable above it. A resumed agent
+        // redraws only the latest part of its conversation (Claude Code shows about a screenful),
+        // so clearing the scrollback here would lose everything said before the restart.
         if matches!(spec.kind.as_str(), "shell" | "custom") {
-            // A new shell starts below the old screen, which stays readable above it.
             session.ingest(b"\x1b[0m\r\n\x1b[2m--- restarted ---\x1b[0m\r\n");
         } else {
-            // Agents redraw their resumed conversation themselves.
-            session.ingest(b"\x1b[0m\x1b[2J\x1b[3J\x1b[H");
+            session.ingest(b"\x1b[0m\r\n\x1b[2m--- resumed ---\x1b[0m\r\n");
         }
         session.spawn(&launch)?;
         Ok(session.info())
@@ -773,6 +808,22 @@ impl Daemon {
                 }
             }
             let entries: Vec<Entry> = self.sessions.read().values().cloned().collect();
+            let prioritize = self.prioritize.load(Ordering::Relaxed);
+            let priorities: Vec<_> = entries
+                .iter()
+                .filter_map(|e| match e {
+                    Entry::Term(s) => s.priority(prioritize),
+                    Entry::Chat(c) => c.priority(prioritize),
+                })
+                .collect();
+            // Process snapshots and per-process calls block: keep them off the async workers.
+            if !priorities.is_empty() {
+                tokio::task::spawn_blocking(move || {
+                    for (tree, p) in priorities {
+                        tree.set_priority(p);
+                    }
+                });
+            }
             for entry in entries {
                 let changed = match &entry {
                     Entry::Term(s) => s.tick(now),
@@ -815,7 +866,10 @@ impl Daemon {
                 "version": env!("CARGO_PKG_VERSION"),
                 "protocol": kelpie_proto::PROTOCOL_VERSION,
                 "api": kelpie_proto::API_LEVEL,
+                "security": kelpie_proto::DAEMON_SECURITY_LEVEL,
                 "pid": std::process::id(),
+                // Where it runs from: a copy outside the install folder survives updates.
+                "exe": self.exe,
                 "data_dir": self.data_dir,
                 "endpoint": kelpie_proto::endpoint().display(),
                 "sessions": self.sessions.read().len(),
@@ -835,6 +889,12 @@ impl Daemon {
                     None => crate::vt::set_light_theme(light),
                 }
                 json!({})
+            }
+            "daemon.set_priority" => {
+                let enabled = params.get("enabled").and_then(Value::as_bool).unwrap_or(true);
+                self.prioritize.store(enabled, Ordering::Relaxed);
+                crate::proc_tree::set_daemon_priority(enabled);
+                json!({"enabled": enabled})
             }
             "daemon.set_awake" => {
                 *self.awake_mode.lock() = awake::Mode::parse(params.get("mode").and_then(Value::as_str).unwrap_or("off"));
@@ -936,6 +996,11 @@ impl Daemon {
             m if m.starts_with("run.") => self.run_rpc(m, &params)?,
             "automation.run" => serde_json::to_value(self.run_automation(param(&params, "id")?.as_str().unwrap_or_default())?)?,
             "daemon.shutdown" => {
+                // A hand-over to a newer daemon: only when nothing runs any more (checked here,
+                // not from a session list the app read a moment ago).
+                if params.get("if_idle").and_then(Value::as_bool) == Some(true) && self.sessions.read().values().any(|e| e.info().alive) {
+                    return Ok(Some(json!(false)));
+                }
                 if params.get("kill_sessions").and_then(Value::as_bool).unwrap_or(false) {
                     for e in self.sessions.read().values() {
                         e.kill();

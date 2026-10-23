@@ -14,6 +14,18 @@ Architecture and protocol: [architecture.md](architecture.md).
 Agents are not bundled: install the CLIs you use (`claude`, `codex`, `omp`) as usual. Kelpie
 finds them on your PATH (Windows) or through your login shell (macOS).
 
+**Updates.** Kelpie looks for a newer release on GitHub 30 s after it starts and every 6 hours
+(Settings → About → **Check for updates**, or **Check now**). A newer release shows as
+*Update x.y.z* in the status bar; its dialog shows the release notes, with **Install now**,
+**Install when idle** (as soon as no session is working) and **Skip this version**. Updates are
+signed; Kelpie installs nothing else. Installing restarts only the app: every session keeps
+running and is there when Kelpie reopens (running an installer by hand over a running Kelpie works
+the same way). The one exception is the first update from Kelpie 0.1.x, whose session daemon
+runs from the install folder: that update stops sessions once (the dialog says so) and agents
+resume. The sessions stay on the previous session daemon until they have all stopped; then
+the new one takes over on its own. A notice offers **Switch now** if you want the new daemon's
+features earlier (running sessions stop for a moment; agents that can resume continue).
+
 ## Everyday use
 
 1. **Add a project**: sidebar `+` (or search → *Add Project Folder…*). Any folder works; for a
@@ -21,7 +33,9 @@ finds them on your PATH (Windows) or through your login shell (macOS).
 2. **Start a session**: click Claude / Codex / OMP / Terminal on the empty project screen, or
    `+` in the tab bar for options (extra args, name, split, *Chat view*) and your quick commands.
 3. **Sidebar**: every project with its branch (`*` = uncommitted changes, ↑↓ ahead/behind) and
-   its sessions: status dot, task title, model and time since the last activity. Badges show
+   its sessions — in the order their panes sit on screen (tab by tab, each read left to right,
+   top to bottom; sessions in no pane last): status dot, task title, model and time since the
+   last activity. Badges show
    sessions that need you (amber), are working (blue) or finished unread (green). The chevron
    folds a project; the toolbar filters (all / running / needs you) and sorts (manual /
    recent). Right-click a session to rename it inline, mark it unread, restart or resume it,
@@ -43,7 +57,28 @@ finds them on your PATH (Windows) or through your login shell (macOS).
 8. **Chat view**: in an agent pane header click the chat icon to continue the *same
    conversation* in a chat UI (messages, tool cards with diffs, Allow/Deny prompts); the
    terminal icon switches back to the TUI. Kelpie stops one front-end before starting the other,
-   so a conversation never has two writers.
+   so a conversation never has two writers. In the message field `/` lists the agent's own
+   commands (skills and custom commands included), `@` the folder's files and, for Codex, `$` its
+   skills (`↑`/`↓`, `Tab` or `Enter` to pick, `Esc` to close); the pickers next to the agent's
+   name switch model, effort and permission mode (`Shift+Tab` steps through the modes). A command
+   that only works in the terminal UI shows *Run it in the terminal*, which switches back and runs
+   it there.
+   - The transcript reads like the terminal UI: each tool call is one line (*Read app.ts · lines
+     75-80*, *Edit main.rs +3 −1*, *Bash* with its command and output), runs of reads and searches
+     fold into *Explored 4 files, 2 searches*, and thinking folds into *Thought for 6s*. After a
+     turn, *N files changed* lists each file with its line counts; click one to open its changes.
+   - Every prompt and reply shows its date and time in the top right corner (hover for the full
+     date), also after a restart or when you come back to the chat later.
+   - Messages sent while the agent works wait above the message field and go when its turn ends.
+     *Send now* gives one to the agent during its turn (Codex and Claude; for other agents it stops
+     the turn first); stopping the agent holds the queue until you send again.
+   - The agent's task list (Claude's todos, Codex and OMP plans) stays pinned above the message
+     field. The ring next to the pickers shows how full the context is (hover for tokens and cost;
+     click to compact).
+   - Approvals show the command or the edit they are about; press `1`–`9` (with an empty message
+     field) to pick an option, or type what the agent should do instead and *Deny*. Questions the
+     agent asks (Claude's multiple-choice questions) and plans it wants approved are answered in
+     their card. *Waiting for your approval* appears when the card is scrolled out of view.
 
 ### Past conversations
 
@@ -141,6 +176,12 @@ prompt**; for a terminal it is a startup command.
   project for N minutes are stopped; they resume their conversation when you open them
   again. *Sleep* in a project's menu does the same at once.
 - **Keep computer awake**: off, while an agent works, or always (status bar coffee icon).
+- **Prioritize visible terminals** (Settings → Agents, on by default, Windows): the terminal on
+  screen gets the CPU first, so typing stays quick while other agents build and test or other
+  programs keep the machine busy. Nothing else is slowed down.
+- **Compact / Clear / Restart, keeping the conversation**: in a session's menu (and the command
+  palette, *Agent: …*). Compact and Clear send the agent's own commands; Restart starts a fresh
+  process on the same conversation, which helps when a long-running TUI has become sluggish.
 
 ### Terminals
 
@@ -148,6 +189,12 @@ Right-click a terminal for copy / paste / select all / clear, **Copy Context** (
 lines as text), splits, your quick commands and hand-offs. Settings → Terminal → *Colour
 theme* offers Dracula, Nord, One Dark, Tokyo Night, Catppuccin, Gruvbox, Solarized and GitHub
 Light (agents are told the same colours when they ask).
+
+Programs that take over the mouse — Claude Code with `"tui": "fullscreen"` (`/tui fullscreen`),
+OMP — scroll their own view with the wheel and copy what you select in them to the clipboard
+(OSC 52; only from the terminal you are in). Hold `Shift` while dragging to select terminal text
+instead. They draw on the alternate screen, so the terminal itself keeps no scrollback for
+them: `/tui classic` brings Claude Code's plain scrollback back.
 
 The **floating terminal** (`Ctrl+Shift+\`` / `⌘⌥A`, or the status bar) is a shell in your home
 folder, above any project; hide it and it keeps running.
@@ -255,7 +302,8 @@ sessions come back *interrupted* with their last screen. Settings → Agents →
 restart* decides what happens next: resume each one when you open it (default), all at once,
 or only with its **Resume** button. Agents continue the same conversation (Claude Code
 `--resume <id>`, Codex `resume <id>`, others with their "continue latest" flag); shells start
-again below their old output.
+again below their old output. Kelpie names each new Claude Code conversation itself, so even two
+Claude sessions in one folder — or on an SSH host — each come back to their own conversation.
 
 ### Several Claude Code / Codex accounts
 
@@ -494,7 +542,7 @@ a setting.
 - **Agents**: permissions (Manual / Yolo); per agent extra arguments (e.g. `--model opus`),
   permission mode (Claude) or approval policy (Codex) and environment variables (stored in
   plain text) — used by terminal and chat sessions; which agent CLIs launchers show; the agent
-  for AI actions; hibernation; keep computer awake.
+  for AI actions; hibernation; prioritize visible terminals; keep computer awake.
 - **Accounts**, **Integrations**, **Remote (SSH)**, **Mobile**, **Voice**, **Plugins**,
   **Layouts**, **Quick Commands**, **Automations**, **Shortcuts**: see above.
 - **Terminal**: font, size, line height, scrollback, renderer (WebGL / DOM), cursor blink,
@@ -531,6 +579,9 @@ scripts/build-release.sh --bundles nsis      # Windows installer
 scripts/build-release.sh --bundles app,dmg   # macOS
 ```
 
+Each run bumps the patch version (in `Cargo.toml`, `app/package.json` and
+`app/src-tauri/tauri.conf.json`) before building, so every installer has its own number.
+
 Voice dictation needs the speech helper: `cargo build --release -p kelpie-stt` (the build script
 does it; it downloads the speech engine's prebuilt library, ~120 MB, at build time). A
 development build finds it in `target/release`.
@@ -538,5 +589,6 @@ development build finds it in `target/release`.
 Development: `scripts/dev-daemon.sh run` (isolated endpoint/data dir), then in `app/`
 `KELPIE_ENDPOINT=kelpie-dev pnpm tauri dev`. Tests: `cargo test`, `pnpm typecheck`,
 `pnpm i18n:check` (every interface text has a Vietnamese translation), `kelpied bench --sessions
-20 --mb 2`, and the WebDriver end-to-end scripts in `scripts/e2e/`
+20 --mb 2`, `kelpied bench-echo` (keystroke latency; `--cmd claude --ready ❯`, `--load N` busy
+sessions, `--external N` busy processes), and the WebDriver end-to-end scripts in `scripts/e2e/`
 (require `tauri-driver` + a matching `msedgedriver`).

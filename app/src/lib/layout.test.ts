@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   allPanes, autoGrid, buildGrid, cellCount, cyclePane, equalize, fromTemplate, gridLabel, insertBeside, leaf, migrateLayout, movePane,
-  moveGutter, removePane, splitPane, swapPanes, templateKinds, toTemplate, validGrid, MAX_GRID,
+  moveGutter, readingOrder, removePane, splitPane, swapPanes, templateKinds, toTemplate, validGrid, MAX_GRID,
 } from "./layout";
 import type { LayoutNode, Pane } from "./types";
 
@@ -242,5 +242,21 @@ describe("templates and migration", () => {
     const g = buildGrid({ mode: "rows", counts: [2, 1] }, ["a", "b", "c"].map(pane), () => pane("x"));
     expect(ids(migrateLayout(JSON.parse(JSON.stringify(g))))).toEqual(["a", "b", "c"]);
     expect(migrateLayout(null)).toBeNull();
+  });
+});
+
+describe("readingOrder", () => {
+  const split = (dir: "row" | "col", children: LayoutNode[], sizes?: number[]): LayoutNode =>
+    ({ type: "split", id: dir + children.length, dir, children, sizes: sizes ?? children.map(() => 1 / children.length) });
+  const order = (n: LayoutNode) => readingOrder(n).map((p) => p.id);
+
+  it("reads a 2x2 grid line by line, however the tree nests it", () => {
+    // Rows of panes, and columns of panes, drawing the same grid.
+    expect(order(split("col", [split("row", [leaf(pane("a")), leaf(pane("b"))]), split("row", [leaf(pane("c")), leaf(pane("d"))])]))).toEqual(["a", "b", "c", "d"]);
+    expect(order(split("row", [split("col", [leaf(pane("a")), leaf(pane("c"))]), split("col", [leaf(pane("b")), leaf(pane("d"))])]))).toEqual(["a", "b", "c", "d"]);
+  });
+
+  it("puts a tall pane before the panes beside it", () => {
+    expect(order(split("row", [leaf(pane("tall")), split("col", [leaf(pane("top")), leaf(pane("bottom"))], [0.3, 0.7])]))).toEqual(["tall", "top", "bottom"]);
   });
 });

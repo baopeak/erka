@@ -1,8 +1,14 @@
 // Agent Client Protocol adapter (JSON-RPC 2.0 over stdio). Used for OMP (`omp acp`) and any
 // ACP-native agent. We advertise no client fs/terminal capabilities so the agent uses its
-// own tools, exactly like in its TUI.
-import { type Adapter, type AdapterContext, type ChatItem, summarize, textOf } from "./chat-model";
+// own tools, exactly like in its TUI. The agent lists its slash commands
+// (`available_commands_update`, run by sending `/name args` as prompt text) and its settings
+// (`configOptions`: mode, model, thought level) itself.
+import { type Adapter, type AdapterContext, type ChatCommand, type ChatItem, type ToolCategory, putSetting, setSettingValue, summarize, textOf } from "./chat-model";
+import { lineDiff, planStatus } from "./tool-view";
 import { t } from "../lib/i18n";
+
+/** ACP tool kinds → the transcript's categories. */
+const KINDS: Record<string, ToolCategory> = { read: "read", search: "search", edit: "edit", delete: "edit", move: "edit", execute: "command", fetch: "fetch" };
 
 export const ompAcpArgs = () => ["omp", "acp"];
 
@@ -17,6 +23,8 @@ export function createAcpAdapter(ctx: AdapterContext): Adapter {
   let lastKind: "assistant" | "thinking" | "user" | null = null;
   let lastId: string | null = null;
   const requests = new Map<string, unknown>();
+  /** The config option that holds the session mode (for `current_mode_update`). */
+  let modeOption: string | null = null;
   /** Prompts typed before the session was ready; sent once it is. */
   const queued: string[] = [];
 
@@ -45,12 +53,23 @@ export function createAcpAdapter(ctx: AdapterContext): Adapter {
     ctx.upsert({ kind, id: lastId, text, streaming: kind !== "user" } as ChatItem);
   }
 
+  function applyConfig(options: any[] | undefined) {
+    for (const o of options ?? []) {
+      if (o.type !== "select" || !Array.isArray(o.options)) continue;
+      // Options may come grouped ({group, options: [...]}); the picker lists them flat.
+      const flat = o.options.flatMap((x: any) => (Array.isArray(x.options) ? x.options : [x]));
+      putSetting(ctx, { id: o.id, label: o.name ?? o.id, value: o.currentValue ?? null, options: flat.map((x: any) => ({ value: x.value, label: x.name ?? x.value, description: x.description })) });
+      if (o.category === "model") ctx.setModel(o.currentValue ?? null);
+      if (o.category === "mode") modeOption = o.id;
+    }
+  }
+
   function toolContent(content: any[]): { output?: string; diff?: { path: string; text: string }[] } {
     const out: string[] = [];
     const diff: { path: string; text: string }[] = [];
     for (const c of content ?? []) {
       if (c.type === "content") out.push(textOf(c.content));
-      else if (c.type === "diff") diff.push({ path: c.path, text: [...String(c.oldText ?? "").split("\n").map((l: string) => "-" + l), ...String(c.newText ?? "").split("\n").map((l: string) => "+" + l)].join("\n") });
+      else if (c.type === "diff") diff.push({ path: c.path, text: lineDiff(String(c.oldText ?? ""), String(c.newText ?? "")) });
     }
     return { output: out.join("\n") || undefined, diff: diff.length ? diff : undefined };
   }
@@ -69,7 +88,10 @@ export function createAcpAdapter(ctx: AdapterContext): Adapter {
       case "tool_call": {
         lastKind = null;
         const c = toolContent(u.content);
-        ctx.upsert({ kind: "tool", id: u.toolCallId, name: u.title ?? u.kind ?? "tool", summary: summarize(u.rawInput ?? u.locations?.[0]?.path ?? ""), input: u.rawInput, status: u.status === "failed" ? "error" : u.status === "completed" ? "done" : "running", ...c });
+        ctx.upsert({
+          kind: "tool", id: u.toolCallId, name: u.title ?? u.kind ?? "tool", summary: summarize(u.locations?.[0]?.path ?? u.rawInput ?? ""), input: u.rawInput,
+          category: KINDS[u.kind] ?? "other", status: u.status === "failed" ? "error" : u.status === "completed" ? "done" : "running", ...c,
+        });
         break;
       }
       case "tool_call_update": {
@@ -77,6 +99,7 @@ export function createAcpAdapter(ctx: AdapterContext): Adapter {
         const c = toolContent(u.content);
         ctx.patch(u.toolCallId, (i: any) => {
           if (u.title) i.name = u.title;
+          if (u.kind) i.category = KINDS[u.kind] ?? "other";
           if (u.status) i.status = u.status === "failed" ? "error" : u.status === "completed" ? "done" : "running";
           if (c.output) i.output = c.output;
           if (c.diff) i.diff = c.diff;
@@ -85,8 +108,20 @@ export function createAcpAdapter(ctx: AdapterContext): Adapter {
         break;
       }
       case "plan":
-        lastKind = null;
-        ctx.upsert({ kind: "thinking", id: `plan-${++seq}`, text: (u.entries ?? []).map((e: any) => `${e.status === "completed" ? "☑" : "☐"} ${e.content}`).join("\n") });
+        // Each update is the whole plan: it replaces the last one.
+        ctx.set("plan", { entries: (u.entries ?? []).map((e: any) => ({ text: String(e.content ?? ""), status: planStatus(e.status) })) });
+        break;
+      case "usage_update":
+        if (typeof u.used === "number") ctx.set("usage", { used: u.used, size: typeof u.size === "number" ? u.size : null, cost: typeof u.cost?.amount === "number" ? u.cost.amount : undefined });
+        break;
+      case "current_mode_update":
+        if (modeOption && u.currentModeId) setSettingValue(ctx, modeOption, u.currentModeId);
+        break;
+      case "available_commands_update":
+        ctx.set("commands", (u.availableCommands ?? []).map((c: any): ChatCommand => ({ name: c.name, description: c.description, hint: c.input?.hint })));
+        break;
+      case "config_option_update":
+        applyConfig(u.configOptions);
         break;
     }
   }
@@ -122,13 +157,17 @@ export function createAcpAdapter(ctx: AdapterContext): Adapter {
         } else if (m.id === SESSION_ID) {
           sessionId = m.result?.sessionId ?? ctx.state.conversationId;
           if (sessionId) ctx.setConversation(sessionId);
+          applyConfig(m.result?.configOptions);
           lastKind = null;
           if (!ctx.replaying()) while (queued.length) prompt(queued.shift()!);
+        } else if (Array.isArray(m.result?.configOptions)) {
+          applyConfig(m.result.configOptions);
         } else if (m.result && "stopReason" in m.result) {
-          ctx.set("busy", false);
           lastKind = null;
           for (const it of ctx.state.items) if ((it as any).streaming) ctx.patch(it.id, (i: any) => (i.streaming = false));
           ctx.upsert({ kind: "result", id: `stop-${String(m.id)}`, text: m.result.stopReason });
+          // Last: going idle sends the next queued message.
+          ctx.set("busy", false);
         }
         return;
       }
@@ -159,7 +198,20 @@ export function createAcpAdapter(ctx: AdapterContext): Adapter {
       prompt(text);
     },
     interrupt() {
-      if (sessionId) notify("session/cancel", { sessionId });
+      if (!sessionId) return;
+      notify("session/cancel", { sessionId });
+      // ACP: after a cancel the client answers every open permission request as cancelled,
+      // or the agent may never end the turn.
+      for (const [id, rid] of requests) {
+        ctx.write({ jsonrpc: "2.0", id: rid, result: { outcome: { outcome: "cancelled" } } });
+        ctx.patch(id, (i: any) => {
+          if (i.kind === "permission" && !i.resolved) i.resolved = t("Cancelled");
+        });
+      }
+      requests.clear();
+    },
+    setSetting(id, value) {
+      if (sessionId) rpc(`kelpie-config-${++seq}`, "session/set_config_option", { sessionId, configId: id, value });
     },
     respond(id, option) {
       const rid = requests.get(id);
