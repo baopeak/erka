@@ -6,6 +6,7 @@ import { isPermissionGranted, requestPermission, sendNotification } from "@tauri
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import * as ipc from "./ipc";
 import { olderVersion } from "./version";
+import { ANSWER_API, nextWaiting, setAnswering } from "./attention";
 import { t } from "./i18n";
 import { allPanes, autoGrid, buildGrid, cellCount, equalize, findPane, fromTemplate, insertBeside, leaf, migrateLayout, moveGutter, movePane, removePane, replacePane, splitPane, swapPanes, templateLeaves, toTemplate, type GridSpec, type Side } from "./layout";
 import { basename, isMac, normPath, uid } from "./platform";
@@ -112,7 +113,7 @@ function chime() {
   }
 }
 
-export type Overlay = null | "palette" | "quickopen" | "jump" | "dashboard" | "settings" | "newsession" | "board" | "worktree" | "runs" | "remote" | "hosts" | "update";
+export type Overlay = null | "palette" | "quickopen" | "jump" | "dashboard" | "settings" | "newsession" | "board" | "worktree" | "runs" | "remote" | "hosts" | "update" | "answer";
 
 /** A pane of a tab (an empty pane a new session takes the place of). */
 export type PaneTarget = { tabId: string; paneId: string };
@@ -215,6 +216,8 @@ function createAppStore() {
   let olderDaemon = false;
   /** The older daemon lacks a security fix this release made: ask until the user switches. */
   const [daemonNeedsSwitch, setDaemonNeedsSwitch] = createSignal(false);
+  /** The connected daemon's API level: features needing newer RPCs hide on an older daemon. */
+  const [daemonApi, setDaemonApi] = createSignal(0);
 
   async function switchDaemon() {
     if (!(await confirmDialog(t("Switch to the new session daemon now? Running sessions stop for a moment; agents that can resume continue their conversation.")))) return;
@@ -231,6 +234,7 @@ function createAppStore() {
     olderDaemon = false;
     setDaemonNeedsSwitch(false);
     const [info, app] = await Promise.all([ipc.daemon<{ api?: number; version?: string; security?: number }>("daemon.info", {}), ipc.platformInfo()]).catch(() => [null, null]);
+    setDaemonApi(info?.api ?? 0);
     // Only an older daemon: a dev app and an installed Kelpie may share one, and must not keep
     // offering to restart each other's.
     if (!info || !app || ((info.api ?? 1) >= app.api && !(info.version && olderVersion(info.version, app.version)))) return;
@@ -246,6 +250,25 @@ function createAppStore() {
       15000,
     );
   }
+
+  /** The quick-answer popover for session `id` (daemons that can answer safely); otherwise the
+   *  session itself. */
+  function openAnswer(id: string) {
+    const s = sessions[id];
+    if (s && !s.chat && daemonApi() >= ANSWER_API && s.waiting_since) {
+      setAnswering(id);
+      setOverlay("answer");
+    } else revealSession(id);
+  }
+
+  /** Shows the session that has waited longest on the user, then the next one on each call. */
+  function revealNextWaiting() {
+    const next = nextWaiting(Object.values(sessions), lastWaitingShown);
+    if (!next) return notify(t("No session is waiting for you"));
+    lastWaitingShown = next.id;
+    revealSession(next.id);
+  }
+  let lastWaitingShown: string | null = null;
 
   /** Replaces an older daemon once nothing runs on it. A session can be down for a moment
    *  (restarted to keep its conversation, switched between terminal and chat, resumed at start),
@@ -1436,7 +1459,7 @@ function createAppStore() {
     projectInfo, refreshProjectInfo, recordRecent, setCollapsed, markUnread, renameSession, profileLaunch, setShortcut, setProfile,
     settingsSection, setSettingsSection, settingsItem, openSettings, paneLocation, isSessionVisible, refreshSessions, setSessions,
     addInbox, markInbox, clearInbox, unreadInbox, desktopNotify, meta, metaFor, setComment, loadMeta,
-    daemonNeedsSwitch, switchDaemon,
+    daemonNeedsSwitch, switchDaemon, daemonApi, openAnswer, revealNextWaiting,
     notesFor, addNote, removeNotes, resumable, sleepProject, hibernateIdle, hibernateSessions, wakeVisible,
     newFloating, toggleFloating, selectFloating, closeFloating,
   };

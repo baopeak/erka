@@ -10,6 +10,7 @@ import { chordLabel, isMac } from "./platform";
 import { allViews, peekView, setAppShortcutMatcher, setOverlayCheck } from "./terminal-host";
 import { navBack, navForward } from "./nav-history";
 import { addExistingWorktrees } from "./worktrees";
+import { waitingSessions } from "./attention";
 import { openWorktreeDialog } from "../components/worktree-dialog";
 import { openRuns } from "../components/runs-page";
 import { openHosts } from "../components/hosts-page";
@@ -80,6 +81,8 @@ export const commands: Command[] = [
   { id: "palette", label: msg("Search Everything"), win: "mod+shift+p", mac: "mod+shift+p", run: () => store.setOverlay("palette") },
   { id: "quickopen", label: msg("Go to File…"), win: "mod+shift+o", mac: "mod+p", run: () => store.setOverlay("quickopen"), when: hasProject },
   { id: "jump", label: msg("Jump to Session / Project…"), win: "mod+shift+k", mac: "mod+k", run: () => store.setOverlay("jump") },
+  { id: "attention.next", label: msg("Next Session Waiting for You"), win: "mod+shift+.", mac: "mod+shift+.", run: () => store.revealNextWaiting() },
+  { id: "attention.answer", label: msg("Answer Waiting Session…"), when: () => Object.values(store.sessions).some((s) => s.alive && s.status === "waiting"), run: () => { const s = waitingSessions(Object.values(store.sessions))[0]; if (s) store.openAnswer(s.id); } },
   { id: "dashboard", label: msg("Toggle Agent Dashboard"), win: "mod+shift+m", mac: "mod+shift+m", run: () => store.setOverlay(store.overlay() === "dashboard" ? null : "dashboard") },
   { id: "project.add", label: msg("Add Project Folder…"), run: () => void pickProjectFolder() },
   { id: "project.addRemote", label: msg("Add Remote Project (SSH)…"), run: () => store.setOverlay("remote") },
@@ -248,6 +251,7 @@ export function eventChord(e: KeyboardEvent): string {
   else if (e.code === "Equal") key = "=";
   else if (e.code === "Minus") key = "-";
   else if (e.code === "Comma") key = ",";
+  else if (e.code === "Period") key = ".";
   else if (e.code === "Backquote") key = "`";
   else if (e.code === "Space") key = "space";
   else if (/^Key[A-Z]$/.test(e.code)) key = e.code.slice(3).toLowerCase();

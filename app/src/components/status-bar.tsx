@@ -104,6 +104,7 @@ export function StatusBar() {
       <span class="item clickable inbox-anchor" title={t("Activity and notifications")} onPointerDown={(e) => e.stopPropagation()} onClick={() => setInbox(!inbox())}>
         <Icon name="bell" size={13} />
         <Show when={store.unreadInbox()}><span class="badge waiting">{store.unreadInbox()}</span></Show>
+        <Show when={counts().waiting}><span class="bell-needs-you" title={t("{n} need you", { n: counts().waiting })} /></Show>
         <Show when={inbox()}><InboxPanel onClose={() => setInbox(false)} /></Show>
       </span>
     </div>

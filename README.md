@@ -44,7 +44,8 @@ Agents live in a background session daemon, so switching projects, closing the w
 ### Sessions and agents
 
 - **Sessions that never stop.** Every PTY and agent process is owned by `kelpied`, a per-user daemon. The window can close, crash or restart; sessions keep running and re-attach with the same screen. If the daemon itself stops, sessions come back as *exited* with their last screen and agents resume their conversation (`claude --resume`, `codex resume`, `omp --resume`, and each preset's own resume flag).
-- **Live status** from hooks (Claude Code, Codex) or output activity: *working*, *needs you*, *done (unread)*, *idle* — in the sidebar, on tabs, in the dashboard, with desktop notifications for sessions you are not looking at.
+- **Live status** from hooks (Claude Code, Codex), prompts on screen (menus and yes/no questions of agents without hooks) or output activity: *working*, *needs you*, *done (unread)*, *idle* — in the sidebar, on tabs, in the dashboard, with desktop notifications for sessions you are not looking at.
+- **Attention queue**: the dashboard lists who needs you, longest wait first; answer a prompt from the dashboard or the bell without switching to the session; `Ctrl+Shift+.` jumps to the next one waiting.
 - **23 agent CLIs preset**: Claude Code, Codex, OMP, Gemini, Cursor CLI, OpenCode, GitHub Copilot, Grok, Qwen Code, Droid, Aider, Amp, Goose, Kimi, Crush, Cline, Kiro, Continue, Devin, Auggie, CodeBuddy, Mistral Vibe and Pi. Kelpie finds the installed ones; they appear in the launchers, the others can be hidden. Arguments and environment per agent.
 - **Permissions**: one *Manual / Yolo* switch adds or removes each agent's skip-permission flag; Claude Code and Codex keep their own permission mode / approval policy.
 - **First prompt at launch**: type the task in the new-session menu; Kelpie passes it on the command line or types it once the agent is ready (long prompts are pasted).
@@ -268,6 +269,7 @@ App shortcuts use `Ctrl+Shift` on Windows so plain `Ctrl+letter` keys reach the 
 | Go to file | Ctrl+Shift+O | ⌘P |
 | Jump to session / project | Ctrl+Shift+K | ⌘K |
 | Agent dashboard / workspace board | Ctrl+Shift+M / Ctrl+Shift+J | ⌘⇧M / ⌘⇧J |
+| Next session waiting for you | Ctrl+Shift+. | ⌘⇧. |
 | New terminal / new session… | Ctrl+Shift+T / Ctrl+Shift+N | ⌘T / ⌘⇧N |
 | Floating terminal | Ctrl+Shift+` | ⌘⌥A |
 | Split right / down | Ctrl+Shift+D / Ctrl+Shift+S | ⌘D / ⌘⇧D |
@@ -331,6 +333,8 @@ End-to-end tests drive the real app through WebDriver (`tauri-driver` + a matchi
 | `scripts/e2e/browser.py`, `remote.py`, `mobile.py` | browser panes and design mode (trusted page input via DevTools); SSH projects (local test host); phone pairing and replies |
 | `scripts/e2e/ssh_hosts.py` | SSH hosts page against a local test host: password login through askpass, fingerprint check, terminal and Claude Code on the host, files, port forwards, keys installed and used, known hosts, config import (set `KELPIE_SSH_DIR`) |
 | `scripts/e2e/ssh_panes.py` | SSH panes in a local project against a local test host: "Run on" in the launcher, splits that keep the host, a local and a remote pane in one tab, host links per project, "Open in" the current project, saved layouts on a host, quick connect, OS badge, host theme (set `KELPIE_SSH_DIR`) |
+| `scripts/e2e/attention.py` | prompts on screen (PowerShell `Read-Host (y/n)`, a numbered menu) turn sessions *needs you* with `waiting_since` and keys; `session.answer` refuses a stale prompt and types the current answer; ordinary output is not a prompt; sessions may not answer (daemon only) |
+| `scripts/e2e/updater.py` | updates keep sessions running: installer script stops only programs directly in the install folder; a daemon running from its copy keeps its pid and sessions through an install; uninstall stops it; `latest.json` (daemon only) |
 | `scripts/e2e/daemon_auth.py` | who may call the daemon: anonymous and forged callers refused, session tokens get scripting but no admin methods, hook reports bound to the caller's session, the "agents can control other sessions" policy and restricted sessions (daemon only) |
 | `scripts/e2e/agent_resume.py` | Claude / Codex / OMP resume the same conversation after the daemon is killed (real model calls, daemon only) |
 | `scripts/e2e/scrollback.py` | long output: back-to-bottom with a new-lines count, jumping between the prompts sent |

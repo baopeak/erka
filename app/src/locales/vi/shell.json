@@ -1,4 +1,11 @@
 {
+  "The prompt changed since this was shown.": "Lời nhắc đã thay đổi kể từ lúc hiển thị.",
+  "Show the new prompt": "Xem lời nhắc mới",
+  "waiting {time}": "chờ {time}",
+  "Answer": "Trả lời",
+  "This session no longer waits for you.": "Phiên này không còn chờ bạn nữa.",
+  "Waiting for {time}": "Đã chờ {time}",
+  "Type an answer and press Enter": "Gõ câu trả lời rồi nhấn Enter",
   "The session daemon still running lacks a security fix in this release. Running sessions stop for a moment; agents resume.": "Daemon phiên đang chạy thiếu một bản sửa lỗi bảo mật có trong bản này. Các phiên đang chạy sẽ dừng một lát; agent sẽ resume.",
   "Switch session daemon": "Chuyển daemon phiên",
   "Todo": "Cần làm",

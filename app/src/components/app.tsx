@@ -40,6 +40,7 @@ import { VoicePill } from "./voice";
 import { startUpdater } from "../lib/updater";
 
 const UpdateDialog = lazy(() => import("./update-dialog"));
+const QuickAnswer = lazy(() => import("./quick-answer"));
 
 /** Tells the daemon which palette to answer terminal colour queries with. */
 function syncDaemonTheme() {
@@ -148,6 +149,7 @@ export function App() {
         <Match when={store.overlay() === "hosts"}><HostsPage /></Match>
         <Match when={store.overlay() === "worktree"}><WorktreeDialog /></Match>
         <Match when={store.overlay() === "update"}><UpdateDialog /></Match>
+        <Match when={store.overlay() === "answer"}><QuickAnswer /></Match>
         <Match when={["palette", "quickopen", "jump"].includes(store.overlay() ?? "") && store.overlay()} keyed>
           {(o) => <Palette scope={o === "quickopen" ? "files" : o === "jump" ? "sessions" : "all"} />}
         </Match>

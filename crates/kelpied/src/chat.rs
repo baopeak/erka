@@ -73,6 +73,8 @@ struct Inner {
     interrupted: bool,
     /// When the log last carried a `kelpie_time` line (unix ms).
     last_stamp: u64,
+    /// Wall-clock ms the current wait on the user began.
+    waiting_since: Option<u64>,
 }
 
 pub struct ChatSession {
@@ -107,6 +109,7 @@ impl ChatSession {
                 working_since: None,
                 last_activity: 0,
                 broadcast_activity: 0,
+                waiting_since: None,
                 interrupted: false,
                 last_stamp: 0,
             }),
@@ -347,6 +350,7 @@ impl ChatSession {
             chat: true,
             last_activity: g.last_activity,
             interrupted: g.interrupted,
+            waiting_since: g.waiting_since,
         }
     }
 
@@ -365,6 +369,11 @@ impl ChatSession {
     pub fn tick(&self, now: Instant) -> Option<SessionInfo> {
         let mut g = self.inner.lock();
         let status = g.activity.status(now);
+        g.waiting_since = match (status, g.waiting_since) {
+            (Status::Waiting, Some(t)) => Some(t),
+            (Status::Waiting, None) => Some(crate::session::now_millis()),
+            _ => None,
+        };
         if status == Status::Working && g.last_status != Status::Working {
             g.working_since = Some(now);
         }

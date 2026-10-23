@@ -15,6 +15,9 @@ pub struct Prompt {
     pub keys: Vec<String>,
     /// The question line above the choices, when there is one.
     pub question: Option<String>,
+    /// Answered by typing a line (`Read-Host`, `[Y/n]`): the key needs Enter after it. Menus and
+    /// single-key approvals act on the key alone.
+    pub line: bool,
 }
 
 /// How far up a menu may start, in non-empty lines from the bottom.
@@ -29,18 +32,35 @@ static YES_NO: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)[(\[]\s*(?:y|
 /// Aider: `(Y)es/(N)o/(D)on't ask again`.
 static PAREN_INITIALS: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\(([A-Za-z])\)[a-z']+").unwrap());
 /// Codex: `Yes (y)`, `No, provide feedback (n)`, `Always (a)`.
-static TRAILING_KEY: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)\b(?:yes|no|always|allow|deny|approve|reject|cancel)\b[^()\n]{0,40}\(([a-z])\)").unwrap());
+static TRAILING_KEY: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)\b(yes|no|always|allow|deny|approve|reject|cancel)\b[^()\n]{0,40}\(([a-z])\)").unwrap());
+/// PowerShell's confirmation: `[Y] Yes  [A] Yes to All  [N] No  [L] No to All  [?] Help`.
+static BRACKET_KEYS: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\[([A-Za-z?])\]\s+[A-Z]").unwrap());
+/// `git add -p`: `(1/2) Stage this hunk [y,n,q,a,d,e,?]? `.
+static KEY_LIST: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\[((?:[a-z?],)+[a-z?])\]\?\s*$").unwrap());
+/// A line where the user types: a shell prompt (PowerShell, cmd, sh), or an agent's input box.
+static INPUT_LINE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^(?:PS [^>]*>.*|[A-Za-z]:\\[^>]*>.*|[\w@.~:/\\\-\[\]() ]*[$#%]\s.*|[\w@.~:/\\\-\[\]() ]*[$#%]|\s*[>❯›▌]\s*(?:[^0-9\s].*)?)$").unwrap()
+});
 
 /// The prompt at the bottom of `screen` (plain text, as `text_tail` returns it), if any.
 pub fn detect(screen: &str) -> Option<Prompt> {
+    detect_with_screen(screen).map(|(p, _)| p)
+}
+
+/// The prompt and the screen up to its last line: what identifies this prompt among others
+/// alike (the command a permission menu is about sits above it). Lines below it — output that
+/// followed an answer — are not part of it.
+pub fn detect_with_screen(screen: &str) -> Option<(Prompt, String)> {
     let lines: Vec<&str> = screen.lines().map(str::trim_end).filter(|l| !l.trim().is_empty()).collect();
     if lines.is_empty() {
         return None;
     }
-    menu(&lines).or_else(|| yes_no(&lines))
+    let (prompt, end) = menu(&lines).or_else(|| yes_no(&lines).map(|p| (p, lines.len() - 1)))?;
+    Some((prompt, lines[..=end].join("\n")))
 }
 
-fn menu(lines: &[&str]) -> Option<Prompt> {
+/// The menu and the index of its last item in `lines`.
+fn menu(lines: &[&str]) -> Option<(Prompt, usize)> {
     let start = lines.len().saturating_sub(MENU_LINES);
     let window = &lines[start..];
     // The menu's items, bottom-most run of consecutive numbers from 1.
@@ -56,28 +76,45 @@ fn menu(lines: &[&str]) -> Option<Prompt> {
     if window.len() - 1 - last_item > 3 {
         return None;
     }
-    let marked = items.iter().any(|&(i, _)| window[i].trim_start().trim_start_matches(['│', '|']).trim_start().starts_with(['❯', '>', '›', '»', '▶', '●', '◉']));
-    let question = window[..items[0].0].iter().rev().take(3).find(|l| l.trim_end().ends_with('?')).map(|l| clean(l));
-    if !marked && question.is_none() {
+    // Something typed below it (a shell prompt, an agent's input box): output, not a prompt.
+    if window[last_item + 1..].iter().any(|l| INPUT_LINE.is_match(l)) {
         return None;
     }
-    Some(Prompt { keys: items.iter().map(|(_, n)| n.to_string()).collect(), question })
+    let marked = items.iter().any(|&(i, _)| window[i].trim_start().trim_start_matches(['│', '|']).trim_start().starts_with(['❯', '>', '›', '»', '▶', '●', '◉']));
+    let question = window[..items[0].0].iter().rev().take(3).find(|l| l.trim_end().ends_with('?')).map(|l| clean(l));
+    // Without a selection marker, only a list that ends the screen asks something.
+    if !marked && (question.is_none() || last_item + 1 < window.len()) {
+        return None;
+    }
+    Some((Prompt { keys: items.iter().map(|(_, n)| n.to_string()).collect(), question, line: false }, start + last_item))
 }
 
 fn yes_no(lines: &[&str]) -> Option<Prompt> {
     let tail = &lines[lines.len().saturating_sub(YES_NO_LINES)..];
     let last = *tail.last()?;
     if YES_NO.is_match(last) {
-        return Some(Prompt { keys: vec!["y".into(), "n".into()], question: Some(clean(last)) });
+        return Some(Prompt { keys: vec!["y".into(), "n".into()], question: Some(clean(last)), line: true });
+    }
+    let bracket: Vec<String> = BRACKET_KEYS.captures_iter(last).map(|c| c[1].to_lowercase()).collect();
+    if bracket.len() >= 2 && bracket.contains(&"y".to_string()) && bracket.contains(&"n".to_string()) {
+        return Some(Prompt { keys: dedup(bracket), question: Some(clean(last)), line: true });
+    }
+    if let Some(c) = KEY_LIST.captures(last) {
+        let keys: Vec<String> = c[1].split(',').map(str::to_string).collect();
+        if keys.contains(&"y".to_string()) && keys.contains(&"n".to_string()) {
+            return Some(Prompt { keys, question: Some(clean(last)), line: true });
+        }
     }
     let initials: Vec<String> = PAREN_INITIALS.captures_iter(last).map(|c| c[1].to_lowercase()).collect();
     if initials.len() >= 2 && initials.contains(&"y".to_string()) && initials.contains(&"n".to_string()) {
-        return Some(Prompt { keys: dedup(initials), question: Some(clean(last)) });
+        return Some(Prompt { keys: dedup(initials), question: Some(clean(last)), line: true });
     }
-    let keys: Vec<String> = tail.iter().flat_map(|l| TRAILING_KEY.captures_iter(l).map(|c| c[1].to_lowercase()).collect::<Vec<_>>()).collect();
-    if keys.len() >= 2 && keys.contains(&"y".to_string()) {
+    let found: Vec<(String, String)> = tail.iter().flat_map(|l| TRAILING_KEY.captures_iter(l).map(|c| (c[1].to_lowercase(), c[2].to_lowercase())).collect::<Vec<_>>()).collect();
+    let keys: Vec<String> = found.iter().map(|(_, k)| k.clone()).collect();
+    let consents = found.iter().any(|(w, _)| matches!(w.as_str(), "yes" | "allow" | "approve" | "always"));
+    if keys.len() >= 2 && consents {
         let question = lines.iter().rev().take(6).find(|l| l.trim_end().ends_with('?')).map(|l| clean(l));
-        return Some(Prompt { keys: dedup(keys), question });
+        return Some(Prompt { keys: dedup(keys), question, line: false });
     }
     None
 }
@@ -134,6 +171,53 @@ mod tests {
     fn aider_question() {
         let s = "Add src/app.ts to the chat? (Y)es/(N)o/(D)on't ask again [Yes]:";
         assert_eq!(keys(s).unwrap(), ["y", "n", "d"]);
+    }
+
+    #[test]
+    fn line_prompts_need_enter_and_menus_do_not() {
+        assert!(detect("Continue (y/n): ").unwrap().line);
+        assert!(detect("Add a.ts to the chat? (Y)es/(N)o [Yes]:").unwrap().line);
+        assert!(!detect("Proceed?\n❯ 1. Yes\n  2. No\n").unwrap().line);
+        assert!(!detect("▌ Yes (y)   No, provide feedback (n)\n").unwrap().line);
+    }
+
+    #[test]
+    fn an_idle_shell_after_printing_a_question_and_a_list_is_not_waiting() {
+        let s = "PS D:\\proj> type q.txt\nWhich one do you want?\n1. Back up\n2. Delete\nPS D:\\proj> ";
+        assert_eq!(detect(s), None);
+        assert_eq!(detect("$ cat q.txt\nWhich?\n1. a\n2. b\nuser@box:~/proj$ "), None);
+        assert_eq!(detect("C:\\proj> type q.txt\nWhich?\n1. a\n2. b\nC:\\proj>"), None);
+    }
+
+    #[test]
+    fn an_agents_numbered_question_with_its_input_box_below_is_not_a_menu() {
+        let s = "Which approach do you prefer?\n1. Rewrite it\n2. Patch it\n\n▌ I think the second\n";
+        assert_eq!(detect(s), None);
+        assert_eq!(detect("Which approach?\n1. Rewrite\n2. Patch\n> "), None);
+    }
+
+    #[test]
+    fn powershell_confirmation_git_add_p_and_opencode() {
+        let ps = "Confirm\nAre you sure you want to perform this action?\n[Y] Yes  [A] Yes to All  [N] No  [L] No to All  [S] Suspend  [?] Help (default is \"Y\"): ";
+        let p = detect(ps).unwrap();
+        assert_eq!(p.keys, ["y", "a", "n", "l", "s", "?"]);
+        assert!(p.line);
+        let git = "@@ -1,3 +1,4 @@\n+new line\n(1/2) Stage this hunk [y,n,q,a,d,e,?]? ";
+        assert_eq!(keys(git).unwrap(), ["y", "n", "q", "a", "d", "e", "?"]);
+        let oc = "Permission required: edit src/main.rs\n  Allow (a)   Allow always (A)   Deny (d)\n";
+        assert_eq!(keys(oc).unwrap(), ["a", "d"]);
+    }
+
+    #[test]
+    fn the_screen_identifies_a_prompt_up_to_its_last_line() {
+        let before = "Bash(rm -rf build)\nDo you want to proceed?\n❯ 1. Yes\n  2. No\n";
+        let after = "Bash(rm -rf build)\nDo you want to proceed?\n❯ 1. Yes\n  2. No\nANSWERED\n";
+        let other = "Bash(npm test)\nDo you want to proceed?\n❯ 1. Yes\n  2. No\n";
+        let (_, a) = detect_with_screen(before).unwrap();
+        let (_, b) = detect_with_screen(after).unwrap();
+        let (_, c) = detect_with_screen(other).unwrap();
+        assert_eq!(a, b, "output below the answered menu is not part of it");
+        assert_ne!(a, c, "the same menu about another command is another prompt");
     }
 
     #[test]

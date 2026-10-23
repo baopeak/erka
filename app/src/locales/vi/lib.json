@@ -1,4 +1,7 @@
 {
+  "Next Session Waiting for You": "Phiên tiếp theo đang chờ bạn",
+  "Answer Waiting Session…": "Trả lời phiên đang chờ…",
+  "No session is waiting for you": "Không có phiên nào đang chờ bạn",
   "The session daemon from Kelpie {version} lacks a security fix in this release. Switch when you can: running sessions stop for a moment and agents resume.": "Daemon phiên của Kelpie {version} thiếu một bản sửa lỗi bảo mật có trong bản này. Hãy chuyển khi có thể: các phiên đang chạy dừng một lát và agent sẽ resume.",
   "Your sessions keep running on the session daemon from Kelpie {version}; the new one takes over once they have all stopped.": "Các phiên của bạn vẫn chạy trên daemon phiên của Kelpie {version}; daemon mới sẽ thay khi tất cả các phiên đã dừng.",
   "Switch now": "Chuyển ngay",

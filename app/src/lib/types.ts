@@ -4,6 +4,8 @@ export type SessionStatus = "idle" | "working" | "waiting" | "exited";
 export type SessionKind = string;
 
 export interface SessionInfo {
+  /** Wall-clock ms since it has been waiting on the user (daemon API 7+). */
+  waiting_since?: number;
   handle: number;
   id: string;
   project_id: string | null;

@@ -86,7 +86,7 @@ Frames (`crates/kelpie-proto`): `u32 LE length | u8 kind | payload`
 | 2 Output | daemon → app | `u32 handle \| u64 seq \| bytes` (`seq` = stream offset after the bytes) |
 | 3 Input | app → daemon | `u32 handle \| bytes` |
 
-RPC methods: `auth`, `daemon.info|set_theme|set_awake|set_priority|policy|set_policy|shutdown`, `session.list|create|attach|detach|input|resize|focus|kill|close|restart|update|read|set_unread`, `chat.close_stdin`, `hook.report`, `agent.presets|run|set_custom`, `meta.list|get|set`, `automation.list|save|delete|run`, `run.list|get|create|approve|retry|task_done|task_skip|cancel|delete|report`, `mobile.status|enable|disable|pair_start|approve|revoke|set_write|set_projects`.
+RPC methods: `auth`, `daemon.info|set_theme|set_awake|set_priority|policy|set_policy|shutdown`, `session.list|create|attach|detach|input|answer|resize|focus|kill|close|restart|update|read|set_unread`, `chat.close_stdin`, `hook.report`, `agent.presets|run|set_custom`, `meta.list|get|set`, `automation.list|save|delete|run`, `run.list|get|create|approve|retry|task_done|task_skip|cancel|delete|report`, `mobile.status|enable|disable|pair_start|approve|revoke|set_write|set_projects`.
 `daemon.info` reports an `api` feature level (`kelpie_proto::API_LEVEL`); an app built for a
 higher level offers to restart an older daemon still running from a previous version.
 Events: `session.updated` (coalesced, 250 ms), `session.closed`, `session.resync`, `session.clipboard`, `meta.updated`, `automation.ran`, `run.updated`, `mobile.pair_request`.
@@ -144,7 +144,7 @@ writing them.
 
 ## Agent status
 
-Priority: agent hooks → bell → output activity.
+Priority: agent hooks → bell → prompt on screen → output activity.
 - Claude Code: launched with `--settings <kelpie hooks file>` (and `--session-id`, see above);
   every hook runs `kelpied hook claude`, which reports the event (and the Claude session id,
   which changes on `/clear`) over the socket.
@@ -153,6 +153,16 @@ Priority: agent hooks → bell → output activity.
   when Codex saved that thread (`$CODEX_HOME/sessions/YYYY/MM/DD/rollout-…-<id>.jsonl`, the day
   read from the UUIDv7 id), so a restart resumes the conversation, not a helper thread.
 - Others: output activity (≥ 1.5 s of output after the echo window = working) and BEL.
+- Any terminal session (agents without hooks above all — Codex approvals, Gemini, Aider,
+  OpenCode — and shells): once output has been quiet 700 ms and the screen changed since the
+  last look, `choices::detect` reads its last 14 lines for a prompt waiting at the cursor
+  (a numbered menu starting at 1 with a marker or a question above it, `(y/n)` / `[Y/n]`,
+  `(Y)es/(N)o`, `Yes (y)`…). Found → `waiting` until input or new output; `waiting_since`
+  (wall-clock ms) is kept while it waits. `session.read` returns the prompt (`keys`,
+  `question`, `line` = needs Enter). `session.answer {handle, waiting_since, data|key, enter}`
+  types only while the session still waits on that same prompt, text through `typed_text`,
+  Enter as a separate write; programs in a session may not call it. The app hides quick
+  answers on daemons below API 7.
 
 States: `working`, `waiting` (needs you), `idle` (+ `unread` after ≥ 3 s of work while not
 visible), `exited`. Desktop notifications fire on working → idle/waiting when the session is

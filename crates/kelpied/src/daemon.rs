@@ -1034,6 +1034,32 @@ impl Daemon {
                 self.entry(handle_of(&params)?)?.input(data.as_bytes().to_vec());
                 json!(true)
             }
+            // An answer to the prompt a session waits on, from a quick-answer popover: typed only
+            // while it still waits on that same prompt (`waiting_since`), so an answer given
+            // elsewhere meanwhile (phone, terminal) or a prompt that changed never gets stray keys.
+            "session.answer" => {
+                let Entry::Term(s) = self.entry(handle_of(&params)?)? else { bail!("session.answer is for terminal sessions") };
+                let since = params.get("waiting_since").and_then(Value::as_u64);
+                // `key`: Esc or Enter alone (text goes through `typed_text`, which drops controls).
+                let bytes = match params.get("key").and_then(Value::as_str) {
+                    Some("esc") => b"\x1b".to_vec(),
+                    Some("enter") => b"\r".to_vec(),
+                    Some(other) => bail!("unknown key {other}"),
+                    None => crate::session::typed_text(param(&params, "data")?.as_str().unwrap_or_default()).into_bytes(),
+                };
+                if !s.answer(since, bytes) {
+                    bail!("the session no longer waits on that prompt");
+                }
+                if params.get("enter").and_then(Value::as_bool) == Some(true) {
+                    // A separate write (TUIs take an Enter in the same write as text as part of
+                    // it), off this client's request worker.
+                    std::thread::spawn(move || {
+                        std::thread::sleep(std::time::Duration::from_millis(120));
+                        s.input(b"\r".to_vec());
+                    });
+                }
+                json!(true)
+            }
             "session.resize" => {
                 let cols = param(&params, "cols")?.as_u64().unwrap_or(80) as u16;
                 let rows = param(&params, "rows")?.as_u64().unwrap_or(24) as u16;
@@ -1075,7 +1101,8 @@ impl Daemon {
                         Some(n) => s.text_tail(n.clamp(1, crate::session::SCROLLBACK as u64) as usize),
                         None => s.screen_text(),
                     };
-                    json!({"text": text, "title": s.title()})
+                    // `waiting_since` with the screen: an answer names the prompt it was shown.
+                    json!({"text": text, "title": s.title(), "prompt": s.screen_prompt(), "waiting_since": s.info().waiting_since})
                 }
                 Entry::Chat(_) => bail!("session.read is for terminal sessions"),
             },

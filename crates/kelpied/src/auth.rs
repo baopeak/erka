@@ -244,7 +244,7 @@ mod tests {
         let user = Role::User;
         let s = Role::Session("s".into());
         let claimed = Role::Claimed("s".into());
-        let admin = ["agent.set_custom", "automation.save", "automation.run", "daemon.shutdown", "daemon.set_policy", "mobile.approve", "mobile.set_write", "session.close", "session.kill", "session.restart", "session.update", "session.attach", "run.approve", "run.delete", "agent.run"];
+        let admin = ["agent.set_custom", "automation.save", "automation.run", "daemon.shutdown", "daemon.set_policy", "mobile.approve", "mobile.set_write", "session.close", "session.kill", "session.restart", "session.update", "session.attach", "session.answer", "run.approve", "run.delete", "agent.run"];
         for m in admin {
             assert!(allowed(&user, false, m), "user: {m}");
             assert!(!allowed(&s, true, m), "scripting session: {m}");

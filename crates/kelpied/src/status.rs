@@ -47,11 +47,14 @@ pub struct Activity {
     /// The agent's hooks report when a turn starts too (Claude Code), not only when it ends
     /// (Codex): once it says it is idle, it says so again when it works.
     pub hooks_report_start: bool,
+    /// When a prompt waiting on the user (menu, yes/no) was found on the quiet screen
+    /// (`choices::detect`): agents without hooks say they need the user only this way.
+    pub screen_prompt: Option<Instant>,
 }
 
 impl Default for Activity {
     fn default() -> Self {
-        Activity { alive: true, last_output: None, burst_start: None, last_input: None, bell: None, hook: None, failed: false, hooks_report_start: false }
+        Activity { alive: true, last_output: None, burst_start: None, last_input: None, bell: None, hook: None, failed: false, hooks_report_start: false, screen_prompt: None }
     }
 }
 
@@ -104,6 +107,14 @@ impl Activity {
         }
         if let Some(bell) = self.bell {
             if self.last_input.is_none_or(|i| i < bell) {
+                return Status::Waiting;
+            }
+        }
+        // Until the user answers or a later look finds the prompt gone (the tick looks again once
+        // the screen is quiet). Output alone does not end it: TUIs repaint while they wait
+        // (spinners, clocks, a tmux status line), and the wait must not flicker.
+        if let Some(found) = self.screen_prompt {
+            if self.last_input.is_none_or(|i| i < found) {
                 return Status::Waiting;
             }
         }
@@ -185,6 +196,26 @@ mod tests {
         assert_eq!(a.status(t0), Status::Waiting);
         a.last_input = Some(t0 + Duration::from_millis(1));
         assert_eq!(a.status(t0 + Duration::from_secs(5)), Status::Idle);
+    }
+
+    #[test]
+    fn a_prompt_on_screen_waits_until_answered_or_replaced() {
+        let t0 = Instant::now();
+        let mut a = Activity::default();
+        a.on_output(t0);
+        a.screen_prompt = Some(t0 + Duration::from_millis(800));
+        assert_eq!(a.status(t0 + Duration::from_secs(5)), Status::Waiting);
+        // The user answered.
+        a.last_input = Some(t0 + Duration::from_secs(6));
+        assert_eq!(a.status(t0 + Duration::from_secs(10)), Status::Idle);
+        // A prompt found again later: repaints while it waits keep it waiting.
+        a.screen_prompt = Some(t0 + Duration::from_secs(11));
+        assert_eq!(a.status(t0 + Duration::from_secs(12)), Status::Waiting);
+        a.on_output(t0 + Duration::from_secs(13));
+        assert_eq!(a.status(t0 + Duration::from_secs(13)), Status::Waiting);
+        // A later look finds it gone.
+        a.screen_prompt = None;
+        assert_ne!(a.status(t0 + Duration::from_secs(20)), Status::Waiting);
     }
 
     #[test]

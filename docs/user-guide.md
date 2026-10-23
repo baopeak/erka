@@ -46,7 +46,14 @@ features earlier (running sessions stop for a moment; agents that can resume con
    sessions, projects, files, commands and settings in one box. Prefix `@` sessions, `#` files,
    `>` commands, `/` settings, or press `Tab` to change scope.
 5. **Dashboard** (`Ctrl+Shift+M` / `⌘⇧M`): every session of every project grouped by
-   *Needs you / Working / Done / Idle* — click a card to jump there.
+   *Needs you / Failed / Working / Done / Idle* — click a card to jump there. *Needs you* lists
+   the longest wait first ("waiting 3 min"); **Answer** opens a quick answer: the bottom of that
+   session's screen, a button for each key its prompt offers (1 2 3, y n), Enter / Esc and a
+   line of text — sent only if the session still waits on that prompt. `Ctrl+Shift+.` / `⌘⇧.`
+   jumps to the session that has waited longest, then the next. Agents without hooks (Codex,
+   Gemini, Aider, OpenCode…) count as *needs you* when their screen shows a menu or a yes/no
+   question; the bell in the status bar gets a dot while any session needs you, and its
+   *Needs you* list answers right there.
 6. **Files**: the right panel has Files (filter by name, or search contents), Changes (git) and
    Sessions. Click a file to open it in the editor (`Ctrl+S` saves; external changes are
    detected); click a change to see its diff. Ignored files are dimmed.
@@ -496,6 +503,7 @@ App shortcuts use `Ctrl+Shift` on Windows so plain `Ctrl+letter` keys reach the 
 | Go to file | Ctrl+Shift+O | ⌘P |
 | Jump to session / project | Ctrl+Shift+K | ⌘K |
 | Agent dashboard | Ctrl+Shift+M | ⌘⇧M |
+| Next session waiting for you | Ctrl+Shift+. | ⌘⇧. |
 | Workspace board | Ctrl+Shift+J | ⌘⇧J |
 | Back / forward | Alt+Shift+← / → | ⌘⌥← / → |
 | New terminal | Ctrl+Shift+T | ⌘T |

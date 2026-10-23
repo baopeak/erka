@@ -438,7 +438,7 @@ input, textarea, select { font: inherit; color: var(--text); }
 .dash-head h2 { margin: 0; font-size: 18px; font-weight: 600; }
 .dash-head .stats { color: var(--text-faint); font-size: 12px; }
 .dash-head .spacer { flex: 1; }
-.dash-cols { flex: 1; display: grid; grid-template-columns: repeat(4, minmax(220px, 1fr)); gap: 14px; padding: 12px 24px 24px; min-height: 0; }
+.dash-cols { flex: 1; display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px; padding: 12px 24px 24px; overflow-y: auto; min-height: 0; }
 .dash-col { background: var(--bg-elev); border: 1px solid var(--border); border-radius: 12px; display: flex; flex-direction: column; min-height: 0; }
 .dash-col h3 { margin: 0; padding: 12px 14px; font-size: 12.5px; font-weight: 600; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--border); }
 .dash-col .count { color: var(--text-faint); font-weight: 400; }
@@ -459,6 +459,13 @@ input, textarea, select { font: inherit; color: var(--text); }
 .update-error { color: var(--danger); margin: 0; }
 .update-warning { margin: 0; color: var(--waiting); }
 .statusbar .daemon-switch { color: var(--waiting); }
+.card .dash-answer { height: 22px; padding: 0 8px; margin-left: auto; font-size: 11.5px; }
+.quick-answer-screen { margin: 0; max-height: 260px; overflow: auto; white-space: pre-wrap; font-family: var(--mono, monospace); font-size: 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
+.quick-answer-keys { display: flex; flex-wrap: wrap; gap: 6px; }
+.quick-answer-changed { display: flex; align-items: center; gap: 10px; color: var(--waiting); }
+.quick-answer-keys .btn { min-width: 38px; }
+.quick-answer-text .text-input { width: 100%; }
+.statusbar .bell-needs-you { position: absolute; top: 3px; right: 3px; width: 7px; height: 7px; border-radius: 50%; background: var(--waiting); }
 
 .statusbar { height: 24px; flex: none; display: flex; align-items: center; gap: 14px; padding: 0 12px; font-size: 11.5px; color: var(--text-faint); background: var(--bg-elev); border-top: 1px solid var(--border); }
 .statusbar .item { display: flex; align-items: center; gap: 6px; }

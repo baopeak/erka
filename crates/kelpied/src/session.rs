@@ -107,6 +107,9 @@ pub struct SessionInfo {
     pub last_activity: u64,
     /// Was running when the daemon stopped (reboot, update, crash) and has not been restarted.
     pub interrupted: bool,
+    /// Wall-clock ms since it has been waiting on the user (`status == waiting`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub waiting_since: Option<u64>,
 }
 
 /// One queued write to a client socket. `credit` is decremented once written.
@@ -188,6 +191,15 @@ struct Inner {
     persisted_seq: u64,
     last_broadcast: Option<SessionInfo>,
     working_since: Option<Instant>,
+    /// Wall-clock ms the current wait on the user began.
+    waiting_since: Option<u64>,
+    /// The prompt found on the screen, and the output position it was looked for at.
+    screen_prompt: Option<crate::choices::Prompt>,
+    prompt_checked_seq: u64,
+    /// The screen up to the prompt found (`choices::detect_with_screen`), and the one the user
+    /// last answered: the same screen found again is that prompt still showing, not a new one.
+    prompt_fingerprint: Option<String>,
+    answered_prompt: Option<String>,
     last_activity: u64,
     /// `last_activity` as of the last broadcast; output alone re-broadcasts at most every 30 s.
     broadcast_activity: u64,
@@ -211,6 +223,10 @@ const PROMPT_QUIET: Duration = Duration::from_millis(1200);
 const PROMPT_MAX_WAIT: Duration = Duration::from_secs(30);
 /// After pasting a prompt, this much quiet (the paste drawn) before Enter; at most the max.
 const PASTE_SETTLE: Duration = Duration::from_millis(300);
+/// A screen must have been quiet this long before it is read for a prompt waiting on the user,
+/// and this many of its last lines are read.
+const PROMPT_LOOK_QUIET: Duration = Duration::from_millis(700);
+const PROMPT_LOOK_LINES: usize = 14;
 const PASTE_MAX_WAIT: Duration = Duration::from_secs(3);
 
 pub struct Session {
@@ -248,6 +264,11 @@ impl Session {
                 persisted_seq: 0,
                 last_broadcast: None,
                 working_since: None,
+                waiting_since: None,
+                screen_prompt: None,
+                prompt_checked_seq: 0,
+                prompt_fingerprint: None,
+                answered_prompt: None,
                 last_activity: 0,
                 broadcast_activity: 0,
                 pending_prompt: None,
@@ -471,12 +492,35 @@ impl Session {
 
     pub fn input(&self, bytes: Vec<u8>) {
         let mut g = self.inner.lock();
-        g.activity.last_input = Some(Instant::now());
-        g.last_activity = now_millis();
-        g.activity.bell = None;
+        Self::write_input(&mut g, bytes);
+    }
+
+    fn write_input(g: &mut Inner, bytes: Vec<u8>) {
+        // Focus reports (`ESC [ I` / `ESC [ O`, sent by the terminal view when focus moves) are
+        // not the user answering anything: a prompt keeps waiting while they look elsewhere.
+        if !is_focus_report(&bytes) {
+            if g.screen_prompt.is_some() {
+                g.answered_prompt = g.prompt_fingerprint.clone();
+            }
+            g.activity.last_input = Some(Instant::now());
+            g.last_activity = now_millis();
+            g.activity.bell = None;
+        }
         if let Some(pty) = &g.pty {
             let _ = pty.ctl.send(Ctl::Input(bytes));
         }
+    }
+
+    /// Types `bytes` only while the session still waits on the prompt that began at
+    /// `waiting_since` — checked and written under one lock, so nothing can answer it in between.
+    pub fn answer(&self, waiting_since: Option<u64>, bytes: Vec<u8>) -> bool {
+        let mut g = self.inner.lock();
+        let waiting = g.activity.status(Instant::now()) == Status::Waiting;
+        if !waiting || g.waiting_since.is_none() || g.waiting_since != waiting_since {
+            return false;
+        }
+        Self::write_input(&mut g, bytes);
+        true
     }
 
     pub fn resize(&self, cols: u16, rows: u16) {
@@ -560,6 +604,38 @@ impl Session {
         self.inner.lock().vt.text_tail(lines)
     }
 
+    /// The prompt on screen the session waits on, if any (`choices::detect`).
+    pub fn screen_prompt(&self) -> Option<crate::choices::Prompt> {
+        self.inner.lock().screen_prompt.clone()
+    }
+
+    /// Once output has been quiet a moment, reads the bottom of a screen that changed since the
+    /// last look for a menu or yes/no question: once per screen, never while output streams.
+    fn look_for_prompt(g: &mut Inner, now: Instant) {
+        if g.pty.is_none() || g.seq == g.prompt_checked_seq {
+            return;
+        }
+        if g.activity.last_output.is_some_and(|o| now.duration_since(o) < PROMPT_LOOK_QUIET) {
+            return;
+        }
+        g.prompt_checked_seq = g.seq;
+        let (found, fingerprint) = match crate::choices::detect_with_screen(&g.vt.text_tail(PROMPT_LOOK_LINES)) {
+            // Already answered: it is still on screen until the program moves on.
+            Some((_, fp)) if g.answered_prompt.as_deref() == Some(fp.as_str()) => (None, None),
+            Some((p, fp)) => (Some(p), Some(fp)),
+            None => (None, None),
+        };
+        g.prompt_fingerprint = fingerprint;
+        // The same prompt still unanswered (the screen only repainted): the same wait.
+        let same_wait = found.is_some()
+            && found == g.screen_prompt
+            && g.activity.screen_prompt.is_some_and(|at| g.activity.last_input.is_none_or(|i| i < at));
+        if !same_wait {
+            g.activity.screen_prompt = found.as_ref().map(|_| now);
+        }
+        g.screen_prompt = found;
+    }
+
     /// Types `text` as a prompt once the program is ready (see [`PendingPrompt`]).
     pub fn queue_prompt(&self, prompt: TypedPrompt) {
         self.inner.lock().pending_prompt = Some(PendingPrompt { prompt, since: Instant::now(), pasted: false });
@@ -629,6 +705,7 @@ impl Session {
             chat: false,
             last_activity: g.last_activity,
             interrupted: g.interrupted,
+            waiting_since: g.waiting_since,
         }
     }
 
@@ -638,7 +715,13 @@ impl Session {
         if g.pending_prompt.is_some() {
             Self::deliver_prompt(&mut g, now);
         }
+        Self::look_for_prompt(&mut g, now);
         let status = g.activity.status(now);
+        g.waiting_since = match (status, g.waiting_since) {
+            (Status::Waiting, Some(t)) => Some(t),
+            (Status::Waiting, None) => Some(now_millis()),
+            _ => None,
+        };
         if status == Status::Working && g.last_status != Status::Working {
             g.working_since = Some(now);
         }
@@ -687,6 +770,11 @@ pub fn next_client_id() -> u64 {
 /// character goes (ESC above all). Prompts quote files, diffs and other sessions' output; an ESC
 /// left in would let a `\x1b[201~` inside them end the bracketed paste early, and the rest would
 /// arrive as keystrokes (commands run, prompts answered).
+/// Only focus reports (`ESC [ I`, `ESC [ O`): the terminal view saying it gained or lost focus.
+fn is_focus_report(bytes: &[u8]) -> bool {
+    !bytes.is_empty() && bytes.chunks(3).all(|c| c == b"\x1b[I" || c == b"\x1b[O")
+}
+
 pub fn typed_text(text: &str) -> String {
     text.replace("\r\n", "\n")
         .chars()
@@ -702,6 +790,15 @@ pub fn typed_text(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn focus_reports_are_not_input() {
+        assert!(is_focus_report(b"\x1b[I"));
+        assert!(is_focus_report(b"\x1b[O\x1b[I"));
+        assert!(!is_focus_report(b"\x1b[A"));
+        assert!(!is_focus_report(b"y"));
+        assert!(!is_focus_report(b""));
+    }
 
     #[test]
     fn typed_text_drops_escapes_that_could_end_a_paste() {
