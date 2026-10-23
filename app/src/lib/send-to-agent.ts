@@ -3,6 +3,7 @@
 import { store, sessionLabel } from "./store";
 import { t } from "./i18n";
 import { typeInto } from "./quick-commands";
+import { redact } from "./ipc";
 import { getController } from "../chat/mode-switch";
 import { isAgentKind, kindInfo, launchableAgents } from "./agents";
 import { openContextMenu, type MenuItem } from "../components/context-menu";
@@ -21,15 +22,16 @@ export async function sendToSession(s: SessionInfo, text: string) {
   store.revealSession(s.id);
 }
 
-/** Menu at the pointer: running agents first, then "New … session" for each launchable agent. */
+/** Menu at the pointer: running agents first, then "New … session" for each launchable agent.
+ *  Credentials in `text` (a diff line, an issue body) are masked before it reaches the agent. */
 export function chooseAgentAndSend(e: MouseEvent, projectId: string, text: string, onSent?: () => void) {
   const running: MenuItem[] = agentSessions(projectId).map((s) => ({
     label: t("Send to {name}", { name: sessionLabel(s) }),
-    run: () => void sendToSession(s, text).then(onSent),
+    run: () => void redact(text).then((safe) => sendToSession(s, safe)).then(onSent),
   }));
   const fresh: MenuItem[] = launchableAgents(store.state.settings.hiddenAgents).map((kind) => ({
     label: t("New {agent} session", { agent: kindInfo(kind).label }),
-    run: () => void store.newSession(projectId, kind, { prompt: text }).then((s) => s && onSent?.()),
+    run: () => void redact(text).then((safe) => store.newSession(projectId, kind, { prompt: safe })).then((s) => s && onSent?.()),
   }));
   openContextMenu(e, running.length ? [...running, null, ...fresh] : fresh);
 }

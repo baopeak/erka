@@ -48,6 +48,7 @@ export const defaultSettings: Settings = {
   hibernateMinutes: 30,
   keepAwake: "off",
   prioritizeVisible: true,
+  agentsScripting: true,
   notificationSound: false,
   terminalTheme: "default",
   wordWrap: false,
@@ -1296,6 +1297,7 @@ function createAppStore() {
     void loadMeta();
     void ipc.daemon("daemon.set_awake", { mode: state.settings.keepAwake ?? "off" }).catch(() => {});
     void ipc.daemon("daemon.set_priority", { enabled: state.settings.prioritizeVisible ?? true }).catch(() => {});
+    void ipc.daemon("daemon.set_policy", { agents_control_others: state.settings.agentsScripting ?? true }).catch(() => {});
     resumeInterrupted();
   }
 

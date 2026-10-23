@@ -9,6 +9,7 @@ serde_json.workspace = true
 anyhow.workspace = true
 tokio.workspace = true
 interprocess.workspace = true
+regex = "1"
 keyring = { version = "3.6", default-features = false, features = ["windows-native", "apple-native"] }
 
 [target.'cfg(windows)'.dependencies]

@@ -77,6 +77,9 @@ pub struct Daemon {
     pub mobile: crate::mobile::Mobile,
     awake: Awake,
     awake_mode: Mutex<awake::Mode>,
+    /// Programs in a session may script other sessions (`daemon.set_policy`, saved in
+    /// `policy.json` so it holds while the app is closed).
+    agents_control_others: AtomicBool,
 }
 
 #[derive(Deserialize)]
@@ -108,6 +111,9 @@ struct CreateParams {
     prompt: Option<String>,
     #[serde(default)]
     remote: Option<crate::session::RemoteSpec>,
+    /// Its programs may act only on this session through `kelpied` (see `auth`).
+    #[serde(default)]
+    restricted: bool,
 }
 
 fn default_kind() -> String {
@@ -155,6 +161,7 @@ impl Daemon {
             mobile: crate::mobile::Mobile::load(&data_dir),
             awake: Awake::new(),
             awake_mode: Mutex::new(awake::Mode::Off),
+            agents_control_others: AtomicBool::new(load_policy(&data_dir)),
             data_dir,
             exe,
             meta_dirty: AtomicBool::new(false),
@@ -493,6 +500,22 @@ impl Daemon {
         self.sessions.read().values().find(|e| e.spec().id == id).cloned()
     }
 
+    /// For `auth`: whether session `id` is restricted and its folder; `None` if it is gone.
+    pub fn session_policy(&self, id: &str) -> Option<(bool, String)> {
+        self.by_id(id).map(|e| {
+            let spec = e.spec();
+            (spec.restricted, spec.cwd)
+        })
+    }
+
+    pub fn session_id_of(&self, handle: u32) -> Option<String> {
+        self.sessions.read().get(&handle).map(|e| e.spec().id)
+    }
+
+    pub fn agents_control_others(&self) -> bool {
+        self.agents_control_others.load(Ordering::Relaxed)
+    }
+
     /// Restores sessions recorded by a previous daemon run as exited-but-restartable entries
     /// whose screens show the last persisted snapshot. Sessions that were running are flagged
     /// `interrupted`: the app resumes them (agents into the same conversation) when shown, at
@@ -545,6 +568,7 @@ impl Daemon {
             agent_session_id: p.agent_session_id,
             created_at: now_millis(),
             remote: p.remote,
+            restricted: p.restricted,
         };
         if self.by_id(&spec.id).is_some() {
             bail!("session id {} already exists", spec.id);
@@ -796,6 +820,14 @@ impl Daemon {
                 "endpoint": kelpie_proto::endpoint().display(),
                 "sessions": self.sessions.read().len(),
             }),
+            "daemon.policy" => json!({"agents_control_others": self.agents_control_others()}),
+            "daemon.set_policy" => {
+                if let Some(on) = params.get("agents_control_others").and_then(Value::as_bool) {
+                    self.agents_control_others.store(on, Ordering::Relaxed);
+                    save_policy(&self.data_dir, on);
+                }
+                json!({"agents_control_others": self.agents_control_others()})
+            }
             "daemon.set_theme" => {
                 let light = params.get("theme").and_then(Value::as_str) == Some("light");
                 match params.get("palette").filter(|p| p.is_object()) {
@@ -994,6 +1026,23 @@ impl Daemon {
             }
             other => bail!("unknown method {other}"),
         }))
+    }
+}
+
+const POLICY_FILE: &str = "policy.json";
+
+/// Scripting other sessions is allowed unless the user turned it off.
+fn load_policy(data_dir: &std::path::Path) -> bool {
+    std::fs::read(data_dir.join(POLICY_FILE))
+        .ok()
+        .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
+        .and_then(|v| v.get("agents_control_others").and_then(Value::as_bool))
+        .unwrap_or(true)
+}
+
+fn save_policy(data_dir: &std::path::Path, agents_control_others: bool) {
+    if let Err(e) = std::fs::write(data_dir.join(POLICY_FILE), json!({"agents_control_others": agents_control_others}).to_string()) {
+        tracing::warn!("save {POLICY_FILE}: {e}");
     }
 }
 

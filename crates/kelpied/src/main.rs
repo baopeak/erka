@@ -13,6 +13,7 @@
 
 mod agents;
 mod askpass;
+mod auth;
 mod automations;
 mod awake;
 mod bench;
@@ -105,6 +106,8 @@ const PARENT_AGENT_ENV: &[&str] = &[
     "CODEX_SANDBOX_NETWORK_DISABLED",
     "CODEX_THREAD_ID",
     "KELPIE_SESSION_ID",
+    "KELPIE_SESSION_TOKEN",
+    "KELPIE_SESSION_ENDPOINT",
 ];
 
 /// Environment an editor host (VS Code, Electron) injects into its children.
@@ -165,6 +168,8 @@ fn serve() -> Result<()> {
         }
     };
     init_logging(&data_dir);
+    // Before any session spawns: their environment carries tokens derived from this daemon's secret.
+    auth::init(&kelpie_proto::endpoint())?;
     let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("kelpied"));
     let daemon = daemon::Daemon::new(data_dir, exe);
     daemon.restore();

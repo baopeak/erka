@@ -106,7 +106,9 @@ impl ChatSession {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(false)
-            .env("KELPIE_SESSION_ID", &spec.id);
+            .env("KELPIE_SESSION_ID", &spec.id)
+            .env(kelpie_proto::SESSION_TOKEN_ENV, crate::auth::session_token(&spec.id))
+            .env(kelpie_proto::SESSION_ENDPOINT_ENV, kelpie_proto::endpoint_key(&kelpie_proto::endpoint()));
         if std::path::Path::new(&spec.cwd).is_dir() {
             cmd.current_dir(&spec.cwd);
         }

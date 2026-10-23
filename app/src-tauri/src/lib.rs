@@ -119,6 +119,13 @@ fn platform_info() -> Value {
     })
 }
 
+/// Text about to leave a session (a hand-off, Copy Context, notes or an issue sent to an agent)
+/// with recognisable credentials masked.
+#[tauri::command]
+fn redact_batch(texts: Vec<String>) -> Vec<String> {
+    texts.iter().map(|t| kelpie_proto::redact(t)).collect()
+}
+
 /// End-to-end tests only (dev builds or KELPIE_E2E): resizes the window itself. WebDriver's
 /// `window/rect` moves the WebView2 control inside the window instead, so the whole UI ends up
 /// offset and clipped.
@@ -190,6 +197,7 @@ pub fn run() {
             state_save,
             state_backup,
             platform_info,
+            redact_batch,
             fs_ops::fs_list_dir,
             fs_ops::fs_is_dir,
             fs_ops::fs_canonical,

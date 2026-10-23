@@ -62,6 +62,10 @@ pub struct SessionSpec {
     /// Runs on another machine over SSH (`cwd` is a path there).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub remote: Option<RemoteSpec>,
+    /// Its programs may only act on this session through `kelpied`, whatever the user's
+    /// scripting setting (see `auth`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub restricted: bool,
 }
 
 /// Where a remote session runs: an ssh destination (`user@host` or a `~/.ssh/config` alias).
@@ -262,6 +266,8 @@ impl Session {
         cmd.env("COLORTERM", "truecolor");
         cmd.env("TERM_PROGRAM", "Kelpie");
         cmd.env("KELPIE_SESSION_ID", &spec.id);
+        cmd.env(kelpie_proto::SESSION_TOKEN_ENV, crate::auth::session_token(&spec.id));
+        cmd.env(kelpie_proto::SESSION_ENDPOINT_ENV, kelpie_proto::endpoint_key(&kelpie_proto::endpoint()));
         for (k, v) in &spec.env {
             cmd.env(k, v);
         }
@@ -535,7 +541,7 @@ impl Session {
         let waited = now.duration_since(p.since);
         let quiet = g.last_output.map_or(waited, |t| now.duration_since(t));
         if (waited >= PROMPT_MIN_WAIT && quiet >= PROMPT_QUIET) || waited >= PROMPT_MAX_WAIT {
-            let body = p.prompt.text.replace("\r\n", "\n");
+            let body = typed_text(&p.prompt.text);
             let bytes = if p.prompt.paste { format!("\x1b[200~{body}\x1b[201~") } else { body.replace('\n', "\r") };
             let _ = pty.ctl.send(Ctl::Input(bytes.into_bytes()));
             p.pasted = true;
@@ -630,9 +636,32 @@ pub fn next_client_id() -> u64 {
     NEXT_CLIENT.fetch_add(1, Ordering::Relaxed)
 }
 
+/// Text to type or paste as a prompt: line breaks become `\n`, tabs stay, every other control
+/// character goes (ESC above all). Prompts quote files, diffs and other sessions' output; an ESC
+/// left in would let a `\x1b[201~` inside them end the bracketed paste early, and the rest would
+/// arrive as keystrokes (commands run, prompts answered).
+pub fn typed_text(text: &str) -> String {
+    text.replace("\r\n", "\n")
+        .chars()
+        .filter_map(|c| match c {
+            '\r' => Some('\n'),
+            '\n' | '\t' => Some(c),
+            c if c.is_control() => None,
+            c => Some(c),
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn typed_text_drops_escapes_that_could_end_a_paste() {
+        assert_eq!(typed_text("a\x1b[201~\rrm -rf ~\r"), "a[201~\nrm -rf ~\n");
+        assert_eq!(typed_text("x\u{9b}31m\u{7}y\tz\r\nw"), "x31my\tz\nw");
+        assert_eq!(typed_text("héllo — 日本"), "héllo — 日本");
+    }
 
     #[test]
     fn ring_since_bounds() {

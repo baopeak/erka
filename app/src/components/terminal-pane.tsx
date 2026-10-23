@@ -1,6 +1,6 @@
 import { Show, createEffect, createSignal, onCleanup, onMount } from "solid-js";
 import { store } from "../lib/store";
-import { daemon } from "../lib/ipc";
+import { daemon, redact } from "../lib/ipc";
 import { getView, parkView } from "../lib/terminal-host";
 import { Icon } from "./icons";
 import { openContextMenu, type MenuItem } from "./context-menu";
@@ -85,7 +85,7 @@ export function TerminalPane(props: { sessionId: string; focused: boolean }) {
   const handOff = async (kind: string) => {
     const s = session();
     if (!s?.project_id) return store.notify(t("Hand-off needs a project session"));
-    const text = await transcript().catch(() => "");
+    const text = await transcript().then(redact).catch(() => "");
     const prompt = `You are taking over a task from another coding agent (${kindInfo(s.kind).label}) working in this folder. Below is the end of its terminal session. Work out what was being done and what is left, then continue.\n\n----- transcript -----\n${text}\n----- end -----`;
     // On the same machine: an agent on a host hands off to one there, next to it.
     await store.newSession(s.project_id, kind, { prompt, where: "right", target: sessionTarget(s) });
@@ -97,7 +97,7 @@ export function TerminalPane(props: { sessionId: string; focused: boolean }) {
       { label: t("Copy"), hint: isMac ? "⌘C" : "Ctrl+C", run: () => view.term.hasSelection() && void writeText(view.term.getSelection()) },
       { label: t("Paste"), hint: isMac ? "⌘V" : "Ctrl+V", run: () => void view.pasteFromClipboard() },
       { label: t("Select All"), run: () => view.term.selectAll() },
-      { label: t("Copy Context"), run: () => void transcript().then((text) => writeText(text)).then(() => store.notify(t("Copied the last 400 lines"))) },
+      { label: t("Copy Context"), run: () => void transcript().then(redact).then((text) => writeText(text)).then(() => store.notify(t("Copied the last 400 lines"))) },
       { label: t("Find…"), run: () => { setFinding(true); queueMicrotask(() => findInput?.focus()); } },
       { label: t("Clear"), run: () => view.term.clear() },
       null,

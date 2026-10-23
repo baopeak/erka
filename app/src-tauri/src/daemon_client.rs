@@ -78,6 +78,12 @@ impl DaemonClient {
                     spawned_at = None;
                     let (rx, mut tx) = stream.split();
                     let (out_tx, mut out_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+                    // First frame on the connection: the app speaks as the user (never as a
+                    // session, even when started from a Kelpie terminal). A daemon older than
+                    // tokens answers with an error the read loop ignores.
+                    if let Some(token) = kelpie_proto::read_user_token(&endpoint) {
+                        let _ = out_tx.send(Frame::json(&json!({"id": "auth", "method": "auth", "params": {"token": token}})).encode());
+                    }
                     *self.out.lock() = Some(out_tx);
                     self.connected.store(true, Ordering::SeqCst);
                     self.connected_notify.notify_waiters();

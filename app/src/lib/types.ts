@@ -195,6 +195,9 @@ export interface Settings {
   /** Sessions not on screen run below normal CPU priority, so typing stays quick when the
    *  machine is busy (Windows). */
   prioritizeVisible: boolean;
+  /** Programs in a session (agents, scripts) may drive other sessions through `kelpied`
+   *  (`terminal send`, `call session.create`…). Off: only their own session. */
+  agentsScripting: boolean;
   /** A short chime with desktop notifications. */
   notificationSound: boolean;
   /** Terminal colour theme id (lib/terminal-themes.ts); "default" follows the app theme. */

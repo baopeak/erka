@@ -126,6 +126,9 @@ export function AgentSettings() {
       <SettingRow id="resume-sessions">
         <Choice value={s().resumeSessions ?? "shown"} options={[["shown", t("When shown")], ["all", t("All at once")], ["off", t("Off")]]} onChange={(v) => store.setSettings({ resumeSessions: v })} />
       </SettingRow>
+      <SettingRow id="agents-scripting">
+        <Toggle on={s().agentsScripting ?? true} onChange={(on) => store.setSettings({ agentsScripting: on })} />
+      </SettingRow>
       <SettingRow id="keep-awake">
         <Choice value={s().keepAwake ?? "off"} options={[["off", t("Off")], ["agents", t("While agents work")], ["always", t("Always")]]} onChange={(v) => store.setSettings({ keepAwake: v })} />
       </SettingRow>

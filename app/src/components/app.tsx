@@ -63,6 +63,10 @@ export function App() {
     const mode = store.state.settings.keepAwake ?? "off";
     if (store.connected()) void daemon("daemon.set_awake", { mode }).catch(() => {});
   });
+  createEffect(() => {
+    const on = store.state.settings.agentsScripting ?? true;
+    if (store.connected()) void daemon("daemon.set_policy", { agents_control_others: on }).catch(() => {});
+  });
   // A host's terminal theme changed: repaint the terminals (those on that host pick it up).
   const hostThemes = createMemo(() => vault().hosts.map((h) => `${h.alias}=${h.terminalTheme}`).join("|"));
   createEffect(on(hostThemes, () => { for (const v of allViews()) v.applySettings(store.state.settings); }, { defer: true }));

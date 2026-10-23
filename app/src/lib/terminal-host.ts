@@ -21,6 +21,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { attachTerminal, b64ToBytes, daemon, detachTerminal, sendInput } from "./ipc";
 import { isMac } from "./platform";
 import { terminalThemeFor } from "./theme";
+import { typedText } from "./typed-text";
 import type { Settings } from "./types";
 
 /** A session's own terminal theme id (its host's), over the app's; set by lib/ssh-hosts.ts. */
@@ -218,11 +219,13 @@ export class TermView {
 
   async pasteFromClipboard() {
     const text = await readText().catch(() => "");
-    if (text) this.term.paste(text);
+    if (text) this.paste(text);
   }
 
+  /** Every paste into a terminal (clipboard, drops, inserted paths, quick commands, prompts
+   *  Kelpie types) goes through here, cleaned by `typedText`. */
   paste(text: string) {
-    this.term.paste(text);
+    this.term.paste(typedText(text));
   }
 
   mount(parent: HTMLElement) {

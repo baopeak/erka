@@ -5,6 +5,7 @@ import { t } from "./i18n";
 import { sendInput } from "./ipc";
 import { allPanes } from "./layout";
 import { peekView } from "./terminal-host";
+import { typedText } from "./typed-text";
 import { getController } from "../chat/mode-switch";
 import { pluginQuickCommands } from "./plugins";
 import type { QuickCommand, SessionInfo } from "./types";
@@ -27,7 +28,8 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** Delivers `text` like a real paste: xterm adds bracketed-paste markers only when the program
  *  asked for them and turns newlines into Enter keys, exactly as when the user pastes. */
-export async function typeInto(s: SessionInfo, text: string, enter: boolean, enterDelay: number) {
+export async function typeInto(s: SessionInfo, raw: string, enter: boolean, enterDelay: number) {
+  const text = typedText(raw);
   const view = peekView(s.id);
   // A view between attachments (e.g. during a daemon reconnect) would drop the paste.
   if (view?.handle != null) view.paste(text);
