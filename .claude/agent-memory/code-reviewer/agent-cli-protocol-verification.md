@@ -13,6 +13,7 @@ Chat adapters (app/src/chat/*-adapter.ts) encode wire shapes of external CLIs; v
 - Sending `initialize` twice to one claude process (new ChatController re-attach) answers success both times (2.1.308).
 - Codex 0.163 facts: `thread/shellCommand` runs UNSANDBOXED with full access; Thread{Start,Resume}Response.sandbox is a full SandboxPolicy (networkAccess, writableRoots) and approvalPolicy may be `untrusted`/granular — coarse presets lose those.
 - Schema dumps go to the scratchpad; C: was 100% full on 2026-10-23, delete dumps after use.
+- ACP (generic adapter; third-party CLIs usually NOT installed on this box): curl `raw.githubusercontent.com/agentclientprotocol/agent-client-protocol/main/schema/v1/schema.json` into scratchpad, read `$defs` (Implementation needs name+version; CreateElicitationRequest/Response; ErrorCode auth -32000, not-found -32002). Strictness of TS agents: `gh api repos/agentclientprotocol/typescript-sdk/contents/src/v1/schema/zod.gen.ts -H "Accept: application/vnd.github.raw"` (`defaultOnError` = lenient). Docs pages accept a `.md` suffix (protocol/v1/elicitation.md). `scripts/e2e/fake_acp_agent.py` is the local stand-in agent.
 - `CLAUDE_CODE_ENTRYPOINT=sdk-ts` changes client attribution (claude_code_sdk / sdk-typescript UA) and drops a tool from the toolset — flag any use of it.
 
 Related: [[shell-hook-blocked-words]]

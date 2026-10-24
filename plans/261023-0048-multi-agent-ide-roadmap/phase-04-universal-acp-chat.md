@@ -1,7 +1,7 @@
 ---
 phase: 4
 title: "Universal ACP chat"
-status: pending
+status: completed
 priority: P1
 effort: "4d"
 dependencies: [1]
@@ -49,7 +49,7 @@ daemon chat.rs: relay + classifier by sessionUpdate kind
 - Chat list with 2k items at 60 fps (virtualize if needed); adapter chunk lazy; idle CPU unchanged.
 
 ## Success Criteria
-- [ ] Every installed ACP agent completes a tool-using turn in chat view; status returns to Idle; elicitation answered from inbox.
+- [x] Every installed ACP agent completes a tool-using turn in chat view; status returns to Idle; elicitation answered from inbox.
 
 ## Risk Assessment
 - ACP v2 drift → check `protocolVersion`, unknown kinds render as text and don't change status.
