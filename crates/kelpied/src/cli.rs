@@ -70,7 +70,7 @@ pub async fn terminal(args: &[String]) -> Result<()> {
                 println!("{}", serde_json::to_string_pretty(&list)?);
                 return Ok(());
             }
-            println!("{:>6}  {:<8}  {:<8}  {:<24}  {}", "HANDLE", "KIND", "STATUS", "NAME / TITLE", "FOLDER");
+            println!("{:>6}  {:<8}  {:<8}  {:<24}  FOLDER", "HANDLE", "KIND", "STATUS", "NAME / TITLE");
             for s in &list {
                 let label = Some(str_of(s, "name")).filter(|n| !n.is_empty()).unwrap_or(str_of(s, "title"));
                 let label: String = label.chars().take(24).collect();

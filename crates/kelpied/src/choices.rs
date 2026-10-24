@@ -43,6 +43,7 @@ static INPUT_LINE: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 /// The prompt at the bottom of `screen` (plain text, as `text_tail` returns it), if any.
+#[cfg(test)]
 pub fn detect(screen: &str) -> Option<Prompt> {
     detect_with_screen(screen).map(|(p, _)| p)
 }
@@ -274,7 +275,7 @@ mod tests {
 
     #[test]
     fn detection_is_cheap() {
-        let screen = "x".repeat(120).repeat(1) + "\n";
+        let screen = "x".repeat(120) + "\n";
         let screen = screen.repeat(40) + "Do you want to proceed?\n❯ 1. Yes\n  2. No\n";
         detect(&screen);
         let t = std::time::Instant::now();

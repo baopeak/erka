@@ -339,48 +339,43 @@ impl Runs {
         let mut changed = Vec::new();
         for run in self.list.iter_mut().filter(|r| r.status == RunStatus::Running) {
             let before = run.clone();
-            for t in run.tasks.iter_mut() {
-                match t.status {
-                    TaskStatus::Running => {
-                        let Some(sid) = t.session_id.clone() else {
+            for t in run.tasks.iter_mut().filter(|t| t.status == TaskStatus::Running) {
+                let Some(sid) = t.session_id.clone() else {
+                    t.status = TaskStatus::Failed;
+                    t.error = Some("no session".into());
+                    t.finished_at = now;
+                    continue;
+                };
+                match view(&sid) {
+                    None => {
+                        t.status = TaskStatus::Failed;
+                        t.error = Some("its session was closed".into());
+                        t.finished_at = now;
+                    }
+                    Some(s) if !s.alive => {
+                        if s.exit_code == Some(0) {
+                            t.status = TaskStatus::Done;
+                        } else {
                             t.status = TaskStatus::Failed;
-                            t.error = Some("no session".into());
+                            t.error = Some(match s.exit_code {
+                                Some(c) => format!("the agent exited with code {c}"),
+                                None => "the agent stopped".into(),
+                            });
+                        }
+                        t.finished_at = now;
+                        actions.push(Action::Capture { run: run.id.clone(), task: t.id.clone(), session: sid });
+                    }
+                    Some(s) => {
+                        if s.working {
+                            t.worked = true;
+                        }
+                        let quiet = now.saturating_sub(s.last_activity.max(t.started_at));
+                        if run.idle_done_secs > 0 && t.worked && s.idle && quiet >= run.idle_done_secs * 1000 {
+                            t.status = TaskStatus::Done;
                             t.finished_at = now;
-                            continue;
-                        };
-                        match view(&sid) {
-                            None => {
-                                t.status = TaskStatus::Failed;
-                                t.error = Some("its session was closed".into());
-                                t.finished_at = now;
-                            }
-                            Some(s) if !s.alive => {
-                                if s.exit_code == Some(0) {
-                                    t.status = TaskStatus::Done;
-                                } else {
-                                    t.status = TaskStatus::Failed;
-                                    t.error = Some(match s.exit_code {
-                                        Some(c) => format!("the agent exited with code {c}"),
-                                        None => "the agent stopped".into(),
-                                    });
-                                }
-                                t.finished_at = now;
-                                actions.push(Action::Capture { run: run.id.clone(), task: t.id.clone(), session: sid });
-                            }
-                            Some(s) => {
-                                if s.working {
-                                    t.worked = true;
-                                }
-                                let quiet = now.saturating_sub(s.last_activity.max(t.started_at));
-                                if run.idle_done_secs > 0 && t.worked && s.idle && quiet >= run.idle_done_secs * 1000 {
-                                    t.status = TaskStatus::Done;
-                                    t.finished_at = now;
-                                    actions.push(Action::Capture { run: run.id.clone(), task: t.id.clone(), session: sid });
-                                }
-                            }
+                            actions.push(Action::Capture { run: run.id.clone(), task: t.id.clone(), session: sid });
                         }
                     }
-                    _ => {}
                 }
             }
             // Waiting tasks, until nothing changes: a failure skips its whole chain at once.

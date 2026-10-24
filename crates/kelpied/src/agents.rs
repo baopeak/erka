@@ -832,7 +832,7 @@ mod custom_tests {
         // A program that exists everywhere (Windows resolves the binary on PATH at launch).
         let bin = if cfg!(windows) { "cmd" } else { "sh" };
         let def = AgentDef { id: "acme-bot".into(), label: "Acme Bot".into(), bin: bin.into(), launch: vec!["chat".into()], yolo: vec!["--yes".into()], resume_latest: vec!["--continue".into()], prompt: "flag:--ask".into(), acp: vec!["acp".into()] };
-        set_custom(&[def.clone()]).unwrap();
+        set_custom(std::slice::from_ref(&def)).unwrap();
         let p = preset_for("acme-bot").unwrap();
         assert_eq!((p.bin, p.launch, p.resume_latest), (bin, &["chat"][..], &["--continue"][..]));
         let dir = std::env::temp_dir();
