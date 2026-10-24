@@ -1,7 +1,7 @@
 ---
 phase: 6
 title: "Turn checkpoints & artifacts"
-status: pending
+status: completed
 priority: P1
 effort: "5d"
 dependencies: [1, 5]
@@ -51,7 +51,7 @@ Daemon worker, one queue per repo; retries on index.lock with backoff, skip afte
 - Snapshot p95 < 150 ms (10k files), off UI thread; keystroke echo unchanged during snapshots; `.git` growth reported per 100 turns.
 
 ## Success Criteria
-- [ ] Any local agent's turn inspectable; undo never silently reverts another session's work.
+- [x] Any local agent's turn inspectable; undo never silently reverts another session's work.
 
 ## Risk Assessment
 - Object growth → cap + GC; index.lock contention → backoff/skip; boundary heuristic for hook-less agents can merge two turns → labelled "approximate" in UI.
