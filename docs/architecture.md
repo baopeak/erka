@@ -89,7 +89,7 @@ Frames (`crates/kelpie-proto`): `u32 LE length | u8 kind | payload`
 RPC methods: `auth`, `daemon.info|set_theme|set_awake|set_priority|policy|set_policy|shutdown`, `session.list|create|attach|detach|input|answer|resize|focus|kill|close|restart|update|read|set_unread`, `chat.close_stdin`, `hook.report`, `agent.presets|run|set_custom`, `meta.list|get|set`, `automation.list|save|delete|run`, `run.list|get|create|approve|retry|task_done|task_skip|cancel|delete|report`, `mobile.status|enable|disable|pair_start|approve|revoke|set_write|set_projects`.
 `daemon.info` reports an `api` feature level (`kelpie_proto::API_LEVEL`); an app built for a
 higher level offers to restart an older daemon still running from a previous version.
-Events: `session.updated` (coalesced, 250 ms), `session.closed`, `session.resync`, `session.clipboard`, `meta.updated`, `automation.ran`, `run.updated`, `mobile.pair_request`.
+Events: `session.updated` (coalesced, 250 ms), `session.turn` (API 9: `{session, event, transcript_path?, agent_session_id?}`, from every agent hook and when a session leaves `working`; built by the daemon from the hook payload, so no program can publish one — the app reads a session's usage on it, see "Context, tokens and cost"), `session.closed`, `session.resync`, `session.clipboard`, `meta.updated`, `automation.ran`, `run.updated`, `mobile.pair_request`.
 
 ## Session threading (daemon)
 
@@ -262,11 +262,49 @@ flags (Codex: `-s`/`-a` or `--dangerously-bypass-approvals-and-sandbox`, `-m`,
 `-c model_reasoning_effort`), replacing the profile's own. Codex's app-server and OMP restore a
 conversation's own settings themselves.
 
+## Context, tokens and cost
+
+Per session: context fill (a ring on the sidebar row, pane header and tab: amber from 70 %, red
+from 85 %, one-time Compact / Hand off hint at 85 %), tokens and cost. **No number without an
+exact source**: a terminal session maps to its transcript only by the conversation id the daemon
+recorded (`spec.agent_session_id`) — never "the newest file in the folder". No id, no numbers.
+
+| Agent | File | Context | Cost |
+|---|---|---|---|
+| Claude Code | hook `transcript_path`, else `<config home>/projects/<slug>/<id>.jsonl`; plus its sub-agents `<slug>/<id>/subagents/agent-*.jsonl` (cost and tokens only) | last `assistant` line of the **main** file: input + cache read + cache write + output (none after a `compact_boundary`); window from `pricing.json` | estimate at API prices (shown "≈ $"), once per `message.id` at its highest output (a message is written as several lines; sub-agent files repeat it with a growing `output_tokens`) |
+| Codex | `rollout-*-<thread id>.jsonl` under `sessions/YYYY/MM/DD`, found by thread id (cached) | `token_count.info.last_token_usage` and `model_context_window`; `info: null` records skipped | none: tokens only |
+| OMP | `<ts>_<session id>.jsonl` | `contextSnapshot.promptTokens`, no window → no ring | the agent's own `usage.cost.total` (shown without "≈") |
+| Chat view | the chat controller's `state.usage` | from the adapter (ACP `usage_update`, Claude / Codex) | as reported |
+
+`session_usage.rs` keeps a per-file aggregate (`usage-cache.json`, resumed from the last complete
+line, message ids hashed with the output counted so far) that also remembers the main file's last context,
+so an update reads only what is new (at most 64 KB in all, sub-agent files included); a transcript without
+an aggregate, or with a bigger gap, is counted on one background thread (context then comes from the
+last 64 KB of the file, reverse scan, a cut or half-written line skipped) and the totals follow. A hook's
+`transcript_path` is used only when it is exactly `<this session's config home>/projects/<slug>/<conversation id>.jsonl`,
+local (UNC / `//` / `..` are refused by their text before any file access) and still inside `projects`
+after symlinks resolve; otherwise the lookup by id applies. `pricing.json` holds the Claude prices; a model not in it
+has tokens but no cost and no window. A line that looks like a usage record but does not parse is
+counted and logged per agent (format drift hides numbers, it never invents them).
+
+The app reads on `session.turn` (debounced 1 s, only for a visible or working session, or at a turn
+end) and, against a daemon older than API 9, polls visible working sessions. The Usage & cost page
+(`cost-page.tsx`, lazy) folds the same per-file aggregates by day / week / project / agent / model
+(`usage_report`; a warm report only stats the files, ≤ 100 ms) and listens for `usage-scanned`.
+An optional per-session cost cap (Settings → Usage & Resources, off by default) counts a Kelpie
+session's conversations together (a `/clear` keeps the sum) and puts a red chip on the session and an
+entry in the inbox; "Press Esc" interrupts the session once, the first time it is over the cap and
+working, only when its numbers came from its own exact transcript. The hint, the cap's reactions and
+the ring menu load lazily (`usage-alerts.ts`); the page's folding is in `usage-report.ts`.
+Day boundaries on the page use today's UTC offset for all history (hourly buckets: no :30 / :45
+splits, DST shifts an hour); Codex context uses `last_token_usage.total_tokens` (reasoning included).
+
 ## App-side services (Rust core)
 
 | Module | Does |
 |---|---|
 | `agent_history.rs` | Lists past Claude / Codex / OMP conversations from their transcripts (`~/.claude/projects`, `~/.codex/sessions` incl. `.jsonl.zst`, `~/.omp/agent/sessions`). Only the first 512 KB of a file (plus Claude's tail for its latest title) is read; results are cached by mtime/size in `history-cache.json`. Prompt counts run on two background threads, resume from the last counted line of append-only files, and emit `agent-history-counted`. |
+| `session_usage.rs`, `usage_report.rs` | Context / tokens / cost of a conversation from its transcript (Claude, Codex, OMP parsers, reverse tail, per-file aggregate cache, prices from `pricing.json`) and the cost report for the Usage page. See "Context, tokens and cost". |
 | `usage.rs` | Claude (`api.anthropic.com/api/oauth/usage`) and Codex (`chatgpt.com/backend-api/wham/usage`) plan windows, using the agents' own OAuth sign-in. Tokens never leave this module; the webview gets percentages and reset times only. |
 | `sys_stats.rs` | Memory of the app + WebView tree, the daemon and its descendants (PID-reuse safe). |
 | `git.rs` | Status, branch summary, diffs, staging, commits, worktrees (`add` / `remove` / `prune`, file at a revision, commits only a detached HEAD reaches). |

@@ -177,6 +177,10 @@ export interface Settings {
   /** Claude / Codex subscription usage in the status bar (reads the agents' own sign-in). */
   usageMeters: boolean;
   memoryMeter: boolean;
+  /** Per-session cost cap in USD (0 = off): a session over it gets a red chip and an inbox entry. */
+  costCap: number;
+  /** Also press Esc in a session when it first passes the cap (only with an exact transcript match). */
+  costCapEsc: boolean;
   quickCommands: QuickCommand[];
   theme: "dark" | "light";
   density: "comfortable" | "compact";
@@ -291,6 +295,40 @@ export interface UsageReport {
   codex: ProviderUsage;
 }
 
+/** A conversation's numbers from its transcript (app core `session_usage`). */
+export interface SessionUsage {
+  context_used: number;
+  /** Absent when the agent does not say (OMP) or the model has no known window. */
+  context_window: number | null;
+  tokens_in: number;
+  tokens_out: number;
+  /** Whole conversation; null when any of it has no price (unknown model, Codex). */
+  cost: number | null;
+  /** The agent's own number (OMP) instead of an estimate at API prices (Claude). */
+  cost_exact: boolean;
+  model: string | null;
+  /** The totals cover the whole transcript (false while a background count runs). */
+  totals: boolean;
+}
+
+/** One cell of the usage report: a local day of one agent, project and model. */
+export interface UsageRow {
+  day: number;
+  agent: string;
+  project: string;
+  model: string;
+  tokens_in: number;
+  tokens_out: number;
+  cost: number;
+  unpriced: number;
+}
+
+export interface UsageTotals {
+  rows: UsageRow[];
+  files: number;
+  pending: number;
+}
+
 export interface MemoryStats {
   app: number;
   daemon: number;
@@ -302,7 +340,7 @@ export interface MemoryStats {
 export interface InboxItem {
   id: string;
   at: number;
-  kind: "finished" | "waiting" | "automation" | "worktree" | "error";
+  kind: "finished" | "waiting" | "automation" | "worktree" | "error" | "cost";
   title: string;
   body: string;
   sessionId?: string;

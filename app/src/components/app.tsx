@@ -28,6 +28,7 @@ import { MobileApprovals } from "./settings/mobile-settings";
 import { daemon as daemonCall } from "../lib/ipc";
 import { loadSshConfigPath, remoteConfigure } from "../lib/remote";
 import { initRuns } from "../lib/runs";
+import { initSessionUsage } from "../lib/session-usage";
 import { setCovering } from "../lib/overlays";
 import { allViews, setLinkOpener } from "../lib/terminal-host";
 import { isLocalUrl, openBrowser } from "../lib/browser";
@@ -41,6 +42,7 @@ import { startUpdater } from "../lib/updater";
 
 const UpdateDialog = lazy(() => import("./update-dialog"));
 const QuickAnswer = lazy(() => import("./quick-answer"));
+const CostPage = lazy(() => import("./cost-page"));
 
 /** Tells the daemon which palette to answer terminal colour queries with. */
 function syncDaemonTheme() {
@@ -102,6 +104,7 @@ export function App() {
   });
   onMount(() => {
     initRuns();
+    initSessionUsage();
     void loadSshConfigPath().catch(() => {});
     void initSshHosts();
     void loadPlugins();
@@ -150,6 +153,7 @@ export function App() {
         <Match when={store.overlay() === "worktree"}><WorktreeDialog /></Match>
         <Match when={store.overlay() === "update"}><UpdateDialog /></Match>
         <Match when={store.overlay() === "answer"}><QuickAnswer /></Match>
+        <Match when={store.overlay() === "cost"}><CostPage /></Match>
         <Match when={["palette", "quickopen", "jump"].includes(store.overlay() ?? "") && store.overlay()} keyed>
           {(o) => <Palette scope={o === "quickopen" ? "files" : o === "jump" ? "sessions" : "all"} />}
         </Match>
@@ -166,7 +170,7 @@ export function App() {
           <div class="toast">
             <span>{errorText(t().text)}</span>
             <Show when={t().action}>
-              {(a) => <button class="btn" style={{ height: "24px", "margin-left": "10px" }} onClick={() => a().run()}>{a().label}</button>}
+              {(a) => <button class="btn" style={{ height: "24px", "margin-left": "10px" }} onClick={(e) => a().run(e)}>{a().label}</button>}
             </Show>
           </div>
         )}

@@ -7,6 +7,7 @@ import { MicButton } from "./voice";
 import { store } from "../lib/store";
 import { allPanes, cyclePane, findPane } from "../lib/layout";
 import { Icon, KindGlyph } from "./icons";
+import { ContextRing } from "./context-ring";
 import { StatusDot } from "./sidebar";
 import { TerminalPane } from "./terminal-pane";
 import { FileViewer } from "./file-viewer";
@@ -91,6 +92,7 @@ export function PaneView(props: { pane: Pane; project: Project; tab: Tab }) {
           </Show>
           <Show when={elsewhere() && target()}>{(tg) => <HostChip target={tg()} path />}</Show>
           <span class="title">{paneTitle(props.pane)}</span>
+          <Show when={session()}>{(s) => <ContextRing s={s()} />}</Show>
           <Show when={broadcasting()}>
             <span class="badge broadcast-badge" title={t("Typing here goes to every terminal in this tab")}>{t("Broadcast")}</span>
           </Show>

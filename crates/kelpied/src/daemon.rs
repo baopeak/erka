@@ -20,7 +20,7 @@ use crate::status::Status;
 use crate::persist::{write_atomic, SavedSession, Store};
 use crate::runs::{self, Action, NewRun, Runs, SessionView, TaskStatus};
 use crate::session::{json_out, now_millis, ClientTx, Session, SessionInfo, SessionSpec};
-use crate::status::{hook_event_failed, hook_event_status};
+use crate::status::{hook_event_failed, hook_event_status, turn_event};
 
 #[derive(Clone)]
 pub enum Entry {
@@ -489,7 +489,7 @@ impl Daemon {
                 e.kill();
             }
         }
-        self.runs_changed(&[result.clone()]);
+        self.runs_changed(std::slice::from_ref(&result));
         Ok(json!(self.runs.lock().get(&result)))
     }
 
@@ -729,6 +729,10 @@ impl Daemon {
         if let Some(status) = hook_event_status(agent, event, &payload) {
             session.set_hook_status(status, hook_event_failed(event));
         }
+        // The app reads the conversation's usage when a turn moves on (it debounces).
+        if !event.is_empty() {
+            self.broadcast("session.turn", turn_event(session_id, event, &payload, agent_conv));
+        }
         Ok(())
     }
 
@@ -785,6 +789,7 @@ impl Daemon {
         let mut last_persist = Instant::now();
         let mut last_schedule = Instant::now();
         let mut last_alive: HashMap<u32, bool> = HashMap::new();
+        let mut last_status: HashMap<u32, Status> = HashMap::new();
         let mut last_run_tick = Instant::now();
         loop {
             interval.tick().await;
@@ -837,6 +842,11 @@ impl Daemon {
                     }
                     if let Ok(v) = serde_json::to_value(&info) {
                         self.broadcast("session.updated", v);
+                    }
+                    // A turn ended (also for agents without hooks): the app reads the usage.
+                    let prev = if info.alive { last_status.insert(info.handle, info.status) } else { last_status.remove(&info.handle) };
+                    if prev == Some(Status::Working) && matches!(info.status, Status::Idle | Status::Waiting) && !info.chat {
+                        self.broadcast("session.turn", turn_event(&info.spec.id, "turn_end", &Value::Null, info.spec.agent_session_id.as_deref()));
                     }
                 }
             }

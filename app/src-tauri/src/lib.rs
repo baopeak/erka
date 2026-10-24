@@ -17,10 +17,12 @@ mod plugins;
 mod voice;
 mod remote;
 mod search;
+mod session_usage;
 mod ssh_hosts;
 mod sys_stats;
 mod updater;
 mod usage;
+mod usage_report;
 mod watcher;
 mod worktree_files;
 
@@ -58,7 +60,7 @@ fn term_input(client: State<'_, Arc<DaemonClient>>, handle: u32, data: String, b
 /// App UI state (projects, layouts, settings) — a single JSON document owned by the UI.
 #[tauri::command]
 async fn state_load() -> CmdResult<Value> {
-    crate::fs_ops::blocking(move || state_load_blocking()).await
+    crate::fs_ops::blocking(state_load_blocking).await
 }
 
 fn state_load_blocking() -> CmdResult<Value> {
@@ -248,6 +250,8 @@ pub fn run() {
             agent_history::agent_claude_transcript,
             agent_history::agent_history_list,
             usage::usage_fetch,
+            session_usage::session_usage,
+            usage_report::usage_report,
             accounts::account_create,
             accounts::account_remove,
             accounts::account_status,

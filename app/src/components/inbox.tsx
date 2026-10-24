@@ -9,7 +9,7 @@ import type { InboxItem } from "../lib/types";
 import { waitedFor, waitingSessions } from "../lib/attention";
 import { t } from "../lib/i18n";
 
-const ICON: Record<InboxItem["kind"], string> = { finished: "check", waiting: "bell", automation: "clock", worktree: "branch", error: "close" };
+const ICON: Record<InboxItem["kind"], string> = { finished: "check", waiting: "bell", automation: "clock", worktree: "branch", error: "close", cost: "alert" };
 
 export function InboxPanel(props: { onClose: () => void }) {
   const [filter, setFilter] = createSignal<"all" | "unread">("all");

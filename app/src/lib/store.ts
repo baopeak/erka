@@ -38,6 +38,8 @@ export const defaultSettings: Settings = {
   projectSort: "manual",
   usageMeters: true,
   memoryMeter: true,
+  costCap: 0,
+  costCapEsc: false,
   quickCommands: [],
   theme: "dark",
   density: "comfortable",
@@ -113,7 +115,7 @@ function chime() {
   }
 }
 
-export type Overlay = null | "palette" | "quickopen" | "jump" | "dashboard" | "settings" | "newsession" | "board" | "worktree" | "runs" | "remote" | "hosts" | "update" | "answer";
+export type Overlay = null | "cost" | "palette" | "quickopen" | "jump" | "dashboard" | "settings" | "newsession" | "board" | "worktree" | "runs" | "remote" | "hosts" | "update" | "answer";
 
 /** A pane of a tab (an empty pane a new session takes the place of). */
 export type PaneTarget = { tabId: string; paneId: string };
@@ -405,6 +407,10 @@ function createAppStore() {
       }
       case "automation.changed":
         window.dispatchEvent(new CustomEvent("kelpie:automations"));
+        break;
+      case "session.turn":
+        // Read by lib/session-usage.ts (the store must not import it: it imports the store).
+        window.dispatchEvent(new CustomEvent("kelpie:session-turn", { detail: p }));
         break;
       case "session.clipboard": {
         // OSC 52: only the terminal the user is looking at may set the clipboard, and we say so.
@@ -1467,7 +1473,8 @@ function createAppStore() {
 
 export interface Toast {
   text: string;
-  action?: { label: string; run: () => void };
+  /** `run` gets the click, for actions that open a menu at the button. */
+  action?: { label: string; run: (e?: MouseEvent) => void };
 }
 
 export const store = createRoot(createAppStore);

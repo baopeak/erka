@@ -152,6 +152,18 @@ pub fn hook_event_status(agent: &str, event: &str, payload: &serde_json::Value) 
     }
 }
 
+/// The `session.turn` event the app reads a transcript on: a hook fired, or a turn ended. Built
+/// here from the hook payload (daemon → app only; no RPC lets a program publish one). The
+/// transcript path is the agent's claim about its own session: the app accepts it only for a file
+/// named after that session's conversation id.
+pub fn turn_event(session: &str, event: &str, payload: &serde_json::Value, agent_session_id: Option<&str>) -> serde_json::Value {
+    let path = payload.get("transcript_path").and_then(|v| v.as_str()).filter(|p| !p.is_empty() && p.len() <= 4096);
+    // The strings come from the program in the session: bounded, not interpreted here.
+    let event: String = event.chars().take(64).collect();
+    let conv = agent_session_id.filter(|c| c.len() <= 200);
+    serde_json::json!({"session": session, "event": event, "transcript_path": path, "agent_session_id": conv})
+}
+
 /// Whether a hook event means the agent's turn ended in an error.
 pub fn hook_event_failed(event: &str) -> bool {
     event == "StopFailure"
@@ -288,5 +300,23 @@ mod tests {
         assert!(!exit_failed(0xC000_013Au32 as i32));
         assert!(exit_failed(1));
         assert!(exit_failed(-1));
+    }
+
+    #[test]
+    fn turn_event_carries_identity_only() {
+        let payload = serde_json::json!({"hook_event_name": "Stop", "transcript_path": "/c/projects/p/abc.jsonl", "prompt": "secret"});
+        let ev = turn_event("s1", "Stop", &payload, Some("abc"));
+        assert_eq!(ev["session"], "s1");
+        assert_eq!(ev["event"], "Stop");
+        assert_eq!(ev["agent_session_id"], "abc");
+        assert_eq!(ev["transcript_path"], "/c/projects/p/abc.jsonl");
+        assert!(ev.get("prompt").is_none(), "nothing else of the payload is forwarded");
+        let none = turn_event("s1", "turn_end", &serde_json::json!({"transcript_path": ""}), None);
+        assert!(none["transcript_path"].is_null() && none["agent_session_id"].is_null());
+        let long = turn_event("s1", "Stop", &serde_json::json!({"transcript_path": "x".repeat(5000)}), None);
+        assert!(long["transcript_path"].is_null());
+        let wordy = turn_event("s1", &"e".repeat(500), &serde_json::Value::Null, Some(&"i".repeat(500)));
+        assert_eq!(wordy["event"].as_str().map(str::len), Some(64));
+        assert!(wordy["agent_session_id"].is_null());
     }
 }

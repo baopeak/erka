@@ -5,6 +5,7 @@ import { chordLabel } from "../lib/platform";
 import { chordOf, commands } from "../lib/commands";
 import { basename } from "../lib/platform";
 import { Icon, KindGlyph } from "./icons";
+import { ContextRing } from "./context-ring";
 import { SplitView, paneDrag, startTabDrag } from "./split-view";
 import { StatusDot } from "./sidebar";
 import { Launcher } from "./welcome";
@@ -59,6 +60,7 @@ function TabTitle(props: { tab: Tab; project: Project }) {
       <Show when={host()}>{(tg) => <HostChip target={tg()} />}</Show>
       <Show when={props.tab.broadcast}><span class="badge broadcast-badge" title={t("Broadcast input is on")}>⇶</span></Show>
       <span class="title">{props.tab.name ?? paneTitle(focus())}</span>
+      <Show when={session()}>{(s) => <ContextRing s={s()} size={12} />}</Show>
       <Show when={panes().length > 1}>
         <span class="tab-panes">
           <For each={panes()}>{(p) => <i classList={{ on: p.id === focus()?.id }} style={{ background: paneColor(p) }} />}</For>

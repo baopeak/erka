@@ -78,6 +78,7 @@ function accountMenu(e: MouseEvent, agent: AccountAgent) {
     { label: `${current === null ? "● " : ""}${t("Default")}`, run: () => setActiveAccount(agent, null) },
     ...accountsOf(agent).map((a): MenuItem => ({ label: `${current === a.id ? "● " : ""}${a.label}`, run: () => setActiveAccount(agent, a.id) })),
     null,
+    { label: t("Usage & cost…"), run: () => store.setOverlay("cost") },
     { label: t("Manage accounts…"), run: () => store.openSettings("accounts") },
   ];
   openContextMenu(e, items);
@@ -159,6 +160,7 @@ export function UsageMeters() {
       <span class="meters clickable" onClick={refresh} title={t("Click to refresh")}>
         <Provider kind="claude" name="Claude" usage={view("claude")} />
         <Provider kind="codex" name="Codex" usage={view("codex")} />
+        <span class="item clickable" title={t("Usage & cost")} onClick={(e) => { e.stopPropagation(); store.setOverlay("cost"); }}>{t("Cost")}</span>
       </span>
     </Show>
   );

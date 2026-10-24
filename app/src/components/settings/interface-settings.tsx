@@ -107,6 +107,16 @@ export function UsageSettings() {
       <SettingRow id="usage-meters">
         <Toggle on={s().usageMeters} onChange={(on) => store.setSettings({ usageMeters: on })} />
       </SettingRow>
+      <SettingRow id="cost-cap">
+        <div class="inline-fields">
+          <input class="text-input" type="number" min="0" step="1" style={{ width: "90px" }} value={s().costCap ?? 0} title={t("US dollars (0 = off)")}
+            onChange={(e) => store.setSettings({ costCap: Math.max(0, +e.currentTarget.value || 0) })} />
+          <span class="muted-inline">{t("US dollars (0 = off)")}</span>
+        </div>
+      </SettingRow>
+      <SettingRow id="cost-cap-esc">
+        <Toggle on={s().costCapEsc ?? false} onChange={(on) => store.setSettings({ costCapEsc: on })} />
+      </SettingRow>
       <SettingRow id="memory-meter">
         <Toggle on={s().memoryMeter} onChange={(on) => store.setSettings({ memoryMeter: on })} />
       </SettingRow>

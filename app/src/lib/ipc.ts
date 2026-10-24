@@ -1,7 +1,7 @@
 // Typed wrappers around the Tauri commands in app/src-tauri/src.
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { AttachReply, BranchInfo, Worktree, DirEntry, FileContent, GitStatus, HistoryItem, MemoryStats, SessionInfo, UsageReport } from "./types";
+import type { AttachReply, BranchInfo, Worktree, DirEntry, FileContent, GitStatus, HistoryItem, MemoryStats, SessionInfo, SessionUsage, UsageReport, UsageTotals } from "./types";
 
 export const daemon = <T = unknown>(method: string, params: object = {}) =>
   invoke<T>("daemon_call", { method, params });
@@ -113,6 +113,12 @@ export const agentLatestSession = (kind: string, cwd: string, home?: string) =>
   invoke<{ id: string; path: string } | null>("agent_latest_session", { kind, cwd, home });
 export const claudeTranscript = (sessionId: string, cwd?: string, home?: string) =>
   invoke<string[]>("agent_claude_transcript", { sessionId, cwd, home });
+/** Context, tokens and cost of one conversation, from its transcript. Null without an exact match. */
+export const sessionUsage = (a: { kind: string; agentSessionId: string; transcriptPath?: string; cwd?: string; home?: string }) =>
+  invoke<SessionUsage | null>("session_usage", a);
+/** Cost and tokens of every transcript, by local day/agent/project/model (`usage-scanned` follows a pass). */
+export const usageReport = (tzOffsetMin: number, homes?: { claude: string[]; codex: string[] }) =>
+  invoke<UsageTotals>("usage_report", { tzOffsetMin, homes });
 
 export function onEvent<T>(name: string, cb: (payload: T) => void): Promise<UnlistenFn> {
   return listen<T>(name, (e) => cb(e.payload));

@@ -376,5 +376,6 @@
   "Kip peeks over the sidebar footer and shows how your agents are doing; it also greets you on empty screens.": "Kip ló lên ở chân thanh bên và cho biết các agent đang thế nào; Kip cũng chào bạn ở các màn hình trống.",
   "Kip animations": "Hiệu ứng của Kip",
   "Small, light animations when agents work, need you or finish. Follow system: only when the operating system's animation effects are on.": "Hiệu ứng nhỏ, nhẹ khi agent làm việc, cần bạn hoặc xong việc. Theo hệ thống: chỉ chạy khi hiệu ứng hoạt ảnh của hệ điều hành đang bật.",
-  "Follow system": "Theo hệ thống"
+  "Follow system": "Theo hệ thống",
+  "Agent names and logos are trademarks of their owners, shown only to identify the tools Kelpie launches. Kelpie is not affiliated with or endorsed by them.": "Tên và logo của các agent là thương hiệu của chủ sở hữu, chỉ dùng để nhận biết công cụ mà Kelpie khởi chạy. Kelpie không liên kết với và không được các bên này bảo trợ."
 }

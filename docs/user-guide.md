@@ -106,6 +106,27 @@ endpoint, identifying as Kelpie. When a refresh fails (e.g. the endpoint's rate 
 values stay shown, dimmed, with the reason in the tooltip. Both meters can be turned off in
 Settings → Usage & Resources.
 
+### Context, tokens and cost
+
+Each Claude Code, Codex and OMP session shows a small **context ring** on its sidebar row, pane
+header and tab: how much of the model's context window the conversation uses (grey, amber from
+70 %, red from 85 %). Hover for the numbers: context, tokens in and out, cost and model. At 85 %
+Kelpie says so once per session; click the ring (or the toast's button) for **Compact** (the agent's
+own `/compact`), **Hand Off to another agent**, or the usage page. The numbers come from the agent's
+own transcript and only for a session Kelpie can match to its conversation exactly; a session without
+one shows nothing. Claude costs are **estimates at API prices** ("≈ $": a subscription is not billed
+per token); OMP's and ACP agents' are their own numbers; Codex shows tokens only. OMP has no known
+window, so it shows a cost chip instead of a ring.
+
+**Usage & cost** (palette, right-click a usage meter, or the "Cost" item next to the meters) lists
+cost and tokens by day, week, project, agent or model for the last 7 / 30 / 90 days or all time, from
+every transcript on this computer, Claude's sub-agents included. The first count can take a
+while; it continues in the background.
+
+Settings → Usage & Resources has an optional **cost cap per session** (US dollars, off at 0): a
+session over it (all its conversations together) gets a red cost chip and an Activity entry, and can
+optionally be interrupted with Esc.
+
 ### Quick commands
 
 Settings → Quick Commands saves commands and prompts. *Terminal* types into the focused shell
@@ -559,7 +580,7 @@ a setting.
   word wrap.
 - **Notifications**: desktop notifications and their sound, notes about shortcuts kept from
   the terminal, first-run tips.
-- **Usage & Resources**: usage and memory meters.
+- **Usage & Resources**: usage and memory meters, the per-session cost cap, the Usage & cost page.
 - **Session Daemon**: status, data folder and log, *Stop daemon & all sessions*.
 
 Settings and layouts live in `app-state.json` in the data folder; when its format changes the
