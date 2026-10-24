@@ -41,7 +41,7 @@ tests and a performance budget. Supersedes [261023-0036-vibe-coder-gaps](../2610
 | 4 | [Universal ACP chat](phase-04-universal-acp-chat.md) | P1 | 4d | 1 | completed |
 | 5 | [Context, tokens & cost](phase-05-context-cost.md) | P1 | 3d | 4 | completed |
 | 6 | [Turn checkpoints & artifacts](phase-06-turn-checkpoints.md) | P1 | 5d | 1, 5 | completed |
-| 7 | [Review queue, Finish, overlap, auto-worktree](phase-07-review-queue-finish.md) | P1 | 5d | 6 | pending |
+| 7 | [Review queue, Finish, overlap, auto-worktree](phase-07-review-queue-finish.md) | P1 | 5d | 6 | completed |
 | 8 | [Cross-review & best-of-N](phase-08-cross-review-best-of-n.md) | P2 | 4d | 5, 7 | pending |
 | 9 | [Composer & context attach](phase-09-composer-context.md) | P1 | 3d | 1 | pending |
 | 10 | [Spec workspace](phase-10-spec-workspace.md) | P2 | 3d | 8, 9 | pending |
@@ -130,6 +130,8 @@ feature on an older daemon; never assume app and daemon are the same release.
 - Phase 1: e2e evidence for hand-off, quick-command typing and the Copy Context menu click (`phase3.py` needs an agent transcript folder); covered today by unit tests and `ipc.redact` checks.
 - Phase 5: GUI perf metric (20 visible sessions, core CPU) not run; entry bundle margin 0.12 kB (338.48 of 338.60 kB gz) — the next entry-chunk addition must go lazy or re-budget.
 - Phase 6: snapshots default off (0.35 s + 0.15 s start look on 10k files); 100k-file numbers, echo-during-snapshot and `ui_tour.py` not run; CRLF restore not byte-exact (disclosed).
+- Phase 7: cold 20-worktree summary ≈ 2 s; checks join the Job object after start; no resume state after a crash past branch deletion; `ui_tour.py` not run.
+- `attention.py` flaked once (11/12) under heavy parallel load, then 12/12 three times (incl. at 100 % CPU): watch it.
 - Perf gate `bench` measures unfocused sessions, which the CPU-priority work (separate change) deliberately slows under load: compare bench with `daemon.set_priority {enabled:false}` or budget it separately.
 
 ## Unresolved questions

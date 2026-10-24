@@ -1,7 +1,7 @@
 ---
 phase: 7
 title: "Review queue, Finish, overlap, auto-worktree"
-status: pending
+status: completed
 priority: P1
 effort: "5d"
 dependencies: [6]
@@ -49,7 +49,7 @@ Close the worktree lifecycle on top of what exists: the Board's per-worktree sta
 - 0 overlap scans with < 2 active worktrees; queue refresh ≤ 50 ms for 20 worktrees (cached by HEAD + index mtime); panel lazy.
 
 ## Success Criteria
-- [ ] Agent done → merged → cleaned up without typing git, with zero lost work in the test matrix.
+- [x] Agent done → merged → cleaned up without typing git, with zero lost work in the test matrix.
 
 ## Risk Assessment
 - Windows open handles block removal → sessions awaited first; removal failure leaves a consistent, reported state.
