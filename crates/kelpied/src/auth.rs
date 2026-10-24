@@ -9,7 +9,7 @@
 //!   `worktree`, `run`, `call session.*`) unless the user turned that off or the session was
 //!   started restricted; then only their own session. Hook and run reports always speak for the
 //!   caller's own session. Admin methods (custom agents, automations, phone access, daemon
-//!   settings, closing sessions…) are the user's only. Other sessions' environments are left
+//!   settings, closing sessions, turn checkpoints and their undo…) are the user's only. Other sessions' environments are left
 //!   out of what they read.
 //! - **Claimed** (`KELPIE_SESSION_ID` without its token — some agents strip `*TOKEN*` variables
 //!   from the programs they run, hooks included): hook reports for that session only, which is
@@ -244,7 +244,7 @@ mod tests {
         let user = Role::User;
         let s = Role::Session("s".into());
         let claimed = Role::Claimed("s".into());
-        let admin = ["agent.set_custom", "automation.save", "automation.run", "daemon.shutdown", "daemon.set_policy", "mobile.approve", "mobile.set_write", "session.close", "session.kill", "session.restart", "session.update", "session.attach", "session.answer", "run.approve", "run.delete", "agent.run"];
+        let admin = ["agent.set_custom", "automation.save", "automation.run", "daemon.shutdown", "daemon.set_policy", "mobile.approve", "mobile.set_write", "session.close", "session.kill", "session.restart", "session.update", "session.attach", "session.answer", "run.approve", "run.delete", "agent.run", "checkpoint.status", "checkpoint.set_enabled", "checkpoint.list", "checkpoint.owners", "checkpoint.diff", "checkpoint.blob", "checkpoint.undo_plan", "checkpoint.undo", "checkpoint.drop"];
         for m in admin {
             assert!(allowed(&user, false, m), "user: {m}");
             assert!(!allowed(&s, true, m), "scripting session: {m}");

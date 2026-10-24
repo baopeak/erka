@@ -127,6 +127,28 @@ Settings → Usage & Resources has an optional **cost cap per session** (US doll
 session over it (all its conversations together) gets a red cost chip and an Activity entry, and can
 optionally be interrupted with Esc.
 
+### Turns and undo
+
+Settings -> Agents -> **Turn snapshots** (off by default; it costs a few hundred milliseconds per turn on a
+large repository) keeps a snapshot of an agent's folder when each of its turns ends, for agents running on
+this computer in a git folder. The **Turns** tab of the right panel (or "Agent Turns and Undo" in the palette)
+lists them for a session: when, how many files and lines, and what changed; click a file for a before / after
+diff. A turn marked *approx.* belongs to an agent that reports no turns: Kelpie guesses the end from the
+output going quiet, so two turns may be merged. The **Files** view shows who touched which files in the
+folder; a file changed by more than one session is marked shared. A turn's *Produced* row opens markdown,
+images, Mermaid and CSV it wrote, rendered; a comment on a markdown block becomes a review note you can send
+to an agent from any diff.
+
+**Undo** (the arrow on a turn) previews every file it will restore or delete and changes nothing until you
+confirm. It is available once the session is idle. Files another session also worked on in the same period,
+files changed since the turn or between turns (by your editor or a terminal, even if the agent edited them too; Kelpie looks at the folder as each turn starts), start unticked and say why; tick one to allow overwriting it. Your index,
+branch and commits are never touched. Snapshots live in the repository under `refs/kelpie` (the last 50 turns
+per session) and are removed when the session is closed or its worktree removed. A repository where a
+snapshot takes over a second twice in a row (on an otherwise idle machine) is switched off until Kelpie's
+session daemon restarts, with a notice; turn it on again in the panel. Other git tools can see the
+`refs/kelpie` refs (`git log --all`, graph tools), and a `git push --mirror` would send them. Line endings of
+a restored file follow your git settings and can differ from before; Kelpie says so in the dialog.
+
 ### Quick commands
 
 Settings → Quick Commands saves commands and prompts. *Terminal* types into the focused shell
@@ -571,7 +593,7 @@ a setting.
 - **Agents**: permissions (Manual / Yolo); per agent extra arguments (e.g. `--model opus`),
   permission mode (Claude) or approval policy (Codex) and environment variables (stored in
   plain text) — used by terminal and chat sessions; which agent CLIs launchers show; the agent
-  for AI actions; hibernation; prioritize visible terminals; keep computer awake.
+  for AI actions; hibernation; turn snapshots; prioritize visible terminals; keep computer awake.
 - **Accounts**, **Integrations**, **Remote (SSH)**, **Mobile**, **Voice**, **Plugins**,
   **Layouts**, **Quick Commands**, **Automations**, **Shortcuts**: see above.
 - **Terminal**: font, size, line height, scrollback, renderer (WebGL / DOM), cursor blink,

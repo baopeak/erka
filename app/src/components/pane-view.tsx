@@ -1,4 +1,4 @@
-import { For, Match, Show, Switch, createEffect, createMemo, createSignal } from "solid-js";
+import { For, Match, Show, Switch, createEffect, createMemo, createSignal, lazy } from "solid-js";
 import { HostChip, RunOnPicker, initialRunOn, resolveRunOn, runOnAgents, runOnChoices, type RunOn } from "./host-target";
 import { hostOf, projectHosts, vault } from "../lib/ssh-hosts";
 import { projectTarget, sessionTarget } from "../lib/remote";
@@ -11,7 +11,6 @@ import { ContextRing } from "./context-ring";
 import { StatusDot } from "./sidebar";
 import { TerminalPane } from "./terminal-pane";
 import { FileViewer } from "./file-viewer";
-import { DiffView } from "./diff-view";
 import { ChatPane } from "./chat-pane";
 import { paneTitle } from "./workspace-view";
 import { switchToChat, switchToTerminal, supportsChat } from "../chat/mode-switch";
@@ -22,6 +21,10 @@ import { kindInfo } from "../lib/agents";
 import type { Pane, Project, Tab } from "../lib/types";
 import { t } from "../lib/i18n";
 import { confirmDialog } from "../lib/confirm-dialog";
+
+// Loaded when a diff or a turn's file is first opened.
+const DiffView = lazy(() => import("./diff-view").then((m) => ({ default: m.DiffView })));
+const TurnFileView = lazy(() => import("./turn-file-view"));
 
 export function PaneView(props: { pane: Pane; project: Project; tab: Tab }) {
   const focused = () => props.tab.focus === props.pane.id;
@@ -107,6 +110,9 @@ export function PaneView(props: { pane: Pane; project: Project; tab: Tab }) {
           <Match when={props.pane.kind === "chat" && props.pane.sessionId} keyed>
             {(id) => <ChatPane sessionId={id} project={props.project} focused={focused()} />}
           </Match>
+          <Match when={props.pane.kind === "file" && props.pane.path && props.pane.rev ? props.pane.rev : null} keyed>
+            {(rev) => <TurnFileView project={props.project} path={props.pane.path!} rev={rev} />}
+          </Match>
           <Match when={props.pane.kind === "file" && props.pane.path} keyed>
             {(path) => <FileViewer project={props.project} path={path} line={props.pane.line} focused={focused()} />}
           </Match>
@@ -114,7 +120,7 @@ export function PaneView(props: { pane: Pane; project: Project; tab: Tab }) {
             {(_id) => <BrowserPane pane={props.pane} project={props.project} tab={props.tab} focused={focused()} />}
           </Match>
           <Match when={props.pane.kind === "diff" && props.pane.path} keyed>
-            {(path) => <DiffView project={props.project} path={path} staged={!!props.pane.staged} />}
+            {(path) => <DiffView project={props.project} path={path} staged={!!props.pane.staged} rev={props.pane.rev} />}
           </Match>
         </Switch>
       </div>

@@ -341,7 +341,7 @@ fn unlink_shared(dir: &Path) {
 }
 
 #[tauri::command]
-pub async fn git_worktree_remove(root: String, path: String, force: bool) -> CmdResult<()> {
+pub async fn git_worktree_remove(client: tauri::State<'_, std::sync::Arc<crate::daemon_client::DaemonClient>>, root: String, path: String, force: bool) -> CmdResult<()> {
     let dir = guard(&root, "")?;
     // Only ever inside a linked worktree git knows about (never the main checkout).
     let canon = |p: &str| std::fs::canonicalize(p).ok();
@@ -356,7 +356,14 @@ pub async fn git_worktree_remove(root: String, path: String, force: bool) -> Cmd
         args.push("--force");
     }
     args.push(path.as_str());
-    git_ok(&dir, &args).await.map(|_| ())
+    let removed = git_ok(&dir, &args).await.map(|_| ());
+    // Once it is gone: the daemon deletes the snapshots of the sessions that worked in it (their refs
+    // live in the main repository). An older daemon or none running is fine; they are collected
+    // when their sessions close. A removal that failed keeps them.
+    if removed.is_ok() {
+        let _ = client.call("checkpoint.drop", serde_json::json!({"worktree": path, "root": root})).await;
+    }
+    removed
 }
 
 #[cfg(test)]

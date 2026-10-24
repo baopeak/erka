@@ -52,6 +52,7 @@ export const defaultSettings: Settings = {
   hibernateMinutes: 30,
   keepAwake: "off",
   prioritizeVisible: true,
+  checkpoints: false,
   agentsScripting: true,
   notificationSound: false,
   updateChecks: true,
@@ -411,6 +412,13 @@ function createAppStore() {
       case "session.turn":
         // Read by lib/session-usage.ts (the store must not import it: it imports the store).
         window.dispatchEvent(new CustomEvent("kelpie:session-turn", { detail: p }));
+        break;
+      case "checkpoint.updated":
+        window.dispatchEvent(new CustomEvent("kelpie:checkpoint", { detail: p }));
+        break;
+      case "checkpoint.disabled":
+        // Said once per repository (the daemon remembers it).
+        notify(t("Turn snapshots are off for {repo}: they took over a second, twice in a row. Turn them on again in the Turns panel.", { repo: p.repo }));
         break;
       case "session.clipboard": {
         // OSC 52: only the terminal the user is looking at may set the clipboard, and we say so.
@@ -1052,19 +1060,19 @@ function createAppStore() {
     addTab(projectId, { id: uid(), kind: s?.chat ? "chat" : "terminal", sessionId });
   }
 
-  function openFile(projectId: string, path: string, opts: { line?: number; diff?: boolean; staged?: boolean } = {}) {
+  function openFile(projectId: string, path: string, opts: { line?: number; diff?: boolean; staged?: boolean; rev?: Pane["rev"] } = {}) {
     const kind = opts.diff ? "diff" : "file";
     if (!opts.diff) recordRecent("file", path, projectId);
     const ws = workspace(projectId);
     for (const tab of ws.tabs) {
-      const pane = allPanes(tab.root).find((p) => p.kind === kind && p.path === path && !!p.staged === !!opts.staged);
+      const pane = allPanes(tab.root).find((p) => p.kind === kind && p.path === path && !!p.staged === !!opts.staged && p.rev?.session === opts.rev?.session && p.rev?.n === opts.rev?.n);
       if (pane) {
         if (opts.line) setTabRoot(projectId, tab.id, replacePane(tab.root, pane.id, { ...pane, line: opts.line }));
         focusPane(projectId, tab.id, pane.id);
         return;
       }
     }
-    addTab(projectId, { id: uid(), kind, path, line: opts.line, staged: opts.staged });
+    addTab(projectId, { id: uid(), kind, path, line: opts.line, staged: opts.staged, rev: opts.rev });
   }
 
   /** Closes a pane. Terminal sessions are killed only when `kill` (default for exited ones). */

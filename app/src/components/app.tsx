@@ -39,6 +39,7 @@ import { initVoice } from "../lib/voice";
 import { applyLocale } from "../lib/i18n";
 import { VoicePill } from "./voice";
 import { startUpdater } from "../lib/updater";
+import { CHECKPOINT_API } from "../lib/checkpoint-api";
 
 const UpdateDialog = lazy(() => import("./update-dialog"));
 const QuickAnswer = lazy(() => import("./quick-answer"));
@@ -73,6 +74,10 @@ export function App() {
   createEffect(() => {
     const enabled = store.state.settings.prioritizeVisible ?? true;
     if (store.connected()) void daemon("daemon.set_priority", { enabled }).catch(() => {});
+  });
+  createEffect(() => {
+    const on = store.state.settings.checkpoints ?? false;
+    if (store.connected() && store.daemonApi() >= CHECKPOINT_API) void daemon("checkpoint.set_enabled", { enabled: on }).catch(() => {});
   });
   createEffect(() => {
     const on = store.state.settings.agentsScripting ?? true;

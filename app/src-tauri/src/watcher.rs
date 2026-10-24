@@ -156,6 +156,10 @@ fn classify(root: &Path, path: &Path) -> Change {
     let Ok(rel) = path.strip_prefix(root) else { return Change::Ignored };
     let parts: Vec<String> = rel.components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect();
     if parts.first().map(String::as_str) == Some(".git") {
+        // Turn checkpoints write refs under refs/kelpie: not a change of the user's git state.
+        if parts.get(1).map(String::as_str) == Some("refs") && parts.get(2).map(String::as_str) == Some("kelpie") {
+            return Change::Ignored;
+        }
         let interesting = matches!(parts.get(1).map(String::as_str), Some("HEAD" | "index" | "refs" | "MERGE_HEAD" | "REBASE_HEAD"));
         return if interesting { Change::Git } else { Change::Ignored };
     }
@@ -198,6 +202,10 @@ mod tests {
         assert!(matches!(classify(root, Path::new("/p/a.rs")), Change::Dir(d) if d.is_empty()));
         assert!(matches!(classify(root, Path::new("/p/.git/index")), Change::Git));
         assert!(matches!(classify(root, Path::new("/p/.git/objects/ab/cd")), Change::Ignored));
+        assert!(matches!(classify(root, Path::new("/p/.git/refs/heads/main")), Change::Git));
+        assert!(matches!(classify(root, Path::new("/p/.git/refs/kelpie/abc/3")), Change::Ignored));
+        assert!(matches!(classify(root, Path::new("/p/.git/refs/kelpie/abc/3.lock")), Change::Ignored));
+        assert!(matches!(classify(root, Path::new("/p/.git/refs/kelpie")), Change::Ignored));
         assert!(matches!(classify(root, Path::new("/p/web/node_modules/x/y.js")), Change::Ignored));
     }
 }

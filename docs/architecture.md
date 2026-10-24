@@ -299,6 +299,107 @@ the ring menu load lazily (`usage-alerts.ts`); the page's folding is in `usage-r
 Day boundaries on the page use today's UTC offset for all history (hourly buckets: no :30 / :45
 splits, DST shifts an hour); Codex context uses `last_token_usage.total_tokens` (reasoning included).
 
+## Turn checkpoints
+
+Per agent turn, a snapshot of the session's working folder (`checkpoints.rs`; API 10, `checkpoint.*`,
+all user-only: no session token reaches them). **Off by default**: a snapshot of a 10k-file repository
+costs far more than the 150 ms budget (below), so Settings -> Agents -> *Turn snapshots* turns it on
+(`checkpoint.set_enabled`, remembered in `checkpoints/config.json`; the app pushes its setting on every
+connect, and an older daemon without API 10 never sees it and the app hides every turn view).
+
+- **Boundaries.** One baseline at spawn (and at restart; a snapshot with an unchanged tree is skipped),
+  then one snapshot when the ticker sees a session that was Working or Waiting become Idle or Exited:
+  Claude `Stop`, Codex `agent-turn-complete` (shown "turn-complete to turn-complete"), a chat session's
+  result / ACP `stopReason` all arrive as that status change, and so does a turn that ends on a prompt or
+  with the agent exiting. An agent that has sent no hook (or is neither Claude nor Codex) is labelled
+  *approximate* and only counts a boundary when something was typed since the previous one, so a TUI
+  repainting a quiet screen does not snapshot; two turns may still merge. A snapshot read more than 3 s
+  after its turn ended, or following one that failed, is approximate too. Shells and remote (SSH)
+  sessions have none. A hook report alone never starts a snapshot, and `checkpoint.*` is not in the
+  session role's method lists (an agent cannot undo anything). Turns whose tree did not change take no number.
+  When a turn *starts* (Idle -> Working: a typed prompt, a chat message; for a guessed boundary only after
+  typing) a detection-only **look** is queued in the same per-repository queue: the folder is read like a
+  snapshot, but nothing is committed, referenced or recorded. If its tree differs from the session's previous
+  snapshot, the differing paths (`between` on that turn's record, capped, all files when the look failed) were
+  changed between turns by the user's editor, a shell or another session; undo flags them even when the agent
+  edited them too. A look that runs after the agent's first edits only flags more.
+- **Snapshot.** A copy of the repository's index in `<data>/checkpoints/tmp` (the stat cache is kept; a
+  stale index lock there is removed first) is filled with `add -A --ignore-errors`, written as a tree,
+  committed with `commit-tree -p HEAD` (git resolves HEAD; none in a repository without a commit) and
+  stored as `refs/kelpie/<session>/<n>` (`update-ref` with an all-zero old value: a number is never
+  written twice). The user's HEAD, branch, files and the index file are never written by a snapshot
+  (undo's `git restore` takes the index lock for a moment, as any git command does; one retry when the
+  user's own git holds it). Every git call runs with `GIT_LITERAL_PATHSPECS=1`, `GIT_OPTIONAL_LOCKS=0`
+  and `core.hooksPath` pointing at an empty folder: the repository's `reference-transaction`,
+  `post-checkout` and other hook scripts never run for these calls. Files another program holds open are
+  skipped and listed in the record (`unreadable`); paths outside a sparse checkout do not fail it. Git
+  runs at normal priority (below normal was starved for minutes under a build). The repository is opened
+  once and remembered. Snapshots of one repository run one after another on a worker thread; a queued
+  snapshot of a session absorbs a newer request by widening its window; a git failure is retried three
+  times (0.15 s, 0.45 s) and then skipped, leaving a *gap window* for the session (see Undo). An existing
+  `.git/index.lock` is no reason to wait: the copy reads the last complete index.
+- **Records** in `<data>/checkpoints/<session>.json`: number, commit, base commit, `from` (when the previous
+  snapshot began reading) and `at` (when this one finished), work start, source, approximate, counts, the
+  first 400 paths, unreadable files. The next number is the highest of the records and the
+  `refs/kelpie/<session>/` refs plus one, so numbering survives a restart and a lost record file. The last
+  50 turns are kept (plus the base of the oldest). A baseline made after earlier work (a restart) covers that
+  work as a stretch too. When a session closes it first waits for a snapshot of it that is running, turns any
+  still queued into stretches (and a snapshot job already taken by the worker into one when it finds the
+  session closed), deletes its refs, then keeps a **tombstone** (windows and file lists only) so other
+  sessions' undo still sees what it touched; a tombstone is dropped when no live session's history reaches
+  back to it. After
+  `git worktree remove` succeeds the app calls `checkpoint.drop {worktree, root}`: records and refs of
+  the sessions that worked there go (refs are deleted through `root`, the worktree folder being gone). The
+  startup GC closes sessions this daemon recorded that no longer exist; it never touches other refs, so
+  another daemon's snapshots in the same repository stay.
+- **Auto-off.** A repository whose snapshot (the successful attempt only) takes over a second twice in a
+  row stops being snapshotted until the daemon restarts, with one `checkpoint.disabled` event; a slow
+  snapshot while a trivial `git --version` also takes over 300 ms (a busy machine) does not count. Slow means
+  git's CPU time (a job object around each git process counts the real git behind the Git for Windows
+  launcher; measured: cpu 171 ms for 115 ms of wall time on 10k files) or, when that is under a second, the
+  wall time unless the machine is busy. Git messages are read in English (`LC_ALL=C`).
+  `checkpoint.set_enabled {repo}` turns it back on. Nothing about it is saved to disk.
+- **Undo** (`checkpoint.undo_plan`, `checkpoint.undo`; both, and `drop`, answer from their own thread so the
+  app's other requests are not held up). Allowed only when the owning session is idle: its status is not
+  Working or Waiting and it has printed nothing for 1.5 s (a report without the session's token cannot make a
+  busy agent look idle). A turn's diff covers everything since the session's previous snapshot, so the
+  stretch compared with other sessions is `from`..`at`, not just the time the agent worked; another session's
+  edits during the owner's idle time are in the diff too. The plan lists every file of the turn (restore, delete,
+  or skip for links and submodules) with a state: *shared* when a stretch of another session overlaps and
+  its record lists the file, or may list it (a gap window, a record with too many files or unreadable ones),
+  or that session is working in the folder right now; *modified* when the folder no longer matches the end of
+  the turn, the file differed between turns (the look at the start), could not be read by this or the previous
+  snapshot, was written before the turn's start (file mtime) or removed before it (its folder's mtime);
+  else *clean*. Because every
+  session's snapshot holds the others' concurrent edits, files in a shared folder are often shared. `undo` changes nothing and returns
+  `needs_confirmation` unless every shared or modified file is named in `confirm`. Restores are `git restore
+  --source=<base> --worktree` with literal pathspecs from stdin; deletes remove only paths that pass `safe_rel`
+  and are not behind a link, then folders they leave empty. A file already equal to its state before the turn
+  is skipped, so an undo can be repeated. The result is recorded as its own `undo` step. Restores follow the
+  user's git settings (CRLF with `core.autocrlf`): a file can come back with other line endings, and the dialog
+  says so.
+- **Reading.** `checkpoint.list`, `diff` (files of a turn with counts), `blob` (a file at the end of a turn or,
+  with `before`, as the turn found it; 8 MiB cap), `owners` (who touched which files in the folder, closed
+  sessions included).
+- **App.** Right panel tab *Turns* (`turn-timeline.tsx`, lazy): turns, expanded files, the files a turn produced,
+  the owners view and the undo preview. The panel stays on the session chosen (or the focused one when it
+  opened) and the dialog is bound to the session and turn it was opened for. A file opens a `diff` pane or a
+  `file` pane with `rev` (the diff view and `turn-file-view.tsx` read the snapshot instead of the folder; paths
+  are made project-relative with the repository prefix); markdown renders block by block and a comment becomes a
+  review note on that block's source line. The watcher ignores `.git/refs/kelpie/**`. `DiffView` is lazy too
+  (it freed more entry-chunk space than the new views use).
+
+Measured, Windows 10, release build, quiet machine, `cargo test -p kelpied --release snapshot_cost -- --ignored
+--nocapture` (`KELPIE_CP_FILES`, `KELPIE_CP_RUNS`): 10,000 files, a turn that edits 3 files and adds 1. First
+version (12 turns, below-normal priority, 8 git starts): baseline 0.53 s, changed turn p50 0.74 s / p95 0.80 s,
+unchanged turn p50 0.25 s / p95 0.28 s. Now (10 turns, normal priority, repository remembered, HEAD resolved by
+`commit-tree`): baseline 0.38 s, changed turn **p50 0.38 s / p95 0.39 s**, unchanged turn p50 0.15 s / p95 0.16 s;
+repository growth about 870 KiB per 100 turns. After the second review a detection-only look runs at each
+turn's start (p50 133 ms / p95 145 ms on 10k files, like an unchanged snapshot) and the later measurement reads
+baseline 0.34 s, changed turn p50 0.33 s / p95 0.35 s, unchanged p50 0.14 s: a turn now costs about 0.46 s of git
+work. Most of the time is git walking 10k files and starting processes; it still does not meet the 150 ms budget for a changed turn, hence the default.
+A 100,000-file repository was not measured (building the fixture did not finish in 90 minutes); expect several seconds per snapshot there, so such a repository switches itself off after two.
+
 ## App-side services (Rust core)
 
 | Module | Does |

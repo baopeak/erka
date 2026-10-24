@@ -91,6 +91,9 @@ export interface Pane {
   /** Project-relative path for file/diff panes. */
   path?: string;
   staged?: boolean;
+  /** A file or diff pane showing a turn of an agent session instead of the folder: the snapshot
+   *  at the end of turn `n` (a diff compares it with the one before). */
+  rev?: { session: string; n: number; prefix?: string };
   line?: number;
   /** Browser panes: the page shown. */
   url?: string;
@@ -139,7 +142,7 @@ export interface Tab {
   name?: string;
 }
 
-export type RightPanel = "files" | "git" | "search" | "history" | "issues" | null;
+export type RightPanel = "files" | "git" | "search" | "history" | "issues" | "turns" | null;
 
 export interface Workspace {
   tabs: Tab[];
@@ -201,6 +204,9 @@ export interface Settings {
   /** Sessions not on screen run below normal CPU priority, so typing stays quick when the
    *  machine is busy (Windows). */
   prioritizeVisible: boolean;
+  /** Snapshot an agent's working folder when each turn ends (git folders on this computer), for
+   *  the Turns panel and undo. */
+  checkpoints: boolean;
   /** Programs in a session (agents, scripts) may drive other sessions through `kelpied`
    *  (`terminal send`, `call session.create`…). Off: only their own session. */
   agentsScripting: boolean;

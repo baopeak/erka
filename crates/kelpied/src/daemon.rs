@@ -15,6 +15,7 @@ use crate::agents::{self, Resume};
 use crate::automations::{Automation, Automations};
 use crate::awake::{self, Awake};
 use crate::chat::ChatSession;
+use crate::checkpoints::{self, Checkpoints};
 use crate::meta::MetaStore;
 use crate::status::Status;
 use crate::persist::{write_atomic, SavedSession, Store};
@@ -82,6 +83,8 @@ pub struct Daemon {
     /// Programs in a session may script other sessions (`daemon.set_policy`, saved in
     /// `policy.json` so it holds while the app is closed).
     agents_control_others: AtomicBool,
+    /// Per-turn snapshots of the sessions' working folders (see `checkpoints.rs`).
+    checkpoints: Arc<Checkpoints>,
 }
 
 #[derive(Deserialize)]
@@ -154,23 +157,32 @@ impl Daemon {
     pub fn new(data_dir: PathBuf, exe: PathBuf) -> Arc<Daemon> {
         // `prioritize` starts on (until the app says otherwise).
         crate::proc_tree::set_daemon_priority(true);
-        Arc::new(Daemon {
-            sessions: RwLock::new(BTreeMap::new()),
-            next_handle: AtomicU32::new(1),
-            clients: Mutex::new(HashMap::new()),
-            store: Store::new(&data_dir),
-            workspace_meta: Mutex::new(MetaStore::load(&data_dir)),
-            automations: Mutex::new(Automations::load(&data_dir)),
-            runs: Mutex::new(Runs::load(&data_dir)),
-            mobile: crate::mobile::Mobile::load(&data_dir),
-            awake: Awake::new(),
-            awake_mode: Mutex::new(awake::Mode::Off),
-            prioritize: AtomicBool::new(true),
-            agents_control_others: AtomicBool::new(load_policy(&data_dir)),
-            data_dir,
-            exe,
-            meta_dirty: AtomicBool::new(false),
-            shutdown: tokio::sync::Notify::new(),
+        Arc::new_cyclic(|me: &std::sync::Weak<Daemon>| {
+            let me = me.clone();
+            let emit: checkpoints::Emit = Arc::new(move |event, params| {
+                if let Some(d) = me.upgrade() {
+                    d.broadcast(event, params);
+                }
+            });
+            Daemon {
+                sessions: RwLock::new(BTreeMap::new()),
+                next_handle: AtomicU32::new(1),
+                clients: Mutex::new(HashMap::new()),
+                store: Store::new(&data_dir),
+                workspace_meta: Mutex::new(MetaStore::load(&data_dir)),
+                automations: Mutex::new(Automations::load(&data_dir)),
+                runs: Mutex::new(Runs::load(&data_dir)),
+                mobile: crate::mobile::Mobile::load(&data_dir),
+                awake: Awake::new(),
+                awake_mode: Mutex::new(awake::Mode::Off),
+                prioritize: AtomicBool::new(true),
+                agents_control_others: AtomicBool::new(load_policy(&data_dir)),
+                checkpoints: Arc::new(Checkpoints::new(&data_dir, emit)),
+                data_dir,
+                exe,
+                meta_dirty: AtomicBool::new(false),
+                shutdown: tokio::sync::Notify::new(),
+            }
         })
     }
 
@@ -615,6 +627,7 @@ impl Daemon {
         self.sessions.write().insert(handle, entry);
         self.meta_dirty.store(true, Ordering::Relaxed);
         self.broadcast("session.updated", serde_json::to_value(&info)?);
+        self.checkpoint_baseline(&info.spec, "spawn");
         Ok(info)
     }
 
@@ -641,6 +654,7 @@ impl Daemon {
             session.ingest(b"\x1b[0m\r\n\x1b[2m--- resumed ---\x1b[0m\r\n");
         }
         session.spawn(&launch)?;
+        self.checkpoint_baseline(&spec, "restart");
         Ok(session.info())
     }
 
@@ -648,6 +662,9 @@ impl Daemon {
         let entry = self.sessions.write().remove(&handle).ok_or_else(|| anyhow!("no session {handle}"))?;
         entry.kill();
         self.store.remove_snapshot(&entry.spec().id);
+        // Waits for a snapshot of its repository that is running: not on this request's worker.
+        let (checkpoints, id, now) = (self.checkpoints.clone(), entry.spec().id, now_millis());
+        let _ = std::thread::Builder::new().name("kelpie-checkpoint-drop".into()).spawn(move || checkpoints.close_session(&id, now));
         self.meta_dirty.store(true, Ordering::Relaxed);
         self.broadcast("session.closed", json!({"handle": handle}));
         Ok(())
@@ -736,6 +753,159 @@ impl Daemon {
         Ok(())
     }
 
+    // ---------- turn checkpoints (see checkpoints.rs) ----------
+
+    /// Agents on this computer get snapshots; shells and sessions on another host do not.
+    fn checkpoint_eligible(spec: &SessionSpec) -> bool {
+        spec.remote.is_none() && spec.kind != "shell"
+    }
+
+    /// Why a session has no snapshots when it never will (`None`: it can have them).
+    fn checkpoint_why(&self, sid: &str) -> Option<&'static str> {
+        let spec = self.by_id(sid)?.spec();
+        if spec.remote.is_some() {
+            Some("remote")
+        } else if spec.kind == "shell" {
+            Some("shell")
+        } else if checkpoints::find_top(std::path::Path::new(&spec.cwd)).is_none() {
+            Some("not-git")
+        } else {
+            None
+        }
+    }
+
+    /// Where a session's history starts: its spawn or restart.
+    fn checkpoint_baseline(&self, spec: &SessionSpec, source: &str) {
+        if !Self::checkpoint_eligible(spec) {
+            return;
+        }
+        let now = now_millis();
+        self.checkpoints.submit(checkpoints::Job { sid: spec.id.clone(), cwd: spec.cwd.clone(), kind: checkpoints::Kind::Baseline, source: source.into(), approximate: false, started: now, at: now });
+    }
+
+    /// A turn ended: Claude `Stop`, Codex `agent-turn-complete`, a chat's result, or (for agents
+    /// that report nothing) the output going quiet after input. The status the ticker sees is
+    /// the one boundary for all of them, so a hook report alone never starts a snapshot. A turn
+    /// that ends waiting on the user or with the agent exiting counts too. For a guessed boundary
+    /// (`typed`: something was typed since the last one) a repaint of a quiet screen is not a turn.
+    fn checkpoint_turn_end(&self, info: &SessionInfo, hooks: bool, typed: bool, started: u64) {
+        if !Self::checkpoint_eligible(&info.spec) {
+            return;
+        }
+        let at = now_millis();
+        let (source, approximate) = if info.chat {
+            ("chat", false)
+        } else if hooks && matches!(info.spec.kind.as_str(), "claude" | "codex") {
+            ("hook", false)
+        } else {
+            ("idle", true)
+        };
+        if approximate && !typed {
+            return;
+        }
+        self.checkpoints.submit(checkpoints::Job { sid: info.spec.id.clone(), cwd: info.spec.cwd.clone(), kind: checkpoints::Kind::Turn, source: source.into(), approximate, started, at });
+    }
+
+    /// A turn is starting (Idle -> Working: a typed prompt, a chat message): a detection-only look at
+    /// the folder, so what changed between turns is known even if the agent edits it too. A guessed
+    /// boundary needs typing since the last one, as the end of a turn does.
+    fn checkpoint_turn_start(&self, info: &SessionInfo, hooks: bool, typed: bool) {
+        if !Self::checkpoint_eligible(&info.spec) {
+            return;
+        }
+        let guessed = !info.chat && !(hooks && matches!(info.spec.kind.as_str(), "claude" | "codex"));
+        if guessed && !typed {
+            return;
+        }
+        let now = now_millis();
+        self.checkpoints.submit(checkpoints::Job { sid: info.spec.id.clone(), cwd: info.spec.cwd.clone(), kind: checkpoints::Kind::Start, source: "start".into(), approximate: false, started: now, at: now });
+    }
+
+    /// At startup, off the main path: snapshots of sessions that no longer exist go.
+    pub fn collect_checkpoints(self: &Arc<Self>) {
+        let known: std::collections::HashSet<String> = self.sessions.read().values().map(|e| e.spec().id).collect();
+        let me = self.clone();
+        let _ = std::thread::Builder::new().name("kelpie-checkpoint-gc".into()).spawn(move || {
+            let removed = me.checkpoints.gc(&known);
+            if removed > 0 {
+                tracing::info!(removed, "removed checkpoints of sessions that no longer exist");
+            }
+        });
+    }
+
+    fn session_label(&self, sid: &str) -> String {
+        match self.by_id(sid) {
+            Some(e) => {
+                let spec = e.spec();
+                spec.name.filter(|n| !n.is_empty()).unwrap_or_else(|| format!("{} {}", spec.kind, sid.chars().take(6).collect::<String>()))
+            }
+            None => format!("a closed session ({})", sid.chars().take(6).collect::<String>()),
+        }
+    }
+
+    /// What undo needs to know about the sessions around `sid`.
+    fn undo_ctx(&self, sid: &str) -> checkpoints::UndoCtx {
+        // Output within the window status uses for "working" counts whatever a hook last said: a
+        // report without the session's token (any program that knows its id) must not make a busy
+        // agent look idle.
+        let busy = |e: &Entry| {
+            matches!(e.info().status, Status::Working | Status::Waiting) || matches!(e, Entry::Term(s) if s.output_within(Duration::from_millis(1500), Instant::now()))
+        };
+        let owner_working = self.by_id(sid).is_some_and(|e| busy(&e));
+        let key = self.checkpoints.session_repo_key(sid);
+        let others: Vec<String> = self
+            .sessions
+            .read()
+            .values()
+            .filter(|e| busy(e))
+            .map(|e| e.spec())
+            .filter(|spec| spec.id != sid && key.is_some() && checkpoints::find_top(std::path::Path::new(&spec.cwd)).map(|t| checkpoints::repo_key(&t)) == key)
+            .map(|spec| spec.id)
+            .collect();
+        let working_others = others.into_iter().map(|id| { let name = self.session_label(&id); (id, name) }).collect();
+        checkpoints::UndoCtx { owner_working, working_others }
+    }
+
+    fn checkpoint_rpc(&self, method: &str, params: &Value) -> Result<Value> {
+        let sid = || param(params, "session").map(|v| v.as_str().unwrap_or_default().to_string());
+        let n = || param(params, "n").and_then(|v| v.as_u64().map(|n| n as u32).ok_or_else(|| anyhow!("bad checkpoint number")));
+        let name = |s: &str| self.session_label(s);
+        Ok(match method {
+            "checkpoint.status" => self.checkpoints.status(),
+            "checkpoint.set_enabled" => {
+                self.checkpoints.set_enabled(params.get("enabled").and_then(Value::as_bool), params.get("repo").and_then(Value::as_str));
+                self.checkpoints.status()
+            }
+            "checkpoint.list" => {
+                let sid = sid()?;
+                self.checkpoints.list(&sid, self.checkpoint_why(&sid))
+            }
+            "checkpoint.owners" => self.checkpoints.owners(&sid()?, &name),
+            "checkpoint.diff" => self.checkpoints.diff(&sid()?, n()?)?,
+            "checkpoint.blob" => {
+                let path = param(params, "path")?.as_str().unwrap_or_default();
+                let flag = |k: &str| params.get(k).and_then(Value::as_bool).unwrap_or(false);
+                self.checkpoints.blob(&sid()?, n()?, path, flag("base64"), flag("before"))?
+            }
+            "checkpoint.undo_plan" => {
+                let sid = sid()?;
+                self.checkpoints.undo_plan(&sid, n()?, &self.undo_ctx(&sid), &name)?
+            }
+            "checkpoint.undo" => {
+                let sid = sid()?;
+                let list = |k: &str| params.get(k).and_then(Value::as_array).map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect::<Vec<_>>());
+                let (paths, confirm) = (list("paths"), list("confirm").unwrap_or_default());
+                let req = checkpoints::UndoRequest { n: n()?, paths: paths.as_deref(), confirm: &confirm, at: now_millis() };
+                self.checkpoints.undo(&sid, &req, &self.undo_ctx(&sid), &name)?
+            }
+            "checkpoint.drop" => {
+                let worktree = param(params, "worktree")?.as_str().unwrap_or_default();
+                json!({"dropped": self.checkpoints.drop_worktree(worktree, params.get("root").and_then(Value::as_str))})
+            }
+            other => bail!("unknown method {other}"),
+        })
+    }
+
     pub fn list(&self) -> Vec<SessionInfo> {
         self.sessions.read().values().map(Entry::info).collect()
     }
@@ -790,6 +960,7 @@ impl Daemon {
         let mut last_schedule = Instant::now();
         let mut last_alive: HashMap<u32, bool> = HashMap::new();
         let mut last_status: HashMap<u32, Status> = HashMap::new();
+        let mut last_boundary: HashMap<u32, Instant> = HashMap::new();
         let mut last_run_tick = Instant::now();
         loop {
             interval.tick().await;
@@ -845,6 +1016,29 @@ impl Daemon {
                     }
                     // A turn ended (also for agents without hooks): the app reads the usage.
                     let prev = if info.alive { last_status.insert(info.handle, info.status) } else { last_status.remove(&info.handle) };
+                    if info.status == Status::Working && prev != Some(Status::Working) {
+                        self.checkpoints.work_started(&info.spec.id, now_millis());
+                        let (hooks, input) = match &entry {
+                            Entry::Term(s) => (s.hooks_seen(), s.last_input()),
+                            Entry::Chat(_) => (false, None),
+                        };
+                        let typed = input.is_some_and(|i| last_boundary.get(&info.handle).is_none_or(|b| i > *b));
+                        let (me, info) = (self.clone(), info.clone());
+                        tokio::task::spawn_blocking(move || me.checkpoint_turn_start(&info, hooks, typed));
+                    }
+                    if matches!(prev, Some(Status::Working | Status::Waiting)) && matches!(info.status, Status::Idle | Status::Exited) {
+                        let (hooks, input) = match &entry {
+                            Entry::Term(s) => (s.hooks_seen(), s.last_input()),
+                            Entry::Chat(_) => (false, None),
+                        };
+                        let boundary = last_boundary.insert(info.handle, now);
+                        let typed = input.is_some_and(|i| boundary.is_none_or(|b| i > b));
+                        // Taken here, not in the blocking task: the next turn may start before it runs.
+                        let started = self.checkpoints.take_work_start(&info.spec.id, now_millis());
+                        // Looking for the repository touches the disk: not on the ticker.
+                        let (me, info) = (self.clone(), info.clone());
+                        tokio::task::spawn_blocking(move || me.checkpoint_turn_end(&info, hooks, typed, started));
+                    }
                     if prev == Some(Status::Working) && matches!(info.status, Status::Idle | Status::Waiting) && !info.chat {
                         self.broadcast("session.turn", turn_event(&info.spec.id, "turn_end", &Value::Null, info.spec.agent_session_id.as_deref()));
                     }
@@ -1005,6 +1199,20 @@ impl Daemon {
                 json!(true)
             }
             m if m.starts_with("run.") => self.run_rpc(m, &params)?,
+            // Undo, its preview and drop wait for the repository's snapshots and run git: they
+            // answer from their own thread so this client's other requests are not held up.
+            m @ ("checkpoint.undo_plan" | "checkpoint.undo" | "checkpoint.drop") => {
+                let (me, tx, id, method) = (self.clone(), tx.clone(), id.clone(), m.to_string());
+                std::thread::Builder::new().name("kelpie-checkpoint-rpc".into()).spawn(move || {
+                    let reply = match me.checkpoint_rpc(&method, &params) {
+                        Ok(v) => json!({"id": id, "result": v}),
+                        Err(e) => json!({"id": id, "error": {"message": format!("{e:#}")}}),
+                    };
+                    let _ = tx.send(json_out(&reply));
+                })?;
+                return Ok(None);
+            }
+            m if m.starts_with("checkpoint.") => self.checkpoint_rpc(m, &params)?,
             "automation.run" => serde_json::to_value(self.run_automation(param(&params, "id")?.as_str().unwrap_or_default())?)?,
             "daemon.shutdown" => {
                 // A hand-over to a newer daemon: only when nothing runs any more (checked here,

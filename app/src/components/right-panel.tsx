@@ -1,4 +1,4 @@
-import { Match, Switch, createEffect, onCleanup } from "solid-js";
+import { Match, Show, Switch, createEffect, lazy, onCleanup } from "solid-js";
 import { store } from "../lib/store";
 import { unwatchRoot, watchRoot } from "../lib/ipc";
 import { gitState } from "../lib/git-state";
@@ -6,8 +6,11 @@ import { Explorer } from "./explorer";
 import { GitPanel } from "./git-panel";
 import { HistoryPanel } from "./history-panel";
 import { IssuesPanel } from "./issues-panel";
+import { CHECKPOINT_API } from "../lib/checkpoint-api";
 import type { Project } from "../lib/types";
 import { t } from "../lib/i18n";
+
+const TurnTimeline = lazy(() => import("./turn-timeline"));
 
 export function RightPanel(props: { project: Project }) {
   const panel = () => store.workspace(props.project.id).rightPanel;
@@ -36,7 +39,7 @@ export function RightPanel(props: { project: Project }) {
     el.addEventListener("pointerup", up);
   };
 
-  const tab = (id: "files" | "git" | "history" | "issues", label: string) => (
+  const tab = (id: "files" | "git" | "history" | "issues" | "turns", label: string) => (
     <button class={`ptab${panel() === id || (id === "files" && panel() === "search") ? " active" : ""}`} onClick={() => store.showRightPanel(id)}>
       {label}
       {id === "git" && gitState.status()?.files.length ? ` ${gitState.status()!.files.length}` : ""}
@@ -51,6 +54,7 @@ export function RightPanel(props: { project: Project }) {
         {tab("git", t("Changes"))}
         {tab("history", t("Sessions"))}
         {tab("issues", t("Issues"))}
+        <Show when={store.daemonApi() >= CHECKPOINT_API}>{tab("turns", t("Turns"))}</Show>
       </div>
       <div class="panel-body">
         <Switch>
@@ -58,6 +62,7 @@ export function RightPanel(props: { project: Project }) {
           <Match when={panel() === "git"}><GitPanel project={props.project} /></Match>
           <Match when={panel() === "history"}><HistoryPanel project={props.project} /></Match>
           <Match when={panel() === "issues"}><IssuesPanel project={props.project} /></Match>
+          <Match when={panel() === "turns" && store.daemonApi() >= CHECKPOINT_API}><TurnTimeline project={props.project} /></Match>
         </Switch>
       </div>
     </aside>

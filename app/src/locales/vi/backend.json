@@ -41,5 +41,11 @@
   "already exists": "đã tồn tại",
   "checksum mismatch": "sai mã kiểm tra (checksum)",
   "the speech helper did not answer": "trình nhận dạng giọng nói không phản hồi",
-  "git clone timed out": "git clone quá thời gian"
+  "git clone timed out": "git clone quá thời gian",
+  "this session is still working: undo a turn once it is idle": "phiên này vẫn đang làm việc: hãy hoàn tác khi nó đã rảnh",
+  "no checkpoints for this session": "phiên này chưa có ảnh chụp theo lượt",
+  "the repository of these checkpoints is not available": "không mở được repository chứa các ảnh chụp này",
+  "a baseline is where the history starts: there is nothing to undo": "đây là điểm bắt đầu của lịch sử: không có gì để hoàn tác",
+  "is gone (only the last": "đã mất (chỉ giữ",
+  "turns are kept)": "lượt gần nhất)"
 }

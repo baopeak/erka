@@ -3,6 +3,7 @@ import { EditorView, GutterMarker, gutter, keymap } from "@codemirror/view";
 import { EditorState, StateEffect, StateField } from "@codemirror/state";
 import { MergeView, goToNextChunk, goToPreviousChunk, unifiedMergeView } from "@codemirror/merge";
 import { gitFileVersions, onEvent } from "../lib/ipc";
+import { turnBlob } from "../lib/checkpoints";
 import { baseExtensions, languageFor } from "../lib/codemirror";
 import { store } from "../lib/store";
 import { chooseAgentAndSend } from "../lib/send-to-agent";
@@ -70,8 +71,19 @@ export function notesPrompt(notes: ReviewNote[]): string {
   return `Please address these review notes on the current changes. Each names a file and a line of the diff.\n\n${parts.join("\n\n")}`;
 }
 
-/** HEAD ↔ working tree (or index when `staged`) diff, side by side or unified, with notes. */
-export function DiffView(props: { project: Project; path: string; staged: boolean }) {
+/** One file before and after an agent turn: the snapshot ends of the turn and of the one before. */
+async function turnVersions(rev: { session: string; n: number; prefix?: string }, path: string): Promise<{ original: string | null; modified: string | null }> {
+  const side = async (before: boolean) => {
+    const b = await turnBlob(rev.session, rev.n, (rev.prefix ?? "") + path, false, before);
+    return b.exists ? (b.binary ? t("(binary file)") : b.too_large ? t("(too large to show)") : b.text ?? "") : null;
+  };
+  const [original, modified] = await Promise.all([side(true), side(false)]);
+  return { original, modified };
+}
+
+/** HEAD ↔ working tree (or index when `staged`) diff, side by side or unified, with notes. With
+ *  `rev`: the same file before and after that agent turn (read only, never changes). */
+export function DiffView(props: { project: Project; path: string; staged: boolean; rev?: { session: string; n: number; prefix?: string } }) {
   let host!: HTMLDivElement;
   let box!: HTMLDivElement;
   const [unified, setUnified] = createSignal(host?.clientWidth < 900);
@@ -105,7 +117,7 @@ export function DiffView(props: { project: Project; path: string; staged: boolea
 
   async function render() {
     try {
-      const v = await gitFileVersions(props.project.path, props.path, props.staged);
+      const v = props.rev ? await turnVersions(props.rev, props.path) : await gitFileVersions(props.project.path, props.path, props.staged);
       const lang = await languageFor(props.path);
       const exts = (side: "new" | "old") => [...baseExtensions({ readOnly: true }), ...(lang ? [lang] : []), EditorView.editable.of(false), EditorState.readOnly.of(true), changeKeys, noteGutter(openDraft(side))];
       destroy?.();
@@ -142,7 +154,8 @@ export function DiffView(props: { project: Project; path: string; staged: boolea
   onMount(() => {
     if (host.clientWidth && host.clientWidth < 900) setUnified(true);
     void render();
-    const un = onEvent<{ root: string; git: boolean }>("fs-changed", (e) => e.root === props.project.path && e.git && void render());
+    // A turn's snapshots never change: only the working-tree diff follows the folder.
+    const un = onEvent<{ root: string; git: boolean }>("fs-changed", (e) => !props.rev && e.root === props.project.path && e.git && void render());
     onCleanup(() => {
       void un.then((f) => f());
       destroy?.();
@@ -158,7 +171,7 @@ export function DiffView(props: { project: Project; path: string; staged: boolea
     <div class="viewer" ref={box}>
       <div class="viewer-bar">
         <span class="path">&lrm;{props.path}</span>
-        <span style={{ color: "var(--text-faint)" }}>{props.staged ? t("HEAD ↔ index") : t("HEAD ↔ working tree")}{info() ? ` · ${info() === "new" ? t("new file") : t("deleted")}` : ""}</span>
+        <span style={{ color: "var(--text-faint)" }}>{props.rev ? t("Before ↔ after turn #{n}", { n: props.rev.n }) : props.staged ? t("HEAD ↔ index") : t("HEAD ↔ working tree")}{info() ? ` · ${info() === "new" ? t("new file") : t("deleted")}` : ""}</span>
         <div class="toggles">
           <button class="icon-btn" title={t("Previous change (Shift+F7)")} onClick={() => jump(false)}><Icon name="up" size={14} /></button>
           <button class="icon-btn" title={t("Next change (F7)")} onClick={() => jump(true)}><Icon name="down" size={14} /></button>

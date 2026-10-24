@@ -19,6 +19,7 @@ mod automations;
 mod awake;
 mod bench;
 mod chat;
+mod checkpoints;
 mod choices;
 mod cli;
 mod client;
@@ -226,6 +227,7 @@ fn serve() -> Result<()> {
     runtimes::prune(&exe, &data_dir.join("daemon"));
     let daemon = daemon::Daemon::new(data_dir, exe);
     daemon.restore();
+    daemon.collect_checkpoints();
     tracing::info!(pid = std::process::id(), "kelpied {} starting", env!("CARGO_PKG_VERSION"));
     let rt = runtime()?;
     let result = rt.block_on(async {

@@ -129,6 +129,9 @@ export function AgentSettings() {
       <SettingRow id="prioritize-visible">
         <Toggle on={s().prioritizeVisible ?? true} onChange={(on) => store.setSettings({ prioritizeVisible: on })} />
       </SettingRow>
+      <SettingRow id="turn-checkpoints">
+        <Toggle on={s().checkpoints ?? false} onChange={(on) => store.setSettings({ checkpoints: on })} />
+      </SettingRow>
       <SettingRow id="agents-scripting">
         <Toggle on={s().agentsScripting ?? true} onChange={(on) => store.setSettings({ agentsScripting: on })} />
       </SettingRow>

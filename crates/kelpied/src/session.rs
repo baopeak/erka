@@ -591,6 +591,21 @@ impl Session {
         self.inner.lock().pty.is_some()
     }
 
+    /// Whether the agent has ever reported through a hook (else its turns are guessed from output).
+    pub fn hooks_seen(&self) -> bool {
+        self.inner.lock().activity.hook.is_some()
+    }
+
+    /// When something was last typed into the session.
+    pub fn last_input(&self) -> Option<Instant> {
+        self.inner.lock().activity.last_input
+    }
+
+    /// Whether the session printed within `within`, whatever a hook last said about it.
+    pub fn output_within(&self, within: Duration, now: Instant) -> bool {
+        self.inner.lock().activity.last_output.is_some_and(|o| now.duration_since(o) < within)
+    }
+
     pub fn set_hook_status(&self, status: Status, failed: bool) {
         self.inner.lock().activity.on_hook(status, failed, Instant::now());
     }

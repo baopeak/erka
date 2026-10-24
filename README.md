@@ -135,6 +135,7 @@ Agents live in a background session daemon, so switching projects, closing the w
 
 - Claude and Codex plan usage (5 h and weekly windows) and Kelpie's own memory use in the status bar.
 - **Context ring, tokens and cost** per session (Claude Code, Codex, OMP, chat view): amber from 70 % of the context window, red from 85 % with a one-time Compact / Hand off hint, numbers read from the agent's own transcript only when the session maps to it exactly. A **Usage & cost** page (by day, week, project, agent, model) and an optional per-session cost cap.
+- **Turns and undo** (opt-in, Settings -> Agents): a snapshot of an agent's git folder at the end of each turn, kept under `refs/kelpie` and never touching your index or branch. A **Turns** panel with per-turn diffs, who touched which files, the files a turn produced (markdown, images, Mermaid, CSV rendered; comments become review notes) and a previewed **undo** that refuses to silently revert files another session also worked on.
 - **Quick commands**: saved shell commands or agent prompts, run from search, the new-session menu or the terminal context menu.
 - A searchable settings page: per-agent arguments, permission mode / approval policy and environment, terminal font, renderer and colour theme, dark and light themes, compact density, interface text size, notifications, hibernation, keep-awake.
 - Every shortcut can be re-recorded; Kelpie warns about keys other commands, AltGr layouts or terminal programs use.

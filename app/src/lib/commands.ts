@@ -20,6 +20,7 @@ import type { SessionKind } from "./types";
 import { msg, t } from "./i18n";
 import { confirmDialog } from "./confirm-dialog";
 import { focusedSession } from "./quick-commands";
+import { CHECKPOINT_API } from "./checkpoint-api";
 import { conversationCommands, restartKeepingConversation, runConversationCommand } from "./agent-actions";
 
 export interface Command {
@@ -90,6 +91,7 @@ export const commands: Command[] = [
   { id: "new.shell", label: msg("New Terminal"), win: "mod+shift+t", mac: "mod+t", run: () => newSession("shell"), when: hasProject },
   { id: "panel.history", label: msg("Agent Session History"), run: () => store.showRightPanel("history"), when: hasProject },
   { id: "panel.issues", label: msg("Issues (Linear, Jira, GitLab)"), run: () => store.showRightPanel("issues"), when: hasProject },
+  { id: "panel.turns", label: msg("Agent Turns and Undo"), run: () => store.showRightPanel("turns"), when: () => hasProject() && store.daemonApi() >= CHECKPOINT_API },
   { id: "browser.open", label: msg("Open Browser"), win: "mod+shift+u", mac: "mod+shift+u", run: () => openBrowser(), when: hasProject },
   { id: "browser.split", label: msg("Open Browser to the Right"), run: () => openBrowser("", "right"), when: hasProject },
   { id: "new.menu", label: msg("New Session…"), win: "mod+shift+n", mac: "mod+shift+n", run: () => store.setOverlay("newsession"), when: hasProject },

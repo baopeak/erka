@@ -23,7 +23,7 @@ export function paneTitle(pane: Pane): string {
     const s = store.sessions[pane.sessionId];
     return s ? sessionLabel(s) : t("Session");
   }
-  if (pane.path) return (pane.kind === "diff" ? "Δ " : "") + basename(pane.path);
+  if (pane.path) return (pane.kind === "diff" ? "Δ " : "") + basename(pane.path) + (pane.rev ? ` #${pane.rev.n}` : "");
   if (pane.kind === "browser") {
     const title = browserState[pane.id]?.title;
     if (title) return title;
