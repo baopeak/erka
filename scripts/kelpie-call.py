@@ -16,6 +16,8 @@ import sys
 import time
 
 KIND_JSON = 1
+# Calls that stop sessions or the daemon (see Conn.call).
+DESTRUCTIVE = {"daemon.shutdown", "session.kill", "session.close", "session.restart"}
 
 
 def endpoint_key():
@@ -77,6 +79,12 @@ class Conn:
         return kind, body
 
     def call(self, method, params=None):
+        # Test and dev scripts run next to the user's real Kelpie: a call that stops sessions
+        # must name its own endpoint (KELPIE_ENDPOINT), or opt in explicitly. A cleanup step
+        # that forgot the endpoint once shut the real daemon down with every session in it.
+        if method in DESTRUCTIVE and not os.environ.get("KELPIE_ENDPOINT") and os.environ.get("KELPIE_ALLOW_REAL_DAEMON") != "1":
+            raise SystemExit("refusing %s on the default daemon (the real Kelpie): set KELPIE_ENDPOINT to a test daemon, "
+                             "or KELPIE_ALLOW_REAL_DAEMON=1 if you really mean it" % method)
         rid = self.next_id
         self.next_id += 1
         body = json.dumps({"id": rid, "method": method, "params": params or {}}).encode()
