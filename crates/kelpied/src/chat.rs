@@ -73,6 +73,8 @@ struct Inner {
     interrupted: bool,
     /// When the log last carried a `kelpie_time` line (unix ms).
     last_stamp: u64,
+    /// The conversation's title, as the agent names it (ACP `session_info_update`).
+    title: Option<String>,
     /// Wall-clock ms the current wait on the user began.
     waiting_since: Option<u64>,
 }
@@ -109,6 +111,7 @@ impl ChatSession {
                 working_since: None,
                 last_activity: 0,
                 broadcast_activity: 0,
+                title: None,
                 waiting_since: None,
                 interrupted: false,
                 last_stamp: 0,
@@ -210,8 +213,12 @@ impl ChatSession {
         let now = Instant::now();
         let derived = classify(&line);
         let failed_turn = derived == Some(Status::Idle) && turn_failed(&line);
+        let title = conversation_title(&line);
         line.push('\n');
         let mut g = self.inner.lock();
+        if title.is_some() {
+            g.title = title;
+        }
         // The agents' lines carry no time: a `kelpie_time` line ahead of the first one of each
         // second lets a replayed transcript show when every message came.
         let wall = crate::session::now_millis();
@@ -334,7 +341,7 @@ impl ChatSession {
         SessionInfo {
             handle: self.handle,
             spec: self.spec.lock().clone(),
-            title: None,
+            title: g.title.clone(),
             status,
             unread: g.unread,
             alive: g.alive,
@@ -409,6 +416,20 @@ fn kill_pid(pid: u32) {
     let _ = std::process::Command::new("taskkill").args(["/PID", &pid.to_string(), "/T", "/F"]).output();
 }
 
+/// The title an ACP agent gives the conversation (`session_info_update`), shown as the session's.
+fn conversation_title(line: &str) -> Option<String> {
+    if !line.contains("session_info_update") {
+        return None;
+    }
+    let v: Value = serde_json::from_str(line).ok()?;
+    let u = v.pointer("/params/update")?;
+    if u.get("sessionUpdate").and_then(Value::as_str) != Some("session_info_update") {
+        return None;
+    }
+    let title = u.get("title").and_then(Value::as_str)?.trim();
+    (!title.is_empty()).then(|| title.chars().take(120).collect())
+}
+
 /// Cheap, dialect-aware status hint from one stdout line.
 fn classify(line: &str) -> Option<Status> {
     // Avoid a full parse for the bulk of streaming deltas.
@@ -430,16 +451,29 @@ fn classify(line: &str) -> Option<Status> {
     }
     // Codex app-server / ACP (JSON-RPC)
     let method = v.get("method").and_then(Value::as_str).unwrap_or("");
-    if method.contains("requestApproval") || method == "session/request_permission" || method.ends_with("requestUserInput") {
+    if method.contains("requestApproval") || method == "session/request_permission" || method.ends_with("requestUserInput") || method.contains("elicitation") {
         return Some(Status::Waiting);
     }
+    // ACP: only the turn's own content means work; usage, title, plan, mode and command-list
+    // updates also arrive between turns (often right after the stop reason) and change nothing.
+    if method == "session/update" {
+        return match v.pointer("/params/update/sessionUpdate").and_then(Value::as_str) {
+            Some("agent_message_chunk" | "agent_thought_chunk" | "tool_call" | "tool_call_update") => Some(Status::Working),
+            _ => None,
+        };
+    }
     match method {
-        "turn/started" | "session/update" => return Some(Status::Working),
+        "turn/started" => return Some(Status::Working),
         "turn/completed" => return Some(Status::Idle),
         m if m.starts_with("item/") => return Some(Status::Working),
         _ => {}
     }
     if v.pointer("/result/stopReason").is_some() {
+        return Some(Status::Idle);
+    }
+    // ACP: the answer to Kelpie's `session/new` / `session/load` ends a replayed history (its
+    // chunks counted as work) and no turn is running then.
+    if v.get("result").is_some() && v.get("id").and_then(Value::as_str).is_some_and(|id| id.starts_with("kelpie-session")) {
         return Some(Status::Idle);
     }
     None
@@ -466,6 +500,32 @@ mod tests {
         assert_eq!(classify(r#"{"method":"item/commandExecution/requestApproval","id":3}"#), Some(Status::Waiting));
         assert_eq!(classify(r#"{"id":4,"result":{"stopReason":"end_turn"}}"#), Some(Status::Idle));
         assert_eq!(classify("not json"), None);
+    }
+
+    #[test]
+    fn acp_updates_mean_work_only_for_the_turns_content() {
+        let update = |kind: &str| classify(&format!(r#"{{"jsonrpc":"2.0","method":"session/update","params":{{"sessionId":"s","update":{{"sessionUpdate":"{kind}"}}}}}}"#));
+        for kind in ["agent_message_chunk", "agent_thought_chunk", "tool_call", "tool_call_update"] {
+            assert_eq!(update(kind), Some(Status::Working), "{kind}");
+        }
+        // These arrive between turns too (a usage update right after the stop reason): no change.
+        for kind in ["usage_update", "session_info_update", "plan", "available_commands_update", "current_mode_update", "config_option_update", "user_message_chunk", "something_new"] {
+            assert_eq!(update(kind), None, "{kind}");
+        }
+        assert_eq!(classify(r#"{"jsonrpc":"2.0","id":7,"method":"session/request_permission","params":{}}"#), Some(Status::Waiting));
+        assert_eq!(classify(r#"{"jsonrpc":"2.0","id":8,"method":"elicitation/create","params":{}}"#), Some(Status::Waiting));
+        // A resumed conversation: its replay ends with the answer to session/load.
+        assert_eq!(classify(r#"{"jsonrpc":"2.0","id":"kelpie-session","result":{"sessionId":"s"}}"#), Some(Status::Idle));
+        assert_eq!(classify(r#"{"jsonrpc":"2.0","id":"kelpie-session-new","result":{}}"#), Some(Status::Idle));
+        assert_eq!(classify(r#"{"jsonrpc":"2.0","id":"kelpie-config-3","result":{}}"#), None);
+    }
+
+    #[test]
+    fn acp_titles_name_the_session() {
+        let line = r#"{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s","update":{"sessionUpdate":"session_info_update","title":" Fix the login bug "}}}"#;
+        assert_eq!(conversation_title(line).as_deref(), Some("Fix the login bug"));
+        assert_eq!(conversation_title(r#"{"method":"session/update","params":{"update":{"sessionUpdate":"session_info_update","title":""}}}"#), None);
+        assert_eq!(conversation_title(r#"{"method":"session/update","params":{"update":{"sessionUpdate":"agent_message_chunk","content":{"text":"session_info_update"}}}}"#), None);
     }
 
     #[test]

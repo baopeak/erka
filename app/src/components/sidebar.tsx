@@ -130,7 +130,8 @@ function sessionMenu(s: SessionInfo): MenuItem[] {
     s.unread ? { label: t("Mark as read"), run: () => void store.markUnread(s.id, false) } : { label: t("Mark as unread"), run: () => void store.markUnread(s.id, true) },
   ];
   if (!s.alive && !s.chat) items.push({ label: store.resumable(s) ? t("Resume") : t("Restart"), run: () => void daemon("session.restart", { handle: s.handle }).catch((e) => store.notify(String(e))) });
-  if (s.alive && supportsChat(s.kind)) {
+  // Chat view runs the agent on this computer: never for a session on a remote host.
+  if (s.alive && supportsChat(s.kind) && !s.remote) {
     items.push(s.chat ? { label: t("Continue in terminal (TUI)"), run: () => void inPane(s, switchToTerminal) } : { label: t("Continue in chat view"), run: () => void inPane(s, switchToChat) });
   }
   const conv = conversationCommands(s);

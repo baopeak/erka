@@ -334,7 +334,6 @@
   "Edits and runs commands in this folder; asks for anything else": "Sửa và chạy lệnh trong thư mục này; hỏi với mọi việc khác",
   "Full access": "Toàn quyền",
   "No sandbox and no approvals": "Không sandbox, không cần duyệt",
-  "New conversation": "Hội thoại mới",
   "Pick the model below the message field.": "Chọn model ở ngay dưới ô nhập tin nhắn.",
   "Stop the current turn first.": "Hãy dừng lượt đang chạy trước.",
   "Unknown model {model}. Pick one below the message field.": "Không có model {model}. Hãy chọn ở ngay dưới ô nhập tin nhắn.",

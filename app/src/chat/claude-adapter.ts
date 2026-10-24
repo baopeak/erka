@@ -11,6 +11,8 @@
 //   levels and the permission mode; `set_model`, `set_permission_mode` and
 //   `apply_flag_settings{effortLevel}` change them; `system/init` (each turn) and `system/status`
 //   report the live model and mode, and `system/init` lists `terminal_slash_commands`;
+// - `/clear` answers with `conversation_reset{trigger:"clear"}`, then `system/init` with the new
+//   session id and a `result` of no turns;
 // - slash commands are sent as plain user text and run by the CLI (`/context` answers with a
 //   synthetic assistant message).
 import { type Adapter, type AdapterContext, type AskQuestion, type ChatCommand, type ChatItem, putSetting, setSettingValue, slashCommand, summarize, textOf } from "./chat-model";
@@ -139,6 +141,8 @@ export function createClaudeAdapter(ctx: AdapterContext): Adapter {
   let mode: string | null = null;
   let effort: string | null = null;
   let tuiOnly = new Set<string>();
+  /** The conversation was just cleared: its empty `result` is no turn to show. */
+  let cleared = false;
 
   const control = (request: Record<string, unknown>, id = `kelpie-req-${++requestSeq}`) =>
     ctx.write({ type: "control_request", request_id: id, request });
@@ -168,6 +172,7 @@ export function createClaudeAdapter(ctx: AdapterContext): Adapter {
       live.msgId = null;
       blocks = new Map();
       partialJson = new Map();
+      cleared = false;
     },
     start() {
       ctx.set("status", null);
@@ -194,6 +199,15 @@ export function createClaudeAdapter(ctx: AdapterContext): Adapter {
           } else if (m.subtype === "api_retry") {
             ctx.upsert({ kind: "system", id: `retry-${ctx.state.items.length}`, text: t("API retry…"), tone: "info" });
           }
+          return;
+        case "conversation_reset":
+          // A new conversation starts empty, as in the TUI (the old one stays resumable).
+          if (m.trigger !== "clear") return;
+          ctx.clear();
+          live.msgId = null;
+          blocks = new Map();
+          partialJson = new Map();
+          cleared = true;
           return;
         case "stream_event": {
           const e = m.event ?? {};
@@ -279,6 +293,11 @@ export function createClaudeAdapter(ctx: AdapterContext): Adapter {
           return;
         }
         case "result": {
+          if (cleared) {
+            cleared = false;
+            ctx.set({ busy: false, status: null });
+            return;
+          }
           // The main model's window: the one this session runs, else the one that cost the most.
           const usage = Object.entries((m.modelUsage ?? {}) as Record<string, any>);
           const main = usage.find(([name]) => name === model) ?? usage.sort((a, b) => (b[1].costUSD ?? 0) - (a[1].costUSD ?? 0))[0];

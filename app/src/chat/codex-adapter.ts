@@ -2,10 +2,10 @@
 // Shapes follow `codex app-server generate-json-schema` (v2 protocol, codex-cli 0.163).
 //
 // The app-server has no slash commands: the TUI's ones map to requests here (`/compact` →
-// `thread/compact/start`, `/review` → `review/start`, `/new` → `thread/start`, `!cmd` →
+// `thread/compact/start`, `/review` → `review/start`, `/new` (or `/clear`, `/reset`) → `thread/start`, `!cmd` →
 // `thread/shellCommand`); model, effort and approval mode ride on the next `turn/start`, which
 // Codex keeps for later turns; `$skill` mentions add a `skill` input item.
-import { type Adapter, type AdapterContext, type ChatCommand, type ToolCategory, putSetting, setSettingValue, slashCommand, textOf } from "./chat-model";
+import { type Adapter, type AdapterContext, type ChatCommand, type ToolCategory, NEW_CONVERSATION_COMMANDS, putSetting, setSettingValue, slashCommand, textOf } from "./chat-model";
 import { basename, planStatus } from "./tool-view";
 import { t } from "../lib/i18n";
 
@@ -71,6 +71,8 @@ export function createCodexAdapter(ctx: AdapterContext): Adapter {
   let initialized = false;
   let threadReady = false;
   let threadId: string | null = null;
+  /** The thread whose items are on screen (kept while `/new` waits for the next one). */
+  let shown: string | null = null;
   let turnId: string | null = null;
   let seq = 0;
   const approvals = new Map<string, { id: unknown; method: string }>();
@@ -81,6 +83,9 @@ export function createCodexAdapter(ctx: AdapterContext): Adapter {
   /** Prompts typed before the thread was ready; sent once it is. */
   const queued: { text: string; typed: boolean }[] = [];
   let models: CodexModel[] = [];
+  /** Models a thread ran with that the catalog does not list (one set in config.toml): they
+   *  stay in the picker, or a switch away could not be undone. */
+  const unlisted = new Set<string>();
   let model: string | null = null;
   let effort: string | null = null;
   let mode: string | null = null;
@@ -136,8 +141,12 @@ export function createCodexAdapter(ctx: AdapterContext): Adapter {
 
   function refreshSettings() {
     const visible = models.filter((m) => !m.hidden || m.id === model || m.model === model);
-    if (visible.length) {
-      putSetting(ctx, { id: "model", label: t("Model"), value: model, options: visible.map((m) => ({ value: m.model ?? m.id, label: m.displayName ?? m.id, description: m.description })) });
+    const options = [
+      ...[...unlisted].filter((x) => !models.some((m) => (m.model ?? m.id) === x)).map((x) => ({ value: x, label: x })),
+      ...visible.map((m) => ({ value: m.model ?? m.id, label: m.displayName ?? m.id, description: m.description })),
+    ];
+    if (models.length) {
+      putSetting(ctx, { id: "model", label: t("Model"), value: model, options });
       const current = models.find((m) => (m.model ?? m.id) === model) ?? models.find((m) => m.isDefault);
       const levels = current?.supportedReasoningEfforts ?? [];
       if (levels.length) putSetting(ctx, { id: "effort", label: t("Effort"), value: effort ?? current?.defaultReasoningEffort ?? null, options: levels.map((l) => ({ value: l.reasoningEffort, label: l.reasoningEffort, description: l.description })) });
@@ -165,14 +174,14 @@ export function createCodexAdapter(ctx: AdapterContext): Adapter {
     const slash = slashCommand(text);
     if (!slash) return false;
     const [name, args] = slash;
-    if ((name === "compact" || name === "review" || name === "new" || name === "clear") && !threadReady) return false;
+    if ((name === "compact" || name === "review" || NEW_CONVERSATION_COMMANDS.has(name)) && !threadReady) return false;
     if (name === "compact") {
       ctx.set("busy", true);
       request(`kelpie-compact-${++seq}`, "thread/compact/start", { threadId });
     } else if (name === "review") {
       ctx.set("busy", true);
       request(`kelpie-review-${++seq}`, "review/start", { threadId, target: args ? { type: "custom", instructions: args } : { type: "uncommittedChanges" } });
-    } else if ((name === "new" || name === "clear") && !args) {
+    } else if (NEW_CONVERSATION_COMMANDS.has(name) && !args) {
       // The running turn belongs to the old thread: it would keep rendering here.
       if (turnId) {
         ctx.upsert({ kind: "system", id: `new-${++seq}`, text: t("Stop the current turn first."), tone: "info" });
@@ -182,12 +191,12 @@ export function createCodexAdapter(ctx: AdapterContext): Adapter {
       turnId = null;
       threadReady = false;
       ctx.set("conversationId", null);
-      ctx.upsert({ kind: "system", id: `new-${++seq}`, text: t("New conversation"), tone: "info" });
       openThread(null);
     } else if (name === "model") {
       // Only a model Codex offers: a typo would make every later turn fail.
       const known = models.find((m) => m.id === args || m.model === args);
       if (known) setModel(known.model ?? known.id);
+      else if (unlisted.has(args)) setModel(args);
       else ctx.upsert({ kind: "system", id: `model-${++seq}`, text: args ? t("Unknown model {model}. Pick one below the message field.", { model: args }) : t("Pick the model below the message field."), tone: "info" });
     } else if (TUI_ONLY.has(name)) {
       ctx.upsert({ kind: "system", id: `tui-${++seq}`, text: t("/{name} works only in the terminal UI.", { name }), tone: "info", tui: { command: text.trim() } });
@@ -282,6 +291,7 @@ export function createCodexAdapter(ctx: AdapterContext): Adapter {
       initialized = false;
       threadReady = false;
       threadId = null;
+      shown = null;
       turnId = null;
       turnDiff = null;
       approvals.clear();
@@ -338,8 +348,12 @@ export function createCodexAdapter(ctx: AdapterContext): Adapter {
           threadReady = true;
           const thread = m.result?.thread;
           threadId = thread?.id ?? null;
+          // Another thread than the one shown (`/new`, live or replayed) starts empty.
+          if (shown && threadId && threadId !== shown) ctx.clear();
+          if (threadId) shown = threadId;
           if (threadId) ctx.setConversation(threadId);
           ctx.setModel(m.result?.model ?? null);
+          if (m.result?.model) unlisted.add(m.result.model);
           model = (overrides.model as string | undefined) ?? m.result?.model ?? model;
           effort = (overrides.effort as string | undefined) ?? m.result?.reasoningEffort ?? effort;
           threadSandbox = m.result?.sandbox ?? threadSandbox;

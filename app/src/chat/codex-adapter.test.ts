@@ -19,6 +19,7 @@ function harness(replaying = false) {
       if (i >= 0) set("items", i, produce(fn as never));
     },
     find: (id) => state.items.find((x) => x.id === id),
+    clear: () => set({ items: [], plan: null, usage: null }),
     setConversation: (id) => set("conversationId", id),
     setModel: (m) => set("model", m),
     cwd: "/work", resumeId: null, replaying: () => replaying,
@@ -191,6 +192,44 @@ describe("createCodexAdapter", () => {
     a.setSetting!("mode", "auto");
     a.send("three");
     expect(h.written.at(-1).params.sandboxPolicy).toEqual({ type: "workspaceWrite", networkAccess: true, writableRoots: ["/extra"] });
+  });
+
+  it("keeps a model the catalog does not list (from config.toml) pickable after switching away", () => {
+    const h = harness();
+    const a = createCodexAdapter(h.ctx);
+    a.start();
+    a.onMessage({ id: "kelpie-init", result: {} }, "");
+    a.onMessage({ id: "kelpie-thread", result: { thread: { id: "thr-1", turns: [] }, model: "gpt-custom" } }, "");
+    a.onMessage({ id: "kelpie-models", result: { data: [{ id: "gpt-6", model: "gpt-6", isDefault: true }, { id: "gpt-mini", model: "gpt-mini" }] } }, "");
+    const picker = () => h.state.settings.find((s) => s.id === "model")!;
+    expect(picker().value).toBe("gpt-custom");
+    a.setSetting!("model", "gpt-mini");
+    expect(picker().value).toBe("gpt-mini");
+    expect(picker().options.map((o) => o.value)).toEqual(["gpt-custom", "gpt-6", "gpt-mini"]);
+    a.send("/model gpt-custom");
+    expect(picker().value).toBe("gpt-custom");
+    a.send("go");
+    expect(h.written.at(-1).params).toMatchObject({ model: "gpt-custom" });
+  });
+
+  it("/new, /clear and /reset open a new thread with an empty transcript, live and replayed", () => {
+    for (const cmd of ["/new", "/clear", "/reset"]) {
+      const h = harness();
+      const a = createCodexAdapter(h.ctx);
+      openThread(a);
+      a.onMessage({ method: "item/completed", params: { item: { type: "agentMessage", id: "i1", text: "old" } } }, "");
+      a.send(cmd);
+      expect(h.written.at(-1)).toMatchObject({ method: "thread/start" });
+      a.onMessage({ id: "kelpie-thread", result: { thread: { id: "thr-2", turns: [] } } }, "");
+      expect(h.items()).toEqual([]);
+      expect(h.state.conversationId).toBe("thr-2");
+    }
+    // The daemon log holds both thread answers: replaying it ends on the new thread alone.
+    const r = harness(true);
+    const b = createCodexAdapter(r.ctx);
+    b.onMessage({ id: "kelpie-thread", result: { thread: { id: "thr-1", turns: [{ items: [{ type: "agentMessage", id: "i1", text: "old" }] }] } } }, "");
+    b.onMessage({ id: "kelpie-thread", result: { thread: { id: "thr-2", turns: [] } } }, "");
+    expect(r.items()).toEqual([]);
   });
 
   it("keeps the words after /new and refuses an unknown /model", () => {

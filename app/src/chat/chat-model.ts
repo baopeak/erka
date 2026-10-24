@@ -127,6 +127,8 @@ export interface AdapterContext {
   upsert(item: ChatItem): void;
   patch<T extends ChatItem>(id: string, fn: (item: T) => void): void;
   find(id: string): ChatItem | undefined;
+  /** Empties the transcript: the agent moved to a new conversation (`/clear`, `/new`). */
+  clear(): void;
   setConversation(id: string): void;
   setModel(model: string | null): void;
   /** A replayed transcript line's own time (unix ms): items added after it carry it. */
@@ -190,6 +192,10 @@ export class ChatController {
       find: (id) => {
         const i = this.index.get(id);
         return i == null ? undefined : this.state.items[i];
+      },
+      clear: () => {
+        this.index.clear();
+        this.set({ items: [], plan: null, usage: null });
       },
       setConversation: (id) => {
         if (this.state.conversationId === id) return;
@@ -431,6 +437,10 @@ export function setSettingValue(ctx: AdapterContext, id: string, value: string |
   const i = ctx.state.settings.findIndex((s) => s.id === id);
   if (i >= 0) ctx.set("settings", i, "value", value);
 }
+
+/** Commands that start a new conversation, under the names the agents' TUIs use (Claude Code,
+ *  Copilot, Qwen, Kimi say `/reset`). Adapters whose agent has no such command run them itself. */
+export const NEW_CONVERSATION_COMMANDS = new Set(["new", "clear", "reset"]);
 
 /** `/name args` → ["name", "args"], else null. */
 export function slashCommand(text: string): [string, string] | null {

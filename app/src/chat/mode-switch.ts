@@ -9,7 +9,8 @@
 import { ChatController, type Adapter, type AdapterContext } from "./chat-model";
 import { applyClaudeMessage, claudeArgs, createClaudeAdapter } from "./claude-adapter";
 import { codexArgs, createCodexAdapter } from "./codex-adapter";
-import { createAcpAdapter, ompAcpArgs } from "./acp-adapter";
+import { createAcpAdapter } from "./acp-adapter";
+import { CORE_AGENTS, acpArgv } from "../lib/agents";
 import { type AgentSettings, claudeSettingsFrom, withSettings } from "./agent-settings";
 import { agentLatestSession, claudeTranscript, createSession, daemon, sendInput } from "../lib/ipc";
 import { store, type PaneTarget } from "../lib/store";
@@ -20,7 +21,9 @@ import { t } from "../lib/i18n";
 import type { Pane, Project, SessionInfo, SessionKind, Tab } from "../lib/types";
 import { confirmDialog } from "../lib/confirm-dialog";
 
-export const supportsChat = (kind: string) => kind === "claude" || kind === "codex" || kind === "omp";
+/** Claude Code and Codex have native chat protocols; every other agent with an ACP mode chats
+ *  through the generic ACP adapter. */
+export const supportsChat = (kind: string) => kind === "claude" || kind === "codex" || acpArgv(kind) !== null;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -67,7 +70,9 @@ function chatArgv(kind: SessionKind, resumeId: string | null, settings: AgentSet
   const profile = store.profileLaunch(kind, { yolo: false }).args;
   if (kind === "claude") return claudeArgs(resumeId, withSettings(kind, profile, settings));
   if (kind === "codex") return codexArgs(profile);
-  return ompAcpArgs();
+  const acp = acpArgv(kind);
+  if (!acp) throw new Error(`${kind} has no chat mode`);
+  return acp;
 }
 
 /** Claude's mode, model and effort as its transcript last recorded them, else its own flags. */
@@ -224,7 +229,10 @@ async function doSwitchToTerminal(project: Project, tab: Tab, pane: Pane, comman
     const picks = chatSettings(ctrl);
     const launch = store.profileLaunch(c.kind, picks.mode ? { yolo: false } : {});
     const args = withSettings(c.kind, launch.args, picks);
-    const info = await createSession({ kind: c.kind, cwd: c.cwd, project_id: c.project_id ?? project.id, name: c.name ?? undefined, agent_session_id: conv ?? undefined, args, env: ownEnv(c) ?? launch.env, cols: 120, rows: 32, prompt: command });
+    // Only agents whose terminal UI is known to resume an ACP / chat conversation by its id get
+    // it; for the others the id may mean nothing to the CLI, so their terminal starts fresh.
+    const resumes = CORE_AGENTS.includes(c.kind);
+    const info = await createSession({ kind: c.kind, cwd: c.cwd, project_id: c.project_id ?? project.id, name: c.name ?? undefined, agent_session_id: resumes ? conv ?? undefined : undefined, args, env: ownEnv(c) ?? launch.env, cols: 120, rows: 32, prompt: command });
     store.setSessions(info.id, info);
     store.replacePaneIn(project.id, tab.id, pane.id, { id: pane.id, kind: "terminal", sessionId: info.id });
     disposeController(c.id);

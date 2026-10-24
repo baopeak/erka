@@ -29,7 +29,11 @@ function Review(props: { plugin: PluginInfo; onDone: () => void }) {
   const c = () => props.plugin.manifest?.contributes ?? {};
   const [error, setError] = createSignal<string | null>(null);
   const runs = () => [
-    ...(c().agents ?? []).map((a) => ({ what: t("Agent “{name}”", { name: a.label }), code: [a.bin, ...(a.launch ?? [])].join(" ") })),
+    ...(c().agents ?? []).flatMap((a) => [
+      { what: t("Agent “{name}”", { name: a.label }), code: [a.bin, ...(a.launch ?? [])].join(" ") },
+      // Chat view starts it with other arguments: what runs there is approved too.
+      ...(a.acp?.length ? [{ what: t("Agent “{name}” in chat view", { name: a.label }), code: [a.bin, ...a.acp].join(" ") }] : []),
+    ]),
     ...(c().commands ?? []).map((x) => ({ what: x.in === "agent" ? t("Command “{name}” (types into the focused agent)", { name: x.label }) : t("Command “{name}” (types into a terminal)", { name: x.label }), code: x.run })),
     ...(c().quickCommands ?? []).map((x) => ({ what: t("Quick command “{name}”", { name: x.label }), code: x.text })),
     ...(c().statusItems ?? []).map((x) => ({ what: t("Status item “{name}” — runs by itself every {n} s", { name: x.label ?? x.id, n: Math.max(5, x.intervalSeconds ?? 30) }), code: x.command })),

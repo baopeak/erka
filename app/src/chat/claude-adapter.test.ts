@@ -19,6 +19,7 @@ function harness(replaying = false) {
       if (i >= 0) set("items", i, produce(fn as never));
     },
     find: (id) => state.items.find((x) => x.id === id),
+    clear: () => set({ items: [], plan: null, usage: null }),
     setConversation: (id) => set("conversationId", id),
     setModel: (m) => set("model", m),
     cwd: "/work", resumeId: null, replaying: () => replaying,
@@ -106,6 +107,36 @@ describe("applyClaudeMessage", () => {
     a.onMessage({ type: "user", uuid: "u1", message: { content: [{ type: "text", text: "hello there" }] } }, "");
     expect(h.items()).toHaveLength(1);
     expect(h.items()[0]).toMatchObject({ pending: false });
+  });
+});
+
+describe("/clear", () => {
+  it("empties the transcript for the new conversation and shows no result for it", () => {
+    const h = harness();
+    const a = createClaudeAdapter(h.ctx);
+    a.onMessage(INIT, "");
+    for (const m of STREAM) a.onMessage(m, "");
+    h.ctx.set("plan", { entries: [{ text: "x", status: "active" }] });
+    a.send("/clear");
+    // As recorded from Claude Code 2.1.309.
+    a.onMessage({ type: "conversation_reset", new_conversation_id: "sess-2", trigger: "clear" }, "");
+    a.onMessage({ ...INIT, session_id: "sess-2" }, "");
+    a.onMessage({ type: "result", is_error: false, num_turns: 0, duration_ms: 3, total_cost_usd: 0, modelUsage: {} }, "");
+    expect(h.items()).toEqual([]);
+    expect(h.state.plan).toBeNull();
+    expect(h.state.conversationId).toBe("sess-2");
+    expect(h.state.busy).toBe(false);
+    // The next turn shows its result again.
+    a.onMessage({ type: "result", num_turns: 1, duration_ms: 1000 }, "");
+    expect(h.items()).toHaveLength(1);
+  });
+
+  it("ignores other conversation resets", () => {
+    const h = harness();
+    const a = createClaudeAdapter(h.ctx);
+    a.send("hello");
+    a.onMessage({ type: "conversation_reset", trigger: "something-else" }, "");
+    expect(h.items()).toHaveLength(1);
   });
 });
 

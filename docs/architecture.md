@@ -211,11 +211,19 @@ dialect to one item model (user, assistant, thinking, tool card with diff, permi
 |---|---|---|
 | Claude Code | `claude -p --input-format stream-json --output-format stream-json --include-partial-messages --replay-user-messages --permission-prompt-tool stdio [--resume id]` | stream-json + `control_request`/`control_response`: `initialize` (commands, models + effort levels, permission mode), `set_model`, `set_permission_mode`, `apply_flag_settings{effortLevel}`, `interrupt`; slash commands are sent as text and run by the CLI |
 | Codex | `codex app-server` | JSON-RPC: `initialize`, `thread/start|resume|list`, `turn/start|interrupt` (model, effort, approval/sandbox ride on `turn/start`), `model/list`, `skills/list`, `thread/compact/start`, `review/start`, `thread/shellCommand` (`!cmd` typed in the composer — it runs outside the sandbox, as in the TUI; never for text Kelpie sends for the user), approvals; `$skill` adds a `skill` input item |
-| OMP | `omp acp` | ACP: `session/new|load|prompt|cancel`, `session/update` (incl. `available_commands_update`, `config_option_update`), `session/set_config_option`, `session/request_permission` |
+| ACP agents: OMP `omp acp`, Gemini `gemini --acp`, OpenCode `opencode acp`, Copilot `copilot --acp`, Goose `goose acp`, Qwen `qwen --acp`, Kimi `kimi acp`, Auggie `auggie --acp`, Cursor `cursor-agent acp`; plugin agents with an `acp` field | `ACP_ARGS` (`lib/agents.ts`) | ACP v1 (`protocolVersion: 1`; another answer stops with a message): `initialize` (no fs/terminal — the agent uses its own tools; `auth.terminal`, form `elicitation`), `session/new|load` (load only when `loadSession`; the ACP session id is the session's conversation id), `prompt`, `cancel`, `session/update` (chunks, tool calls, `plan`, `usage_update`, `available_commands_update`, `config_option_update`, `current_mode_update`), `set_config_option` (older `modes` / `models` blocks: `set_mode` / `set_model`), `request_permission` (the agent's option ids echoed), `elicitation/create` (form → a card with questions; url → declined), sign-in: `auth_required` → `agent` methods via `authenticate`, `terminal` methods named for the user to run, then retry. The daemon counts only message, thought and tool-call updates as work (usage, title, plan, mode and command updates arrive between turns), elicitation as waiting, and takes `session_info_update` titles as the session's title. |
 
 The composer (`components/chat-composer.tsx`) completes `/` from the adapter's command list,
 `$` from Codex skills and `@` from Kelpie's file index (`quick_open`), and shows the adapter's
-settings (model / effort / mode) as pickers. A command chat view cannot run (Claude's
+settings (model / effort / mode) as pickers. `/clear`, `/new` and `/reset` start a new
+conversation with an empty transcript in every agent. Claude Code runs them itself
+(`conversation_reset`); for Codex and ACP agents chat view runs them as `thread/start` /
+`session/new`, whatever the agent lists: in ACP mode most agents pass `/clear` to the model as a
+prompt (Gemini, OpenCode, OMP, Copilot) and the rest only empty the context of the same session
+(Goose, Qwen, Kimi), so an agent's own `clear` is not listed. Those lines and answers sit in the
+replay log, so a replay clears at the same point. The model picker keeps the model a Codex
+thread was started with even when Codex's catalog does not list it (one set in `config.toml`).
+A command chat view cannot run (Claude's
 `terminal_slash_commands`, a Codex command without an app-server request) offers *Run it in
 the terminal*: the hand-off below, with the command as the new session's prompt. A resumed
 launch passes it as an argument (`claude --resume <id> "/cmd"`, `codex resume <id> "/cmd"`), so

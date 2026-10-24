@@ -911,6 +911,7 @@ impl Daemon {
                         "bin": p.bin,
                         "yolo": p.yolo,
                         "resume_latest": !p.resume_latest.is_empty(),
+                        "acp": p.acp,
                         "installed": installed.contains(&p.id),
                     }))
                     .collect::<Vec<_>>())

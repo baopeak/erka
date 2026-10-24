@@ -52,10 +52,13 @@ pub struct Preset {
     /// Continue the most recent conversation in the folder (restart / hibernation resume).
     pub resume_latest: &'static [&'static str],
     pub prompt: PromptMode,
+    /// Arguments that start it as an Agent Client Protocol agent over stdio (chat view), for
+    /// plugin agents; the app knows the built-in ones (`app/src/lib/agents.ts`).
+    pub acp: &'static [&'static str],
 }
 
 const fn preset(id: &'static str, label: &'static str, bin: &'static str) -> Preset {
-    Preset { id, label, bin, launch: &[], yolo: &[], resume_latest: &[], prompt: PromptMode::Typed }
+    Preset { id, label, bin, launch: &[], yolo: &[], resume_latest: &[], prompt: PromptMode::Typed, acp: &[] }
 }
 
 pub const PRESETS: &[Preset] = &[
@@ -108,6 +111,9 @@ pub struct AgentDef {
     /// "argv" | "typed" | "flag:<flag>"
     #[serde(default)]
     pub prompt: String,
+    /// Arguments that start it as an ACP agent (chat view); empty: terminal only.
+    #[serde(default)]
+    pub acp: Vec<String>,
 }
 
 fn leak(s: &str) -> &'static str {
@@ -130,7 +136,7 @@ pub fn set_custom(defs: &[AgentDef]) -> Result<()> {
             p if p.starts_with("flag:") && p.len() > 5 => PromptMode::Flag(leak(&p[5..])),
             _ => PromptMode::Typed,
         };
-        out.push(&*Box::leak(Box::new(Preset { id: leak(&d.id), label: leak(&d.label), bin: leak(&d.bin), launch: leak_all(&d.launch), yolo: leak_all(&d.yolo), resume_latest: leak_all(&d.resume_latest), prompt })));
+        out.push(&*Box::leak(Box::new(Preset { id: leak(&d.id), label: leak(&d.label), bin: leak(&d.bin), launch: leak_all(&d.launch), yolo: leak_all(&d.yolo), resume_latest: leak_all(&d.resume_latest), prompt, acp: leak_all(&d.acp) })));
     }
     *CUSTOM.write() = out;
     Ok(())
@@ -825,7 +831,7 @@ mod custom_tests {
     fn plugin_agents_launch_and_resume_like_presets() {
         // A program that exists everywhere (Windows resolves the binary on PATH at launch).
         let bin = if cfg!(windows) { "cmd" } else { "sh" };
-        let def = AgentDef { id: "acme-bot".into(), label: "Acme Bot".into(), bin: bin.into(), launch: vec!["chat".into()], yolo: vec!["--yes".into()], resume_latest: vec!["--continue".into()], prompt: "flag:--ask".into() };
+        let def = AgentDef { id: "acme-bot".into(), label: "Acme Bot".into(), bin: bin.into(), launch: vec!["chat".into()], yolo: vec!["--yes".into()], resume_latest: vec!["--continue".into()], prompt: "flag:--ask".into(), acp: vec!["acp".into()] };
         set_custom(&[def.clone()]).unwrap();
         let p = preset_for("acme-bot").unwrap();
         assert_eq!((p.bin, p.launch, p.resume_latest), (bin, &["chat"][..], &["--continue"][..]));
