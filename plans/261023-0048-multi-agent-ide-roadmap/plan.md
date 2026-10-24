@@ -39,7 +39,7 @@ tests and a performance budget. Supersedes [261023-0036-vibe-coder-gaps](../2610
 | 2 | [Auto-update](phase-02-auto-update.md) | P1 | 3d | 1 | completed |
 | 3 | [Attention queue & quick answer](phase-03-attention-queue.md) | P1 | 3d | 1 | completed |
 | 4 | [Universal ACP chat](phase-04-universal-acp-chat.md) | P1 | 4d | 1 | completed |
-| 5 | [Context, tokens & cost](phase-05-context-cost.md) | P1 | 3d | 4 | pending |
+| 5 | [Context, tokens & cost](phase-05-context-cost.md) | P1 | 3d | 4 | completed |
 | 6 | [Turn checkpoints & artifacts](phase-06-turn-checkpoints.md) | P1 | 5d | 1, 5 | pending |
 | 7 | [Review queue, Finish, overlap, auto-worktree](phase-07-review-queue-finish.md) | P1 | 5d | 6 | pending |
 | 8 | [Cross-review & best-of-N](phase-08-cross-review-best-of-n.md) | P2 | 4d | 5, 7 | pending |
@@ -128,6 +128,7 @@ feature on an older daemon; never assume app and daemon are the same release.
 ## Follow-ups carried from completed phases
 - Phase 1: re-baseline cold start and idle CPU on a quiet machine (`perf_gate.py --update-baseline --reason`); the committed values were taken under load.
 - Phase 1: e2e evidence for hand-off, quick-command typing and the Copy Context menu click (`phase3.py` needs an agent transcript folder); covered today by unit tests and `ipc.redact` checks.
+- Phase 5: GUI perf metric (20 visible sessions, core CPU) not run; entry bundle margin 0.12 kB (338.48 of 338.60 kB gz) — the next entry-chunk addition must go lazy or re-budget.
 - Perf gate `bench` measures unfocused sessions, which the CPU-priority work (separate change) deliberately slows under load: compare bench with `daemon.set_priority {enabled:false}` or budget it separately.
 
 ## Unresolved questions

@@ -1,3 +1,4 @@
 - [Shell hook blocked words](shell-hook-blocked-words.md) — Read blocked on target/ paths (Grep works); cargo may be locked by other sessions
 - [E2E overlay selector collisions](e2e-overlay-selector-collisions.md) — workspace stays mounted under fixed overlays; e2e clicks first match
 - [Agent CLI protocol verification](agent-cli-protocol-verification.md) — codex schema dump, claude.exe mmap grep, live initialize probe
+- [Agent transcript formats](agent-transcript-formats.md) — Claude subagents/ files, streaming output_tokens dedupe, no [1m] tag; Codex rollout facts
