@@ -1,5 +1,6 @@
 // Small inline SVG icon set (stroke icons, 16px grid) — no icon font, no network.
-import type { JSX } from "solid-js";
+import { createUniqueId, For, Show, type JSX } from "solid-js";
+import { AGENT_LOGOS, GEMINI_WASHES } from "../lib/agent-logos";
 import { kindInfo } from "../lib/agents";
 
 // Factories, not elements: a Solid JSX element is a real DOM node and can live in one place only.
@@ -70,16 +71,55 @@ export function Icon(props: { name: keyof typeof paths | string; size?: number }
   );
 }
 
+/** An agent's official mark, unaltered, on a neutral tile; kinds without one get a lettered colour tile. */
 export function KindGlyph(props: { kind: string; size?: number }) {
   const meta = () => kindInfo(props.kind);
+  const logo = () => AGENT_LOGOS[props.kind];
   const size = () => props.size ?? 18;
   return (
-    <span
-      class="kind-glyph"
-      style={{ "--kc": meta().color, width: `${size()}px`, height: `${size()}px`, "font-size": `${Math.round(size() * 0.5)}px` }}
+    <Show
+      when={logo()}
+      fallback={
+        <span
+          class="kind-glyph"
+          style={{ "--kc": meta().color, width: `${size()}px`, height: `${size()}px`, "font-size": `${Math.round(size() * 0.5)}px` }}
+        >
+          {meta().glyph}
+        </span>
+      }
     >
-      {meta().glyph}
-    </span>
+      {(l) => (
+        <span class="kind-glyph logo" role="img" aria-label={l().title} style={{ width: `${size()}px`, height: `${size()}px` }}>
+          <svg viewBox="0 0 24 24" width="66%" height="66%" fill={l().fill ?? "currentColor"} fill-rule="evenodd" aria-hidden="true">
+            <Show when={l().gemini} fallback={<path d={l().path} />}>
+              <GeminiMark path={l().path} />
+            </Show>
+          </svg>
+        </span>
+      )}
+    </Show>
+  );
+}
+
+// The washes need gradient ids unique to this instance: duplicate ids resolve to the first in the
+// document, which renders nothing once that copy sits in a hidden subtree.
+function GeminiMark(props: { path: string }) {
+  const id = createUniqueId();
+  return (
+    <>
+      <defs>
+        <For each={GEMINI_WASHES}>
+          {([color, x1, y1, x2, y2, end], i) => (
+            <linearGradient id={`gw${id}-${i()}`} gradientUnits="userSpaceOnUse" x1={x1} y1={y1} x2={x2} y2={y2}>
+              <stop stop-color={color} />
+              <stop offset={end} stop-color={color} stop-opacity="0" />
+            </linearGradient>
+          )}
+        </For>
+      </defs>
+      <path d={props.path} fill="#3186FF" />
+      <For each={GEMINI_WASHES}>{(_, i) => <path d={props.path} fill={`url(#gw${id}-${i()})`} />}</For>
+    </>
   );
 }
 

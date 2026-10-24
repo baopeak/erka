@@ -89,6 +89,9 @@ export function AboutSettings() {
         <span>{t("Platform")}</span><span>{platform()?.os ?? ""}</span>
         <span>{t("Stack")}</span><span>Tauri 2 · SolidJS · xterm.js · Rust session daemon</span> {/* i18n-ignore: product names */}
       </div>
+      <div class="muted-inline" style={{ "font-size": "11.5px", "margin-top": "10px" }}>
+        {t("Agent names and logos are trademarks of their owners, shown only to identify the tools Kelpie launches. Kelpie is not affiliated with or endorsed by them.")}
+      </div>
     </SettingRow>
     </>
   );

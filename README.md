@@ -366,6 +366,7 @@ plans/               implementation plans and reports
 - [Architecture](docs/architecture.md) — processes, protocol, threading, attach semantics, rendering policy, chat mode, daemon services, layouts, runs, integrations, remote, phone server, plugins, voice, languages.
 - [Plugins](docs/plugins.md) — the `kelpie-plugin.json` format and how approval works.
 - [ConPTY notes](docs/third-party-conpty.md) — the bundled Windows console host.
+- [Agent logos](docs/third-party-agent-logos.md) — the agent CLIs' marks, their source and the rules for showing them.
 - [Brand](docs/brand.md) — logo, colors, type and the mascot Kip, with the asset files.
 - [Plans and reports](plans/) — design decisions, UI and feature comparisons with Orca, measurements and test results.
 
@@ -374,3 +375,5 @@ plans/               implementation plans and reports
 Version 0.1.0. Developed and tested on Windows 10; the macOS build is produced by CI but has had less hands-on testing. The UI design and feature set take inspiration from [Orca](https://github.com/stablyai/orca).
 
 Licensed under the [MIT license](LICENSE). The bundled ConPTY binaries in `third_party/conpty` are Microsoft's, also MIT — see [docs/third-party-conpty.md](docs/third-party-conpty.md).
+
+Claude, Codex, Gemini, Cursor, OpenCode, GitHub Copilot and their logos are trademarks of their respective owners, shown only to identify the tools Kelpie launches. Kelpie is not affiliated with or endorsed by them — see [docs/third-party-agent-logos.md](docs/third-party-agent-logos.md).

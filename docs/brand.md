@@ -30,6 +30,13 @@ Assets live in [app/src/assets/brand/](../app/src/assets/brand/); the design can
 
 Agent status: working `#18A999`, needs you `#F5B53F`, done `#3FAE6A`, idle `#8A91A3`.
 
+## Agent logos
+
+Sessions of a known agent CLI (Claude Code, Codex, Gemini, Cursor, OpenCode, Copilot) show that
+tool's own mark, unaltered, on a neutral tile; other kinds keep a lettered tile in their hue. The
+marks belong to their owners and never appear in Kelpie's own branding. Sources, licence and the
+usage rules: [third-party-agent-logos.md](third-party-agent-logos.md).
+
 ## Type
 
 - **Bricolage Grotesque** 800: wordmark and display headings.
