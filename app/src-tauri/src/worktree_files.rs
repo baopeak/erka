@@ -90,7 +90,7 @@ fn copy_tree(src: &Path, dst: &Path) -> std::io::Result<()> {
     }
 }
 
-fn link_dir(src: &Path, dst: &Path) -> Result<(), String> {
+pub(crate) fn link_dir(src: &Path, dst: &Path) -> Result<(), String> {
     if let Some(parent) = dst.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
@@ -118,7 +118,7 @@ fn link_dir(src: &Path, dst: &Path) -> Result<(), String> {
     }
 }
 
-fn materialize(repo: PathBuf, worktree: PathBuf, copy: Vec<String>, link: Vec<String>) -> Materialized {
+pub(crate) fn materialize(repo: PathBuf, worktree: PathBuf, copy: Vec<String>, link: Vec<String>) -> Materialized {
     let mut out = Materialized::default();
     let skip = |path: &str, reason: &str, out: &mut Materialized| out.skipped.push(Skipped { path: path.into(), reason: reason.into() });
     let include = std::fs::read_to_string(repo.join(".worktreeinclude")).unwrap_or_default();

@@ -83,7 +83,7 @@ async function turnVersions(rev: { session: string; n: number; prefix?: string }
 
 /** HEAD ↔ working tree (or index when `staged`) diff, side by side or unified, with notes. With
  *  `rev`: the same file before and after that agent turn (read only, never changes). */
-export function DiffView(props: { project: Project; path: string; staged: boolean; rev?: { session: string; n: number; prefix?: string } }) {
+export function DiffView(props: { project: Project; path: string; staged: boolean; rev?: { session: string; n: number; prefix?: string }; base?: string }) {
   let host!: HTMLDivElement;
   let box!: HTMLDivElement;
   const [unified, setUnified] = createSignal(host?.clientWidth < 900);
@@ -117,7 +117,7 @@ export function DiffView(props: { project: Project; path: string; staged: boolea
 
   async function render() {
     try {
-      const v = props.rev ? await turnVersions(props.rev, props.path) : await gitFileVersions(props.project.path, props.path, props.staged);
+      const v = props.rev ? await turnVersions(props.rev, props.path) : await gitFileVersions(props.project.path, props.path, props.staged, props.base);
       const lang = await languageFor(props.path);
       const exts = (side: "new" | "old") => [...baseExtensions({ readOnly: true }), ...(lang ? [lang] : []), EditorView.editable.of(false), EditorState.readOnly.of(true), changeKeys, noteGutter(openDraft(side))];
       destroy?.();
@@ -171,7 +171,7 @@ export function DiffView(props: { project: Project; path: string; staged: boolea
     <div class="viewer" ref={box}>
       <div class="viewer-bar">
         <span class="path">&lrm;{props.path}</span>
-        <span style={{ color: "var(--text-faint)" }}>{props.rev ? t("Before ↔ after turn #{n}", { n: props.rev.n }) : props.staged ? t("HEAD ↔ index") : t("HEAD ↔ working tree")}{info() ? ` · ${info() === "new" ? t("new file") : t("deleted")}` : ""}</span>
+        <span style={{ color: "var(--text-faint)" }}>{props.rev ? t("Before ↔ after turn #{n}", { n: props.rev.n }) : props.base ? t("{base} ↔ working tree", { base: props.base }) : props.staged ? t("HEAD ↔ index") : t("HEAD ↔ working tree")}{info() ? ` · ${info() === "new" ? t("new file") : t("deleted")}` : ""}</span>
         <div class="toggles">
           <button class="icon-btn" title={t("Previous change (Shift+F7)")} onClick={() => jump(false)}><Icon name="up" size={14} /></button>
           <button class="icon-btn" title={t("Next change (F7)")} onClick={() => jump(true)}><Icon name="down" size={14} /></button>

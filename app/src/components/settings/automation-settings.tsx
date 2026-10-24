@@ -10,6 +10,7 @@ import { SettingRow, Toggle } from "./setting-row";
 import type { Automation } from "../../lib/types";
 import { HOME_VAR, accountsOf, activeAccount, isAccountAgent, type AccountAgent } from "../../lib/accounts";
 import { confirmDialog } from "../../lib/confirm-dialog";
+import { REVIEW_API } from "../../lib/review-queue";
 
 const DAYS = [msg("Sunday"), msg("Monday"), msg("Tuesday"), msg("Wednesday"), msg("Thursday"), msg("Friday"), msg("Saturday")];
 
@@ -90,6 +91,14 @@ function Editor(props: { initial: Automation; onDone: () => void }) {
           <input class="text-input" type="time" value={a().time} onInput={(e) => set({ time: e.currentTarget.value || "09:00" })} />
         </label>
       </div>
+      <Show when={store.daemonApi() >= REVIEW_API && !!store.state.projects.find((p) => p.id === a().project_id)?.parentId}>
+        <label class="field">
+          <span>{t("When it finishes")}</span>
+          <select class="text-input" value={a().deliver ?? ""} onChange={(e) => set({ deliver: (e.currentTarget.value || null) as Automation["deliver"] })}>
+            <option value="">{t("Nothing")}</option><option value="review">{t("Move the folder's card to Review")}</option>
+          </select>
+        </label>
+      </Show>
       <label class="field"><span>{t("Prompt")}</span><textarea class="text-input" rows={4} value={a().prompt} placeholder={t("Triage new issues and summarize blockers")} onInput={(e) => set({ prompt: e.currentTarget.value })} /></label>
       <div class="inline-fields" style={{ "justify-content": "flex-end" }}>
         <button class="btn" onClick={props.onDone}>{t("Cancel")}</button>

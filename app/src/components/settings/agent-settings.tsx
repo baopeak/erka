@@ -115,6 +115,9 @@ export function AgentSettings() {
       <SettingRow id="ai-agent">
         <Choice value={s().aiAgent ?? "claude"} options={[["claude", "Claude Code"], ["codex", "Codex"]]} onChange={(v) => store.setSettings({ aiAgent: v })} />
       </SettingRow>
+      <SettingRow id="auto-worktree">
+        <Choice value={s().autoWorktree ?? "ask"} options={[["ask", t("Ask")], ["always", t("Always")], ["never", t("Never")]]} onChange={(v) => store.setSettings({ autoWorktree: v })} />
+      </SettingRow>
       <SettingRow id="hibernate">
         <div class="inline-fields">
           <Toggle on={s().hibernate} onChange={(on) => store.setSettings({ hibernate: on })} />

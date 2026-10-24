@@ -59,6 +59,7 @@ export const defaultSettings: Settings = {
   terminalTheme: "default",
   wordWrap: false,
   aiAgent: "claude",
+  autoWorktree: "ask",
   floatingTerminal: true,
   mascot: true,
   mascotMotion: "system",
@@ -116,7 +117,7 @@ function chime() {
   }
 }
 
-export type Overlay = null | "cost" | "palette" | "quickopen" | "jump" | "dashboard" | "settings" | "newsession" | "board" | "worktree" | "runs" | "remote" | "hosts" | "update" | "answer";
+export type Overlay = null | "cost" | "palette" | "quickopen" | "jump" | "dashboard" | "settings" | "newsession" | "board" | "worktree" | "runs" | "remote" | "hosts" | "update" | "answer" | "finish";
 
 /** A pane of a tab (an empty pane a new session takes the place of). */
 export type PaneTarget = { tabId: string; paneId: string };
@@ -443,7 +444,7 @@ function createAppStore() {
   const samePath = (a: string, b: string) => normPath(a) === normPath(b);
 
   /** Adds a folder (or, with `parentId`, a worktree of that project) and returns its id. */
-  function addProject(path: string, opts: { parentId?: string; branch?: string; name?: string; open?: boolean; remote?: Project["remote"] } = {}): string {
+  function addProject(path: string, opts: { parentId?: string; branch?: string; baseBranch?: string; name?: string; open?: boolean; remote?: Project["remote"] } = {}): string {
     const existing = state.projects.find((p) => samePath(p.path, path));
     if (existing) {
       // Adding a remote project again takes what its host has now (tmux installed since, agents).
@@ -464,7 +465,7 @@ function createAppStore() {
       path,
       // Worktrees share their repository's colour.
       color: parent?.color ?? projectColors[topProjects().length % projectColors.length],
-      ...(parent ? { parentId: parent.id, branch: opts.branch } : {}),
+      ...(parent ? { parentId: parent.id, branch: opts.branch, ...(opts.baseBranch ? { baseBranch: opts.baseBranch } : {}) } : {}),
       ...(opts.remote ? { remote: opts.remote } : {}),
     };
     update((s) => s.projects.push(project));
@@ -541,11 +542,19 @@ function createAppStore() {
     });
   }
 
-  /** Remembers a `.kelpie.yaml` (by hash) the user agreed to run for this repository. */
-  function approveSetup(repoPath: string, hash: string) {
+  /** Remembers the `setup:` / `tabs:` / `copy:` / `link:` of a `.kelpie.yaml` (their canonical text) the user agreed to run for this repository. */
+  function approveSetup(repoPath: string, key: string) {
     update((s) => {
       s.approvedSetups ??= {};
-      s.approvedSetups[normPath(repoPath)] = hash;
+      s.approvedSetups[normPath(repoPath)] = key;
+    });
+  }
+
+  /** Remembers the `check:` commands the user agreed to run for this repository (separately: approving checks never approves setup). */
+  function approveChecks(repoPath: string, check: string[]) {
+    update((s) => {
+      s.approvedChecks ??= {};
+      s.approvedChecks[normPath(repoPath)] = [...check];
     });
   }
 
@@ -1060,19 +1069,19 @@ function createAppStore() {
     addTab(projectId, { id: uid(), kind: s?.chat ? "chat" : "terminal", sessionId });
   }
 
-  function openFile(projectId: string, path: string, opts: { line?: number; diff?: boolean; staged?: boolean; rev?: Pane["rev"] } = {}) {
+  function openFile(projectId: string, path: string, opts: { line?: number; diff?: boolean; staged?: boolean; rev?: Pane["rev"]; base?: string } = {}) {
     const kind = opts.diff ? "diff" : "file";
     if (!opts.diff) recordRecent("file", path, projectId);
     const ws = workspace(projectId);
     for (const tab of ws.tabs) {
-      const pane = allPanes(tab.root).find((p) => p.kind === kind && p.path === path && !!p.staged === !!opts.staged && p.rev?.session === opts.rev?.session && p.rev?.n === opts.rev?.n);
+      const pane = allPanes(tab.root).find((p) => p.kind === kind && p.path === path && !!p.staged === !!opts.staged && p.rev?.session === opts.rev?.session && p.rev?.n === opts.rev?.n && p.base === opts.base);
       if (pane) {
         if (opts.line) setTabRoot(projectId, tab.id, replacePane(tab.root, pane.id, { ...pane, line: opts.line }));
         focusPane(projectId, tab.id, pane.id);
         return;
       }
     }
-    addTab(projectId, { id: uid(), kind, path, line: opts.line, staged: opts.staged, rev: opts.rev });
+    addTab(projectId, { id: uid(), kind, path, line: opts.line, staged: opts.staged, rev: opts.rev, base: opts.base });
   }
 
   /** Closes a pane. Terminal sessions are killed only when `kill` (default for exited ones). */
@@ -1469,7 +1478,7 @@ function createAppStore() {
     splitPicker, moveTab, movePaneToTab, mergeTab,
     resumeSession, resumeInterrupted, setChatResumer,
     replacePaneIn, updatePane, resizeSplit, setRightPanel, showRightPanel, setSettings, zoomed, toggleZoom,
-    topProjects, childrenOf, setProjectStatus, togglePin, approveSetup, linkHost, unlinkHost,
+    topProjects, childrenOf, setProjectStatus, togglePin, approveSetup, approveChecks, linkHost, unlinkHost,
     projectInfo, refreshProjectInfo, recordRecent, setCollapsed, markUnread, renameSession, profileLaunch, setShortcut, setProfile,
     settingsSection, setSettingsSection, settingsItem, openSettings, paneLocation, isSessionVisible, refreshSessions, setSessions,
     addInbox, markInbox, clearInbox, unreadInbox, desktopNotify, meta, metaFor, setComment, loadMeta,

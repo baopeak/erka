@@ -19,6 +19,7 @@ import { hostLabel } from "../lib/remote";
 import { canGoBack, canGoForward, navBack, navForward } from "../lib/nav-history";
 import { addExistingWorktrees, checkRemoval, removeWorktree } from "../lib/worktrees";
 import { openWorktreeDialog } from "./worktree-dialog";
+import { openFinish, overlapsOf } from "../lib/review-queue";
 import { openContextMenu, type MenuItem } from "./context-menu";
 import type { Project, SessionInfo } from "../lib/types";
 import { t, msg } from "../lib/i18n";
@@ -233,6 +234,7 @@ function projectMenu(p: Project): MenuItem[] {
     { label: t("Move up"), run: () => store.moveProject(p.id, -1) },
     { label: t("Move down"), run: () => store.moveProject(p.id, 1) },
     null,
+    ...(worktree && !p.remote ? [{ label: t("Finish…"), run: () => openFinish(p.id) }] : []),
     ...(worktree ? [{ label: t("Remove worktree…"), danger: true, run: () => void confirmRemoveWorktree(p) }] : []),
     {
       label: t("Remove from Kelpie"), danger: true,
@@ -339,6 +341,11 @@ function ProjectRow(props: { project: Project }) {
                 {info()!.dirty ? "*" : ""}
                 <Show when={info()!.ahead || info()!.behind}> ↑{info()!.ahead}↓{info()!.behind}</Show>
                 <Show when={children().length}><span class="primary-tag">{t("primary")}</span></Show>
+                <Show when={overlapsOf(props.project.id).length}>
+                  <span class="primary-tag overlap" title={overlapsOf(props.project.id).map((o) => `${o.name}: ${o.files.slice(0, 5).join(", ")}${o.files.length > 5 ? "…" : ""}`).join("\n")}>
+                    {t("Also changed in {name}", { name: overlapsOf(props.project.id)[0].name })}{overlapsOf(props.project.id).length > 1 ? ` +${overlapsOf(props.project.id).length - 1}` : ""}
+                  </span>
+                </Show>
                 <Show when={pullRequests.prs[props.project.id]}>
                   {(pr) => <span class={`primary-tag pr-${prLabel(pr())}`} title={t("{title} ({state}, checks {checks})", { title: pr().title, state: prLabel(pr()), checks: pr().checks })}>{pr().provider === "gitlab" ? "!" : "#"}{pr().number}</span>}
                 </Show>

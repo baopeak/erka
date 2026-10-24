@@ -79,8 +79,62 @@ export const gitOrphanCommits = (root: string) => invoke<number>("git_orphan_com
 export const processesAlive = (pids: number[]) => invoke<number[]>("processes_alive", { pids });
 export const gitWorktreeRemove = (root: string, path: string, force = false) => invoke<void>("git_worktree_remove", { root, path, force });
 export const gitBranchInfo = (root: string) => invoke<BranchInfo>("git_branch_info", { root });
-export const gitFileVersions = (root: string, path: string, staged: boolean) =>
-  invoke<{ original: string | null; modified: string | null }>("git_file_versions", { root, path, staged });
+export const gitFileVersions = (root: string, path: string, staged: boolean, base?: string) =>
+  invoke<{ original: string | null; modified: string | null }>("git_file_versions", { root, path, staged, base });
+
+/** What one worktree changed against the branch it will be merged into (git_finish.rs). */
+export interface ReviewChanges {
+  path: string;
+  ok: boolean;
+  error: string | null;
+  branch: string | null;
+  files: string[];
+  truncated: boolean;
+  commits: number;
+  uncommitted: number;
+  added: number;
+  deleted: number;
+  /** The change touches `.kelpie.yaml`. */
+  config_changed: boolean;
+}
+/** `names_only`: just which files changed (the overlap watch), no line or commit counts. */
+export const reviewChanges = (targets: { path: string; base: string; names_only?: boolean }[], force = false) => invoke<ReviewChanges[]>("review_changes", { targets, force });
+
+export interface FinishInspect {
+  /** The branch the worktree's HEAD is on, read by the backend; null on a detached HEAD. */
+  branch: string | null;
+  uncommitted: { path: string; status: string; size: number }[];
+  /** Folders holding a git repository of their own. */
+  embedded: string[];
+  conflicts: string[];
+  operation: string | null;
+  /** The branch's commits would conflict with the base in these files. */
+  merge_conflicts: string[];
+  base_checkout: string | null;
+  base_checkout_dirty: boolean;
+}
+export const finishInspect = (root: string, worktree: string, base: string) => invoke<FinishInspect>("finish_inspect", { root, worktree, base });
+/** Commits exactly `paths`; `extra` lists changed files that were not among them (then nothing is committed). */
+export const finishWipCommit = (worktree: string, branch: string, message: string, paths: string[]) => invoke<{ commit: string | null; extra: string[] }>("finish_wip_commit", { worktree, branch, message, paths });
+/** Cancel belongs to one worktree's Finish; `finishReset` forgets it when a Finish begins or ends. */
+export const finishCancel = (worktree: string) => invoke<void>("finish_cancel", { worktree });
+export const finishReset = (worktree: string) => invoke<void>("finish_reset", { worktree });
+export const finishRestoreBranch = (root: string, branch: string, tip: string, worktree?: string) => invoke<void>("finish_restore_branch", { root, branch, tip, worktree });
+
+export type FinishStrategy = "squash" | "merge" | "rebase";
+export interface CheckResult { command: string; ok: boolean; code: number | null; output: string }
+export type Integrated =
+  | { state: "merged"; commit: string; tip: string; checkout_updated: string | null; branch_deleted: boolean; branch_note: string | null; checks: CheckResult[] }
+  | { state: "nothing"; tip: string; branch_deleted: boolean; branch_note: string | null }
+  | { state: "conflict"; files: string[] }
+  | { state: "check_failed"; checks: CheckResult[]; cleanup_error: string | null }
+  | { state: "base_moved" }
+  | { state: "checkout_dirty"; path: string; files: string[] }
+  | { state: "worktree_changed"; files: string[] }
+  | { state: "config_blocked"; files: string[] }
+  | { state: "cancelled" };
+export const finishIntegrate = (args: { root: string; worktree: string; branch: string; base: string; strategy: FinishStrategy; message: string; checks: string[]; copy: string[]; link: string[]; allow_config_change: boolean; delete_branch: boolean }) =>
+  invoke<Integrated>("finish_integrate", { args });
 export const gitStage = (root: string, paths: string[], stage: boolean) => invoke<void>("git_stage", { root, paths, stage });
 export const gitDiscard = (root: string, paths: string[], untracked: string[]) => invoke<void>("git_discard", { root, paths, untracked });
 export const gitCommit = (root: string, message: string, amend = false) => invoke<string>("git_commit", { root, message, amend });

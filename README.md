@@ -92,6 +92,7 @@ Agents live in a background session daemon, so switching projects, closing the w
 - Safe removal: refuses when a detached HEAD holds commits no branch has, removes shared links before the folder, and can delete the branch afterwards.
 - **Worktree comments**: a line saying what the worktree is doing now, set by you or by an agent with `kelpied worktree set --comment …`, shown in the sidebar and on the board.
 - A workspace board (Todo / In progress / Review / Done) with drag and drop, pins and the agents running in each card.
+- **Review queue and Finish**: the Review column (and a Review tab in the right panel) shows each worktree's files, +/- lines, checks, cost and turns, with *Open diff*, *Request changes* (your review notes go to the agent) and *Approve → Finish*: save uncommitted files as a WIP commit, merge (squash, merge or rebase) with a conflict check first, run the `check:` commands of the base branch's `.kelpie.yaml` (only after you approved that exact file) in a temporary worktree of the result, move the target branch only if it did not change meanwhile, delete the branch only when its work is in it, remove the worktree last — never forced. Worktrees that edit the same file get an *Also changed in …* chip; new agent sessions can start in a worktree of their own, named from the first prompt.
 
 | | |
 |---|---|
@@ -329,6 +330,7 @@ End-to-end tests drive the real app through WebDriver (`tauri-driver` + a matchi
 | `scripts/e2e/chat.py` | Claude / Codex / OMP: TUI ↔ chat with the same conversation (real model calls) |
 | `scripts/e2e/phase1.py` … `phase5.py` | key hints, explorer, sidebar, search, history, usage, quick commands, settings, shortcuts, navigation, themes, worktrees, board, state migration |
 | `scripts/e2e/parity.py` | agent presets and Yolo, startup prompts, `kelpied terminal` / `worktree` CLI, push / pull / sync / abort, worktree copy / link, review notes, inbox, floating terminal, hibernation, keep-awake, themes, viewers, automations (`--ai`: one real one-shot call) |
+| `scripts/e2e/finish.py` | review cards, Review tab, request changes, Finish (WIP commit, approved checks, squash, branch and worktree cleanup), a branch editing `.kelpie.yaml`, conflicts, overlap chips, auto-worktree, automation delivery, queue refresh time |
 | `scripts/e2e/layouts.py` | grids, per-row counts, drag to swap / move, equalize, broadcast, saved layouts, resume after a daemon restart (real Claude, terminal and chat) |
 | `scripts/e2e/tabs_panes.py` | a lone pane has no header; Tile all gathers one-pane tabs into an even grid (4 → 2 × 2, 5th → 3 + 2), Spread into tabs undoes it; split tabs stay |
 | `scripts/e2e/accounts.py`, `runs.py`, `integrations.py` | several accounts; orchestration runs (real agent reporting, AI planning); Linear / Jira / GitLab (GitLab live) |

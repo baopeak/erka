@@ -12,6 +12,7 @@ import { newChat, supportsChat } from "../chat/mode-switch";
 import { GRID_PRESETS, cellCount, gridLabel, type GridSpec } from "../lib/layout";
 import { GridThumb, parseCounts } from "./layout-menu";
 import { accountsOf, activeAccount, isAccountAgent } from "../lib/accounts";
+import { branchFromPrompt, createAgentWorktree } from "../lib/worktrees";
 import type { SessionKind } from "../lib/types";
 import { t } from "../lib/i18n";
 
@@ -61,6 +62,11 @@ export function NewSessionMenu() {
     const list = kinds();
     if (list.length && !list.includes(kind())) setKind(list[0]);
   });
+  /** An isolated worktree for an agent started in a git folder: ticked by default when the setting says always. */
+  const worktreeMode = () => store.state.settings.autoWorktree ?? "ask";
+  const [useWorktree, setUseWorktree] = createSignal(worktreeMode() === "always");
+  const worktreeOffered = () =>
+    !!project && !project.parentId && !project.remote && !runOn().hostId && worktreeMode() !== "never" && isAgentKind(kind()) && where() !== "grid" && store.projectInfo[project.id]?.is_repo === true;
   let argsInput!: HTMLInputElement;
   onMount(() => argsInput.focus());
 
@@ -73,16 +79,26 @@ export function NewSessionMenu() {
     store.setOverlay(null);
     const w = where();
     const chat = ui() === "chat" && supportsChat(kind()) && local();
+    // In a worktree of its own: the session opens there, in a tab of that project.
+    let projectId = project.id;
+    let place: { where: "tab" | "right" | "down"; into: PaneTarget | undefined };
+    if (worktreeOffered() && useWorktree() && w !== "grid") {
+      try {
+        projectId = (await createAgentWorktree(project, prompt().trim(), kind())).id;
+      } catch (e) {
+        return store.notify(t("Could not create the worktree: {error}", { error: String(e).replace(/^Error: /, "") }), undefined, 8000);
+      }
+    }
     const target = chat ? undefined : await resolveRunOn(project, runOn());
     if (target === null) return;
     if (w === "grid") {
       // The same agent in every cell; the first prompt (if any) goes to each of them.
       return void store.launchGrid(project.id, grid(), Array(cellCount(grid())).fill(kind()), { args: argv, account: chosenAccount(), target, prompt: isAgentKind(kind()) ? prompt().trim() || undefined : undefined });
     }
-    // "This pane" falls back to a new tab if the empty pane was closed meanwhile.
-    const place = w === "pane" ? { where: "tab" as const, into: into ?? undefined } : { where: w, into: undefined };
-    if (chat) return void newChat(project.id, kind(), place.where, { account: chosenAccount(), into: place.into });
-    void store.newSession(project.id, kind(), { ...place, args: argv, account: chosenAccount(), target, name: name().trim() || undefined, prompt: isAgentKind(kind()) ? prompt().trim() || undefined : undefined });
+    // "This pane" falls back to a new tab if the empty pane was closed meanwhile (and a new project has no such pane).
+    place = w === "pane" ? { where: "tab" as const, into: projectId === project.id ? into ?? undefined : undefined } : { where: w, into: undefined };
+    if (chat) return void newChat(projectId, kind(), place.where, { account: chosenAccount(), into: place.into });
+    void store.newSession(projectId, kind(), { ...place, args: argv, account: chosenAccount(), target, name: name().trim() || undefined, prompt: isAgentKind(kind()) ? prompt().trim() || undefined : undefined });
   };
 
   return (
@@ -116,6 +132,15 @@ export function NewSessionMenu() {
           <div class="form-row">
             <label>{t("First prompt (optional)")}</label>
             <textarea class="text-input" rows={2} value={prompt()} placeholder={t("What should the agent do? (Ctrl+Enter to start)")} onInput={(e) => setPrompt(e.currentTarget.value)} />
+          </div>
+        </Show>
+        <Show when={worktreeOffered()}>
+          <div class="form-row">
+            <label>{t("Worktree")}</label>
+            <label class="check-label" title={t("A separate checkout on its own branch, so this agent cannot disturb your other work. Finish merges it back from the Board.")}>
+              <input type="checkbox" checked={useWorktree()} onChange={(e) => setUseWorktree(e.currentTarget.checked)} />
+              {useWorktree() ? t("Run in a new worktree · branch {branch}", { branch: branchFromPrompt(prompt(), `${kind()}-…`) }) : t("Run in a new worktree")}
+            </label>
           </div>
         </Show>
         <div class="form-row">

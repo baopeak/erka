@@ -13,7 +13,6 @@ import { Dashboard } from "./dashboard";
 import { SettingsPage } from "./settings/settings-page";
 import { Tips } from "./tips";
 import { setEditorTheme } from "../lib/codemirror";
-import { Board } from "./board";
 import { WorktreeDialog } from "./worktree-dialog";
 import { NewSessionMenu } from "./new-session-menu";
 import { Welcome } from "./welcome";
@@ -29,6 +28,7 @@ import { daemon as daemonCall } from "../lib/ipc";
 import { loadSshConfigPath, remoteConfigure } from "../lib/remote";
 import { initRuns } from "../lib/runs";
 import { initSessionUsage } from "../lib/session-usage";
+import { initReviewWatch } from "../lib/review-queue";
 import { setCovering } from "../lib/overlays";
 import { allViews, setLinkOpener } from "../lib/terminal-host";
 import { isLocalUrl, openBrowser } from "../lib/browser";
@@ -41,6 +41,8 @@ import { VoicePill } from "./voice";
 import { startUpdater } from "../lib/updater";
 import { CHECKPOINT_API } from "../lib/checkpoint-api";
 
+const Board = lazy(() => import("./board").then((m) => ({ default: m.Board })));
+const FinishDialog = lazy(() => import("./finish-dialog"));
 const UpdateDialog = lazy(() => import("./update-dialog"));
 const QuickAnswer = lazy(() => import("./quick-answer"));
 const CostPage = lazy(() => import("./cost-page"));
@@ -110,6 +112,7 @@ export function App() {
   onMount(() => {
     initRuns();
     initSessionUsage();
+    initReviewWatch();
     void loadSshConfigPath().catch(() => {});
     void initSshHosts();
     void loadPlugins();
@@ -157,6 +160,7 @@ export function App() {
         <Match when={store.overlay() === "hosts"}><HostsPage /></Match>
         <Match when={store.overlay() === "worktree"}><WorktreeDialog /></Match>
         <Match when={store.overlay() === "update"}><UpdateDialog /></Match>
+        <Match when={store.overlay() === "finish"}><FinishDialog /></Match>
         <Match when={store.overlay() === "answer"}><QuickAnswer /></Match>
         <Match when={store.overlay() === "cost"}><CostPage /></Match>
         <Match when={["palette", "quickopen", "jump"].includes(store.overlay() ?? "") && store.overlay()} keyed>

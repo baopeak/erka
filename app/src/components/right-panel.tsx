@@ -7,10 +7,12 @@ import { GitPanel } from "./git-panel";
 import { HistoryPanel } from "./history-panel";
 import { IssuesPanel } from "./issues-panel";
 import { CHECKPOINT_API } from "../lib/checkpoint-api";
+import { inReview } from "../lib/review-queue";
 import type { Project } from "../lib/types";
 import { t } from "../lib/i18n";
 
 const TurnTimeline = lazy(() => import("./turn-timeline"));
+const ReviewPanel = lazy(() => import("./review-panel"));
 
 export function RightPanel(props: { project: Project }) {
   const panel = () => store.workspace(props.project.id).rightPanel;
@@ -22,6 +24,13 @@ export function RightPanel(props: { project: Project }) {
     gitState.setRoot(root);
     onCleanup(() => void unwatchRoot(root).catch(() => {}));
   });
+
+  /** Worktrees of this repository waiting for review. */
+  const reviewCount = () => {
+    const repo = props.project.parentId ?? props.project.id;
+    return store.state.projects.filter((p) => p.parentId === repo && inReview(p)).length;
+  };
+  const reviewable = () => !props.project.remote && !!store.projectInfo[props.project.parentId ?? props.project.id]?.is_repo;
 
   const startResize = (e: PointerEvent) => {
     const el = e.currentTarget as HTMLElement;
@@ -39,10 +48,11 @@ export function RightPanel(props: { project: Project }) {
     el.addEventListener("pointerup", up);
   };
 
-  const tab = (id: "files" | "git" | "history" | "issues" | "turns", label: string) => (
+  const tab = (id: "files" | "git" | "history" | "issues" | "turns" | "review", label: string) => (
     <button class={`ptab${panel() === id || (id === "files" && panel() === "search") ? " active" : ""}`} onClick={() => store.showRightPanel(id)}>
       {label}
       {id === "git" && gitState.status()?.files.length ? ` ${gitState.status()!.files.length}` : ""}
+      {id === "review" && reviewCount() ? ` ${reviewCount()}` : ""}
     </button>
   );
 
@@ -55,6 +65,7 @@ export function RightPanel(props: { project: Project }) {
         {tab("history", t("Sessions"))}
         {tab("issues", t("Issues"))}
         <Show when={store.daemonApi() >= CHECKPOINT_API}>{tab("turns", t("Turns"))}</Show>
+        <Show when={reviewable()}>{tab("review", t("Review"))}</Show>
       </div>
       <div class="panel-body">
         <Switch>
@@ -63,6 +74,7 @@ export function RightPanel(props: { project: Project }) {
           <Match when={panel() === "history"}><HistoryPanel project={props.project} /></Match>
           <Match when={panel() === "issues"}><IssuesPanel project={props.project} /></Match>
           <Match when={panel() === "turns" && store.daemonApi() >= CHECKPOINT_API}><TurnTimeline project={props.project} /></Match>
+          <Match when={panel() === "review"}><ReviewPanel project={props.project} /></Match>
         </Switch>
       </div>
     </aside>

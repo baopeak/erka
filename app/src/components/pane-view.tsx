@@ -120,7 +120,7 @@ export function PaneView(props: { pane: Pane; project: Project; tab: Tab }) {
             {(_id) => <BrowserPane pane={props.pane} project={props.project} tab={props.tab} focused={focused()} />}
           </Match>
           <Match when={props.pane.kind === "diff" && props.pane.path} keyed>
-            {(path) => <DiffView project={props.project} path={path} staged={!!props.pane.staged} rev={props.pane.rev} />}
+            {(path) => <DiffView project={props.project} path={path} staged={!!props.pane.staged} rev={props.pane.rev} base={props.pane.base} />}
           </Match>
         </Switch>
       </div>

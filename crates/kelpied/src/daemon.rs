@@ -12,7 +12,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::agents::{self, Resume};
-use crate::automations::{Automation, Automations};
+use crate::automations::{Automation, Automations, DELIVER_REVIEW};
 use crate::awake::{self, Awake};
 use crate::chat::ChatSession;
 use crate::checkpoints::{self, Checkpoints};
@@ -85,6 +85,8 @@ pub struct Daemon {
     agents_control_others: AtomicBool,
     /// Per-turn snapshots of the sessions' working folders (see `checkpoints.rs`).
     checkpoints: Arc<Checkpoints>,
+    /// Sessions of automations that deliver to review: session id -> folder, until their turn ends.
+    deliver_review: Mutex<HashMap<String, String>>,
 }
 
 #[derive(Deserialize)]
@@ -178,6 +180,7 @@ impl Daemon {
                 prioritize: AtomicBool::new(true),
                 agents_control_others: AtomicBool::new(load_policy(&data_dir)),
                 checkpoints: Arc::new(Checkpoints::new(&data_dir, emit)),
+                deliver_review: Mutex::new(HashMap::new()),
                 data_dir,
                 exe,
                 meta_dirty: AtomicBool::new(false),
@@ -235,6 +238,24 @@ impl Daemon {
         }
     }
 
+    /// Writes a folder's comment / status and tells the apps (`meta.set`).
+    fn set_meta(&self, path: &str, comment: Option<&str>, status: Option<&str>) -> Result<Value> {
+        let (key, m) = self.workspace_meta.lock().set(path, comment, status)?;
+        let v = json!({"path": key, "comment": m.comment, "status": m.status, "updated_at": m.updated_at});
+        self.broadcast("meta.updated", v.clone());
+        Ok(v)
+    }
+
+    /// The automation's run finished (its turn ended or the session exited): its folder goes to review.
+    fn deliver_to_review(&self, session: &str) {
+        let Some(cwd) = self.deliver_review.lock().remove(session) else { return };
+        // The folder's existing record (the worktree root above a subfolder), like `kelpied worktree set`.
+        let path = self.workspace_meta.lock().find(&cwd).map(|(k, _)| k).unwrap_or(cwd);
+        if let Err(e) = self.set_meta(&path, None, Some("review")) {
+            tracing::warn!("deliver to review: {e:#}");
+        }
+    }
+
     /// Starts the automation's agent with its prompt and records the run.
     pub fn run_automation(&self, id: &str) -> Result<SessionInfo> {
         let a = self.automations.lock().list.iter().find(|a| a.id == id).cloned().ok_or_else(|| anyhow!("no automation {id}"))?;
@@ -251,6 +272,9 @@ impl Daemon {
             Ok(info) => (Some(info.spec.id.clone()), None),
             Err(e) => (None, Some(format!("{e:#}"))),
         };
+        if let (Some(id), Some(DELIVER_REVIEW)) = (&session, a.deliver.as_deref()) {
+            self.deliver_review.lock().insert(id.clone(), a.cwd.clone());
+        }
         self.automations.lock().record(id, now_millis(), session.clone(), error.clone());
         self.broadcast("automation.ran", json!({"id": id, "name": a.name, "session_id": session, "error": error}));
         result
@@ -1039,6 +1063,9 @@ impl Daemon {
                         let (me, info) = (self.clone(), info.clone());
                         tokio::task::spawn_blocking(move || me.checkpoint_turn_end(&info, hooks, typed, started));
                     }
+                    if (matches!(prev, Some(Status::Working | Status::Waiting)) && matches!(info.status, Status::Idle | Status::Exited)) || !info.alive {
+                        self.deliver_to_review(&info.spec.id);
+                    }
                     if prev == Some(Status::Working) && matches!(info.status, Status::Idle | Status::Waiting) && !info.chat {
                         self.broadcast("session.turn", turn_event(&info.spec.id, "turn_end", &Value::Null, info.spec.agent_session_id.as_deref()));
                     }
@@ -1181,10 +1208,7 @@ impl Daemon {
             "meta.set" => {
                 let path = param(&params, "path")?.as_str().unwrap_or_default();
                 let opt = |k: &str| params.get(k).map(|v| v.as_str().unwrap_or(""));
-                let (key, m) = self.workspace_meta.lock().set(path, opt("comment"), opt("status"))?;
-                let v = json!({"path": key, "comment": m.comment, "status": m.status, "updated_at": m.updated_at});
-                self.broadcast("meta.updated", v.clone());
-                v
+                self.set_meta(path, opt("comment"), opt("status"))?
             }
             "automation.list" => serde_json::to_value(&self.automations.lock().list)?,
             "automation.save" => {
@@ -1384,4 +1408,30 @@ fn create_task_worktree(run: &runs::Run, task: &runs::Task) -> Result<(String, S
     let path_s = path.to_string_lossy().into_owned();
     git(&["-C", &top.to_string_lossy(), "worktree", "add", "-b", &branch, &path_s, "HEAD"])?;
     Ok((path_s, branch))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_automation_run_delivers_its_folder_to_review_once() {
+        let dir = std::env::temp_dir().join(format!("kelpie-deliver-{}", uuid::Uuid::new_v4()));
+        let work = dir.join("worktree");
+        std::fs::create_dir_all(&work).unwrap();
+        let daemon = Daemon::new(dir.clone(), PathBuf::from("kelpied"));
+        let cwd = work.to_string_lossy().into_owned();
+        daemon.set_meta(&cwd, Some("refactor"), Some("progress")).unwrap();
+        daemon.deliver_review.lock().insert("s1".into(), cwd.clone());
+        daemon.deliver_to_review("other");
+        assert_eq!(daemon.workspace_meta.lock().find(&cwd).unwrap().1.status.as_deref(), Some("progress"), "other sessions deliver nothing");
+        daemon.deliver_to_review("s1");
+        let (_, m) = daemon.workspace_meta.lock().find(&cwd).unwrap();
+        assert_eq!((m.status.as_deref(), m.comment.as_deref()), (Some("review"), Some("refactor")), "status moves, the comment stays");
+        // The user moves it back: the finished run does not push it into review again.
+        daemon.set_meta(&cwd, None, Some("progress")).unwrap();
+        daemon.deliver_to_review("s1");
+        assert_eq!(daemon.workspace_meta.lock().find(&cwd).unwrap().1.status.as_deref(), Some("progress"));
+        let _ = std::fs::remove_dir_all(dir);
+    }
 }

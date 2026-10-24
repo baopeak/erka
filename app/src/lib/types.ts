@@ -47,6 +47,8 @@ export interface Project {
   /** Set for a git worktree shown under its repository's project. */
   parentId?: string;
   branch?: string;
+  /** The branch this worktree was created from: what Finish merges into (unknown for worktrees added later). */
+  baseBranch?: string;
   /** Workspace board column (default todo) and pin. */
   status?: WorkStatus;
   pinned?: boolean;
@@ -94,6 +96,8 @@ export interface Pane {
   /** A file or diff pane showing a turn of an agent session instead of the folder: the snapshot
    *  at the end of turn `n` (a diff compares it with the one before). */
   rev?: { session: string; n: number; prefix?: string };
+  /** A diff pane comparing the folder with a branch (a review): the one it forked from. */
+  base?: string;
   line?: number;
   /** Browser panes: the page shown. */
   url?: string;
@@ -142,7 +146,7 @@ export interface Tab {
   name?: string;
 }
 
-export type RightPanel = "files" | "git" | "search" | "history" | "issues" | "turns" | null;
+export type RightPanel = "files" | "git" | "search" | "history" | "issues" | "turns" | "review" | null;
 
 export interface Workspace {
   tabs: Tab[];
@@ -222,6 +226,9 @@ export interface Settings {
   wordWrap: boolean;
   /** Agent for AI actions (commit message, pull request text). */
   aiAgent: "claude" | "codex";
+  /** New agent sessions in a git folder: offer an isolated worktree (ask, off unless ticked),
+   *  start in one (always, ticked unless unticked) or never offer it. Branch named from the first prompt. */
+  autoWorktree?: "ask" | "always" | "never";
   /** Global floating terminal (not tied to a project). */
   floatingTerminal: boolean;
   /** Kip, the mascot: in the sidebar footer (agent status) and on empty screens. */
@@ -395,6 +402,8 @@ export interface Automation {
   last_session: string | null;
   last_error: string | null;
   next_run: number;
+  /** When the run finishes: "review" moves the folder's card to the Review column. */
+  deliver?: "review" | null;
 }
 
 export interface RecentItem {
@@ -418,8 +427,10 @@ export interface AppState {
   collapsed: Record<string, boolean>;
   /** Shortcut overrides by command id: a chord like "mod+alt+p", or "" for none. */
   keymap: Record<string, string>;
-  /** `.kelpie.yaml` contents (hash) the user agreed to run, by repository path. */
+  /** The setup, tabs, copy and link of `.kelpie.yaml` (canonical text) the user agreed to run, by repository path. */
   approvedSetups: Record<string, string>;
+  /** The `check:` commands the user agreed to run, by repository path (a different list needs approval again). */
+  approvedChecks?: Record<string, string[]>;
   /** Sessions Kelpie stopped to save memory (hibernation, sleeping worktrees): resumed when shown. */
   hibernated: string[];
   inbox: InboxItem[];

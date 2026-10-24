@@ -149,6 +149,82 @@ session daemon restarts, with a notice; turn it on again in the panel. Other git
 `refs/kelpie` refs (`git log --all`, graph tools), and a `git push --mirror` would send them. Line endings of
 a restored file follow your git settings and can differ from before; Kelpie says so in the dialog.
 
+### Review and Finish
+
+The board's **Review** column is the review queue (so is `kelpied worktree set --status review`, which an
+agent can run itself, and an automation set to *Move the folder's card to Review* when it finishes). A
+worktree card in that column shows its files, +/- lines, commits, uncommitted files, the checks, what its
+sessions cost and how many turns they took. The **Review** tab of the right panel lists the same cards
+for the current repository with their files; a file opens a diff against the branch the worktree will be
+merged into, committed changes included. Marking a worktree **Done** while it still has changes nobody
+merged offers Review instead.
+
+- **Open diff** shows that. **Request changes** sends the review notes you wrote on the diff (click the +
+  beside a line) to an agent in the worktree and moves the card back to *In progress*.
+- **Approve → Finish** (also the sidebar menu's *Finish…* and the palette's *Finish Worktree…*) opens the
+  Finish dialog: the uncommitted files it will save as a "WIP from <agent>" commit (with their sizes; you tick
+  to confirm exactly that list), how to merge (squash, merge commit or rebase) and the message, and the
+  checks. Then Kelpie stops the worktree's sessions and reads the files again: if any appeared after you
+  confirmed (the agent was still writing) nothing is committed and you confirm the new list. Only the
+  confirmed files are committed; a folder with a git repository of its own inside the worktree is refused
+  rather than committed as a pointer to nothing. Then it merges, runs the checks, moves the branch it merges
+  into only if that branch has not changed meanwhile, updates the main checkout, deletes the branch only
+  when its work is in the target, and removes the worktree last. It never forces anything. The branch is the
+  one the worktree is really on: a worktree on a detached HEAD, whose commits would be lost with it, cannot be
+  finished until you give them a branch (`git switch -c <name>`).
+  - It merges into the branch the worktree was created from; if that is not the main checkout's current
+    branch, or is unknown (worktrees added later), the dialog says so and asks you to confirm.
+  - A conflict is announced in the dialog (*Resolve with agent* starts an agent in the worktree) and nothing
+    is stopped for it; a failing check (*Fix with agent*), a target that moved (try again) and a main checkout
+    with changes to tracked files (commit or stash them first) stop it before anything moves. Untracked notes
+    or logs in the main checkout do not matter, except a file the merge would overwrite (including an ignored
+    one such as `.env`): Finish names it and stops.
+  - **Cancel Finish** works at every step: before the target branch moves it ends whatever runs (a merge, a
+    signature that waits, a check) and changes nothing; once the work is merged it only skips the cleanup and
+    says what is merged. A check that outlives its time (20 minutes) is stopped with everything it started.
+    A Cancel never carries over to the next Finish.
+  - If the worktree cannot be removed (a program still has a file open) the work is already merged; the branch
+    is put back and the worktree stays, with the reason. If git deleted part of the folder before failing, the
+    leftover folder is reported; it holds no links into your shared folders.
+  - **Signing and hooks.** If the repository signs commits (`commit.gpgSign`, any config level), the commits
+    Finish makes (squash, merge commit, every rebased commit, the WIP commit) are signed with git's own
+    settings (`user.signingKey`, `gpg.format` openpgp / ssh / x509); a passphrase or security-key prompt that
+    nobody answers within two minutes, or a failing signer, stops Finish before anything moves. Rebased commits
+    are re-signed by you. **Commit hooks do not run** for Finish's commits (pre-commit, commit-msg,
+    prepare-commit-msg, reference-transaction…): they are Kelpie's own bookkeeping, and with husky-style hooks
+    the scripts would come from the branch being merged. So a Gerrit Change-Id or DCO sign-off added by a
+    commit-msg hook is not added; add it to the message in the dialog. `merge.verifySignatures` is not
+    applied either; the checks are the gate.
+- **Checks**: add `check:` to the repository's `.kelpie.yaml`, one command per line (a program and its
+  arguments; no `&&`, pipes or variables):
+
+  ```yaml
+  check:
+    - pnpm test
+    - cargo clippy -- -D warnings
+  ```
+
+  They are read from the file committed on the branch you merge into, never from the branch being merged,
+  and run only after you approved that exact list (the Finish dialog shows them and asks; if the list changes
+  it shows what was added or removed and asks again). The approval covers the checks only: it is kept apart
+  from the approval of `setup:`, `tabs:`, `copy:` and `link:` that the New worktree dialog asks for (which now
+  lists the `check:` commands too), so approving a check never approves a changed setup command. They run
+  without a shell in a temporary worktree of the merged result, where the `copy:` and `link:` entries are
+  available. **They run the branch's own code**: `pnpm test` or `cargo test` execute the branch's scripts and
+  build files, so a check is only as safe as the branch. If the branch itself edits `.kelpie.yaml`, its card
+  says so, its checks are off, and Finish makes you choose between finishing without them and running the
+  target branch's list; the same holds when the file cannot be read. Finish waits until the checks have been read before it can start.
+- **Also changed in …**: when two or more worktrees of a repository have an agent running, a chip on each row
+  (and in the Changes tab) says which other worktree changed the same files (checked every 30 s and
+  after a turn ends).
+
+### New agent sessions in a worktree
+
+Settings → Agents → *Worktree for new agent sessions*: in the New session dialog an agent started in a git
+folder can run in its own new worktree, with the branch named from the first prompt
+(`Fix the login redirect` → `fix-the-login-redirect`). *Ask* shows an unticked box, *Always* ticks it, *Never*
+hides it. The repository's `.kelpie.yaml` setup runs there only if you approved that exact file before.
+
 ### Quick commands
 
 Settings → Quick Commands saves commands and prompts. *Terminal* types into the focused shell
@@ -312,7 +388,8 @@ Cursor, Windsurf, Zed, Sublime Text or IntelliJ IDEA when installed.
 Settings → Automations runs an agent with a prompt every hour, day, weekday or week (local
 time), in a project. They are stored and started by the session daemon, so they run while
 the window is closed; *Run now* tries one immediately. Runs missed by more than 30 minutes
-(computer asleep) are skipped, not caught up.
+(computer asleep) are skipped, not caught up. *When it finishes* can move the project's card to
+the board's Review column once the run's first turn ends (a daemon restart in the middle forgets it).
 
 ### Layouts
 

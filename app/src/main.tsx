@@ -21,8 +21,8 @@ startNavHistory();
 // the WebDriver end-to-end tests (scripts/e2e).
 void (import.meta.env.DEV ? Promise.resolve(true) : platformInfo().then((i) => i.e2e, () => false)).then((expose) => {
   if (!expose) return;
-  void Promise.all([import("./lib/terminal-host"), import("./lib/commands"), import("./chat/mode-switch"), import("./lib/layout"), import("./lib/accounts"), import("./lib/runs"), import("./lib/integrations"), import("./lib/pull-requests"), import("./lib/browser"), import("./lib/plugins"), import("./lib/voice"), import("./lib/agents"), import("./lib/worktrees"), import("./lib/ipc"), import("./components/diff-view")]).then(([th, cmds, chat, layout, accounts, runs, integrations, prs, browser, plugins, voice, agents, worktrees, ipc, diffView]) => {
-    (window as any).__kelpie = { store, views: th.allViews, peekView: th.peekView, commands: cmds.commands, chat, layout, accounts, runs, integrations, prs, browser, plugins, voice, agents, worktrees, ipc, diffView, perf: perfProbes(th.peekView) };
+  void Promise.all([import("./lib/terminal-host"), import("./lib/commands"), import("./chat/mode-switch"), import("./lib/layout"), import("./lib/accounts"), import("./lib/runs"), import("./lib/integrations"), import("./lib/pull-requests"), import("./lib/browser"), import("./lib/plugins"), import("./lib/voice"), import("./lib/agents"), import("./lib/worktrees"), import("./lib/ipc"), import("./components/diff-view"), import("./lib/review-queue")]).then(([th, cmds, chat, layout, accounts, runs, integrations, prs, browser, plugins, voice, agents, worktrees, ipc, diffView, review]) => {
+    (window as any).__kelpie = { store, views: th.allViews, peekView: th.peekView, commands: cmds.commands, chat, layout, accounts, runs, integrations, prs, browser, plugins, voice, agents, worktrees, ipc, diffView, review, perf: perfProbes(th.peekView) };
   });
 });
 

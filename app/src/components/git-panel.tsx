@@ -10,6 +10,7 @@ import { Icon } from "./icons";
 import type { GitFile, Project } from "../lib/types";
 import { t } from "../lib/i18n";
 import { confirmDialog } from "../lib/confirm-dialog";
+import { overlapsOf } from "../lib/review-queue";
 
 function split(path: string) {
   const i = path.lastIndexOf("/");
@@ -143,6 +144,13 @@ export function GitPanel(props: { project: Project }) {
           </Show>
           <button class="icon-btn" title={t("Refresh")} onClick={() => { void gitState.refresh(); void refetchRepo(); void pullRequests.refresh(props.project.id, root()); }}><Icon name="refresh" size={14} /></button>
         </div>
+        <Show when={overlapsOf(props.project.id).length}>
+          <div class="git-note warn">
+            <For each={overlapsOf(props.project.id)}>
+              {(o) => <div title={o.files.join("\n")}><b>{t("Also changed in {name}", { name: o.name })}</b>: {o.files.slice(0, 4).join(", ")}{o.files.length > 4 ? ` +${o.files.length - 4}` : ""}</div>}
+            </For>
+          </div>
+        </Show>
         <Show when={ahead() > 0 && behind() > 0}>
           <div class="git-note">
             {t("The branch and its upstream have diverged (history rewritten?).")}

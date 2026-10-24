@@ -10,6 +10,7 @@ mod daemon_runtime;
 mod external_editor;
 mod fs_ops;
 mod git;
+mod git_finish;
 mod git_sync;
 mod github;
 mod integrations;
@@ -233,6 +234,13 @@ pub fn run() {
             git::git_worktree_prune,
             git::git_show_file,
             git::git_orphan_commits,
+            git_finish::review_changes,
+            git_finish::finish_inspect,
+            git_finish::finish_wip_commit,
+            git_finish::finish_integrate,
+            git_finish::finish_restore_branch,
+            git_finish::finish_cancel,
+            git_finish::finish_reset,
             git_sync::git_remote,
             git_sync::git_repo_state,
             git_sync::git_abort,

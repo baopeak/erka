@@ -354,10 +354,13 @@ connect, and an older daemon without API 10 never sees it and the app hides ever
   another daemon's snapshots in the same repository stay.
 - **Auto-off.** A repository whose snapshot (the successful attempt only) takes over a second twice in a
   row stops being snapshotted until the daemon restarts, with one `checkpoint.disabled` event; a slow
-  snapshot while a trivial `git --version` also takes over 300 ms (a busy machine) does not count. Slow means
-  git's CPU time (a job object around each git process counts the real git behind the Git for Windows
-  launcher; measured: cpu 171 ms for 115 ms of wall time on 10k files) or, when that is under a second, the
-  wall time unless the machine is busy. Git messages are read in English (`LC_ALL=C`).
+  snapshot on a busy machine says nothing about the repository (a five-file repository took 2.3 s of wall time
+  but 0.2 s of git CPU time with every core busy), so the verdict is on git's **CPU time**, counted through a job
+  object around each git process (it includes the real git behind the Git for Windows launcher; measured: cpu
+  171 ms for 115 ms of wall time on 10k files): slow means over a second of it. Only when no CPU time was counted
+  (under 30 ms: non-Windows, or a counting that missed the real git) the wall time is judged, and then only for a
+  repository whose index is at least 256 KiB and while a trivial `git --version` starts within 300 ms. Wall time,
+  CPU time and the probe of a long snapshot are logged. Git messages are read in English (`LC_ALL=C`).
   `checkpoint.set_enabled {repo}` turns it back on. Nothing about it is saved to disk.
 - **Undo** (`checkpoint.undo_plan`, `checkpoint.undo`; both, and `drop`, answer from their own thread so the
   app's other requests are not held up). Allowed only when the owning session is idle: its status is not
@@ -457,6 +460,82 @@ worktree remove` — never deleting the branch; a deleted folder that something 
 lingers until the handle closes, so the leftover check waits up to 3 s. `.kelpie.yaml` (setup commands, default tabs) is read from the base
 commit, shown in full, and runs only when the user opts in; approval is remembered per
 repository by the file's hash.
+
+### Review queue and Finish
+
+The queue is the board status (`meta.rs`: todo / progress / review / done, shared with agents through
+`kelpied worktree set --status`; `meta.updated` moves the card). Nothing else stores "in review".
+`app/src-tauri/src/git_finish.rs` holds the git side; `lib/review-queue.ts` and `lib/finish.ts` decide
+and sequence.
+
+- **Summaries** (`review_changes`): per worktree, the files changed against the merge base with its
+  repository's current branch (committed, staged, edited and untracked, once each), +/- lines, commit and
+  uncommitted counts, and whether the change touches `.kelpie.yaml`. Answered from a cache keyed by the
+  mtimes of the worktree's `HEAD` and index, the branch's and the base's references and `packed-refs`
+  (read without running git), for at most 30 s because edits of tracked files do not touch the index;
+  `force` skips it. 20 cached summaries answer in about 10 ms; cold, one costs ~130 ms of git on Windows.
+- **Overlap watch**: for a repository with two or more worktrees (the repository's own folder counts)
+  that have a live agent, every 30 s while the window is visible and 1.5 s after a `session.turn`, the
+  summaries are intersected and each row shows "Also changed in <worktree>". With fewer than two active,
+  no scan runs.
+- **`.kelpie.yaml` `check:`** (a list of commands, one program and its arguments each, no shell) is read
+  from the base branch's committed file (`configAtRef`), never from the working copy or the branch being
+  merged, and runs only when that file's hash is the approved one (`approveSetup`, which also remembers
+  the approved list so a change is shown as a diff). A change that touches `.kelpie.yaml` is flagged on the
+  card and blocks the checks unless the user allows the base's list explicitly.
+- **Finish** order (`finish_integrate` does 3-7, the app does 1-2 and the removal):
+  1. the app stops the worktree's sessions and waits for their processes, then `finish_inspect` lists the
+     worktree again; its HEAD must be on the branch the dialog named (`symbolic-ref`; the backend refuses a
+     detached HEAD or another branch in the WIP commit and in `finish_integrate`);
+  2. `finish_wip_commit(paths)`: only the confirmed files, as literal pathspecs; files that appeared since
+     are returned in `extra` and nothing is committed; embedded repositories are refused; one commit
+     "WIP from <agent>". `finish_integrate` itself refuses a worktree that still has uncommitted files;
+  3. `merge-tree --write-tree` of base and branch (squash: `commit-tree` with the base as parent; merge:
+     both parents; rebase: each commit replayed as a three-way merge against its parent, authors kept,
+     merge commits refused). A conflict stops here;
+  4. the approved commands run in a scratch worktree (`git worktree add --detach`) at that commit, with the
+     base's `copy:` / `link:` brought in; the program is looked up on PATH, never in the checked-out
+     folder; the scratch folder is deleted by Kelpie (`unlink_shared`, then `remove_dir_all`), not with
+     `--force`; the first failure stops;
+  5. `update-ref <base> <new> <old>` (compare-and-swap; a base that moved is `base_moved`, nothing changed).
+     Where the base is checked out (the main checkout or another worktree) must have no change to tracked
+     files, and no path the merge adds may already exist there (`diff --diff-filter=A old new`, covering
+     untracked and ignored files), checked before the checks and again before the swap; afterwards that
+     folder is brought up to date with `read-tree -m -u <old> <new>`, and if that fails the reference is put
+     back. The `.kelpie.yaml` rule is enforced here too: a candidate that edits `.kelpie.yaml` / `.erka.yaml`
+     with checks to run is `config_blocked` unless `allow_config_change` is passed;
+  6. the branch is deleted only after `merge-base --is-ancestor`, or when merging it into the new base
+     would change nothing (tree equality, for squash and rebase). A worktree that has it checked out is
+     detached at the tip first (files unchanged), otherwise the worktree would read as full of staged files
+     and `git worktree remove` would need `--force`;
+  7. the worktree is removed last by the existing removal (its shared links are taken out first and put back
+     if the removal fails; the branch is restored and the worktree re-attached to it).
+  The card is set to Done after step 5, and errors after it are reported with the merge (`merged` with the
+  branch note), never as "stopped". Nothing uses `--force` or `reset`. The sequence's own git runs with
+  `core.hooksPath=/dev/null` (user hooks do not run for Kelpie's bookkeeping commits and reference updates;
+  git resolves it itself on Windows, and nothing can be planted in a path that is not a folder; the daemon's
+  snapshot git calls use the same), `LC_ALL=C` and no prompts; the user's commit identity is used, or
+  "Kelpie". `commit-tree` ignores `commit.gpgSign`, so
+  when it is true (`config --type=bool`) every `commit-tree` gets `-S` and git applies the key and format;
+  signing, like every other wait, is bounded by two minutes and Cancel and fails before
+  anything moves. Cancel belongs to one Finish (`finish_cancel(worktree)`, cleared by `finish_reset` when a
+  Finish begins and ends and when `finish_integrate` returns): the app checks it between steps (stopping
+  sessions, listing, WIP commit, merge), the backend ends a running signing or check; before the base moves it
+  means nothing changed, after it the run only skips the cleanup and reports the merge as it is. Approvals are
+  stored as content, not a hash: the canonical text of `setup`/`tabs`/`copy`/`link`, and the exact `check:` list.
+  The check folder gets the base's `copy:`/`link:` only when the first is approved. Stale `kelpie-finish-<pid>-*`
+  worktrees of dead processes are removed (links first) before each check run. Checks run in a Windows Job object with kill-on-close (a process group elsewhere), so a
+  timeout or Cancel ends the whole tree; output is kept as a tail ring, not buffered. Summaries and overlap
+  scans run on their own two-slot git pool (`git_review`) so they never queue interactive git calls; the
+  overlap watch asks for names only. A worktree records the branch it was created from (`Project.baseBranch`)
+  and Finish merges into that; for older worktrees it is the repository's current branch, confirmed in the
+  dialog. Before removing a worktree Finish asks the daemon to `checkpoint.drop` it, so a turn-end snapshot
+  does not hold files open; a removal that fails relinks the shared folders only while git still lists the
+  worktree.
+- **Automations** carry `deliver` (`review` or empty, API 11): when the run's first turn ends (or the
+  session exits) the daemon does `meta.set status=review` on the automation's folder (the existing record
+  above it, like `kelpied worktree set`). An older daemon ignores the field; the app hides the option below
+  API 11. The mapping lives in memory, so a daemon restart during a run drops the delivery.
 
 ## Daemon services beyond sessions
 

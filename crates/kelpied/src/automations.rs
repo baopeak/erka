@@ -51,6 +51,10 @@ pub struct Automation {
     pub last_error: Option<String>,
     #[serde(default)]
     pub next_run: u64,
+    /// Where the result goes when the run finishes: `review` puts the folder's card in the Review
+    /// column (`meta.set status=review`). Empty: nowhere.
+    #[serde(default)]
+    pub deliver: Option<String>,
 }
 
 fn yes() -> bool {
@@ -59,6 +63,8 @@ fn yes() -> bool {
 fn nine() -> String {
     "09:00".into()
 }
+
+pub const DELIVER_REVIEW: &str = "review";
 
 /// A run missed by more than this (daemon stopped, machine asleep) is skipped, not caught up.
 const MISSED_GRACE_MS: u64 = 30 * 60 * 1000;
@@ -128,6 +134,10 @@ impl Automations {
     pub fn upsert(&mut self, mut a: Automation) -> Result<Automation> {
         if a.name.trim().is_empty() || a.prompt.trim().is_empty() || a.cwd.trim().is_empty() || a.kind.trim().is_empty() {
             bail!("an automation needs a name, an agent, a folder and a prompt");
+        }
+        a.deliver = a.deliver.take().filter(|d| !d.is_empty());
+        if a.deliver.as_deref().is_some_and(|d| d != DELIVER_REVIEW) {
+            bail!("deliver must be \"{DELIVER_REVIEW}\" or empty");
         }
         if a.id.is_empty() {
             a.id = uuid::Uuid::new_v4().to_string();
@@ -205,6 +215,7 @@ mod tests {
             last_session: None,
             last_error: None,
             next_run: 0,
+            deliver: None,
         }
     }
 
@@ -223,6 +234,24 @@ mod tests {
         let fri_10 = at(2026, 10, 23, 10, 0);
         assert_eq!(auto(Every::Weekdays, "09:00", 0).next_after(fri_10), at(2026, 10, 26, 9, 0));
         assert_eq!(auto(Every::Weekly, "08:00", 1).next_after(wed_10), at(2026, 10, 26, 8, 0));
+    }
+
+    #[test]
+    fn deliver_is_review_or_nothing() {
+        let dir = std::env::temp_dir().join(format!("kelpie-auto-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut s = Automations { path: dir.join("automations.json"), list: vec![] };
+        let mut a = auto(Every::Daily, "09:00", 0);
+        a.deliver = Some("review".into());
+        assert_eq!(s.upsert(a.clone()).unwrap().deliver.as_deref(), Some("review"));
+        a.deliver = Some("".into());
+        assert_eq!(s.upsert(a.clone()).unwrap().deliver, None, "empty means nowhere");
+        a.deliver = Some("slack".into());
+        assert!(s.upsert(a).is_err());
+        // Saved files from before the field existed still load.
+        let old: Automation = serde_json::from_str(r#"{"id":"x","name":"n","kind":"claude","prompt":"p","cwd":".","every":"daily"}"#).unwrap();
+        assert_eq!(old.deliver, None);
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
