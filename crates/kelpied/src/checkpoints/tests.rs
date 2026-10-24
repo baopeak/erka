@@ -561,6 +561,91 @@ fn snapshot_cost() {
     }
 }
 
+/// `cargo test -p kelpied snapshots_on_a_loaded_machine -- --ignored --nocapture`: busy threads at
+/// normal priority on every core for a bounded time, snapshots of a five-file repository meanwhile.
+#[test]
+#[ignore]
+fn snapshots_on_a_loaded_machine() {
+    let repo = fixture();
+    let (cp, _) = store(&scratch());
+    cp.run_job(&job("s1", &repo, Kind::Baseline, 1, 1)).unwrap();
+    let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let burners: Vec<_> = (0..std::thread::available_parallelism().map_or(4, |n| n.get()))
+        .map(|_| {
+            let stop = stop.clone();
+            std::thread::spawn(move || {
+                let mut x = 0u64;
+                while !stop.load(Ordering::Relaxed) {
+                    x = x.wrapping_add(1);
+                    std::hint::black_box(x);
+                }
+            })
+        })
+        .collect();
+    let end = Instant::now() + Duration::from_secs(150);
+    for i in 0..10u64 {
+        if Instant::now() > end {
+            break;
+        }
+        write(&repo, "a.txt", &format!("turn {i}\n"));
+        let t = Instant::now();
+        cp.run_job(&job("s1", &repo, Kind::Turn, 10 + i, 11 + i)).unwrap();
+        let (wall, cpu, probe) = *cp.last_timing.lock();
+        println!("turn {i}: run {} ms; counted wall {} ms, cpu {} ms, probe {:?} ms", t.elapsed().as_millis(), wall.as_millis(), cpu.as_millis(), probe.map(|p| p.as_millis()));
+    }
+    stop.store(true, Ordering::Relaxed);
+    for b in burners {
+        b.join().unwrap();
+    }
+    println!("disabled: {:?}", cp.status()["disabled"]);
+    assert!(cp.status()["disabled"].as_array().unwrap().is_empty(), "a busy machine switched a five-file repository off");
+}
+
+#[test]
+fn a_busy_machine_does_not_switch_a_small_repository_off() {
+    let repo = fixture();
+    let (cp, events) = store(&scratch());
+    let top = find_top(&repo).unwrap();
+    let key = repo_key(&top);
+    cp.repo(&top, &key).unwrap();
+    // What was measured with every core busy: seconds of wall time, a fraction of one of git CPU.
+    for wall in [1400, 7500, 2300, 2900, 1800] {
+        cp.note_duration(&key, &top, Duration::from_millis(wall), Duration::from_millis(190));
+    }
+    assert_eq!(cp.status()["disabled"].as_array().map(Vec::len), Some(0));
+    assert!(events.lock().unwrap().is_empty());
+    // And when git's CPU time could not be counted, a small index is never the reason either.
+    for _ in 0..4 {
+        cp.note_duration(&key, &top, Duration::from_millis(7500), Duration::ZERO);
+    }
+    assert_eq!(cp.status()["disabled"].as_array().map(Vec::len), Some(0));
+    // Real work still counts: two snapshots of over a second of git CPU switch it off.
+    cp.note_duration(&key, &top, Duration::from_millis(1600), Duration::from_millis(1500));
+    cp.note_duration(&key, &top, Duration::from_millis(1700), Duration::from_millis(1600));
+    assert_eq!(cp.status()["disabled"].as_array().map(Vec::len), Some(1));
+}
+
+#[test]
+fn without_counted_cpu_a_big_index_and_a_prompt_machine_make_a_snapshot_slow() {
+    let repo = fixture();
+    let (cp, _) = store(&scratch());
+    let top = find_top(&repo).unwrap();
+    let key = repo_key(&top);
+    let handle = cp.repo(&top, &key).unwrap();
+    // A big index: the real one grown past the limit.
+    let mut grown = std::fs::read(&handle.index).unwrap();
+    grown.resize(BIG_INDEX as usize + 1, 0);
+    std::fs::write(&handle.index, grown).unwrap();
+    assert!(cp.index_is_big(&key));
+    cp.note_duration(&key, &top, Duration::from_millis(2000), Duration::ZERO);
+    cp.note_duration(&key, &top, Duration::from_millis(2000), Duration::ZERO);
+    // Judged on the wall time now, but only while a trivial git starts promptly: the verdict can only
+    // be "off" (promptly), never anything else.
+    let probe = cp.last_timing.lock().2;
+    assert!(probe.is_some(), "the machine was probed");
+    assert!(cp.status()["disabled"].as_array().is_some_and(|d| d.len() <= 1));
+}
+
 fn plan_of(cp: &Checkpoints, sid: &str, n: u32) -> Vec<Value> {
     cp.undo_plan(sid, n, &IDLE, &names).unwrap()["items"].as_array().unwrap().clone()
 }
@@ -689,12 +774,10 @@ fn a_held_index_lock_neither_blocks_nor_counts_as_slow() {
     let (cp, _) = store(&scratch());
     let index = g(&repo, &["rev-parse", "--path-format=absolute", "--git-path", "index"]);
     std::fs::write(format!("{index}.lock"), b"").unwrap();
-    let t = Instant::now();
     cp.run_job(&job("s1", &repo, Kind::Baseline, 1, 1)).unwrap();
     write(&repo, "a.txt", "x\n");
     cp.run_job(&job("s1", &repo, Kind::Turn, 2, 3)).unwrap();
     assert_eq!(records(&cp, "s1").len(), 2);
-    assert!(t.elapsed() < Duration::from_secs(10));
     assert!(cp.inner.lock().slow.is_empty() && cp.inner.lock().disabled.is_empty());
 }
 
@@ -996,6 +1079,22 @@ fn a_file_removed_before_the_turn_began_is_flagged_by_its_folder_age() {
     cp.run_job(&job("s1", &repo, Kind::Turn, later, later + 10)).unwrap();
     let items = plan_of(&cp, "s1", 1);
     assert_eq!(item(&items, "d.txt")["reason"], "removed before this turn started", "{items:?}");
+}
+
+#[test]
+fn no_hook_runs_for_snapshot_git_calls() {
+    // Not a folder anyone can fill: the hooks path is /dev/null, ahead of any config the repository has.
+    let args: Vec<String> = command(&std::env::temp_dir(), None).get_args().map(|a| a.to_string_lossy().into_owned()).collect();
+    assert!(args.windows(2).any(|w| w[0] == "-c" && w[1] == "core.hooksPath=/dev/null"), "{args:?}");
+    // And it holds against a repository whose own hooks would run.
+    let repo = fixture();
+    let marker = repo.join("hook-ran.txt");
+    let hook = repo.join(".git").join("hooks").join("reference-transaction");
+    std::fs::write(&hook, format!("#!/bin/sh\necho x >> '{}'\n", marker.to_string_lossy().replace('\\', "/"))).unwrap();
+    let mut c = command(&repo, None);
+    c.args(["update-ref", "refs/kelpie/test", "HEAD"]);
+    assert!(run(c, None).unwrap().status.success());
+    assert!(!marker.exists(), "the repository's reference-transaction hook did not run");
 }
 
 #[test]

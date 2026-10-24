@@ -20,7 +20,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Context, Result};
@@ -42,6 +42,11 @@ const SLOW: Duration = Duration::from_secs(1);
 const SLOW_LIMIT: u32 = 2;
 /// A trivial `git --version` slower than this means the machine is busy, not the repository big.
 const BUSY: Duration = Duration::from_millis(300);
+/// Git CPU time below this was not really counted (a launcher that started the real git before it
+/// joined the job object): the measurement says nothing, and the wall time has to be judged instead.
+const MIN_COUNTED_CPU: Duration = Duration::from_millis(30);
+/// Without git's CPU time, only a repository with an index this big can be slow because of its size.
+const BIG_INDEX: u64 = 256 << 10;
 /// A snapshot read this long after the turn ended is labelled approximate.
 const DELAYED_MS: u64 = 3000;
 /// A file older than its turn's start by more than this was not written by that turn.
@@ -206,6 +211,8 @@ pub struct Checkpoints {
     queues: Mutex<HashMap<String, Queue>>,
     repo_locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
     repos: Mutex<HashMap<String, Arc<Repo>>>,
+    /// The latest snapshot's wall time, git CPU time and busy probe (logged when slow; tests read it).
+    last_timing: Mutex<(Duration, Duration, Option<Duration>)>,
 }
 
 /// What an undo is asked to do: turn `n`, all its files or `paths`, with `confirm` naming the shared or
@@ -228,15 +235,14 @@ pub struct UndoCtx {
 
 // ---------- git ----------
 
-/// An empty folder these git calls look for hooks in: update-ref and restore would otherwise run
-/// the repository's reference-transaction and post-checkout scripts for work the user never asked for.
-static EMPTY_HOOKS: OnceLock<PathBuf> = OnceLock::new();
+/// These git calls look for hooks in `/dev/null` (git resolves it itself on Windows): update-ref and
+/// restore would otherwise run the repository's reference-transaction and post-checkout scripts for work
+/// the user never asked for, and nothing can be planted in a path that is not a folder.
+const NO_HOOKS: &str = "core.hooksPath=/dev/null";
 
 fn command(dir: &Path, index: Option<&Path>) -> Command {
     let mut cmd = Command::new("git");
-    if let Some(empty) = EMPTY_HOOKS.get() {
-        cmd.arg("-c").arg(format!("core.hooksPath={}", empty.to_string_lossy().replace('\\', "/")));
-    }
+    cmd.arg("-c").arg(NO_HOOKS);
     cmd.args(["-c", "core.quotepath=off", "-c", "core.fsmonitor=false", "-c", "core.safecrlf=false", "-c", "gc.auto=0", "-c", "commit.gpgsign=false", "-c", "core.splitIndex=false", "-c", "advice.updateSparsePath=false"])
         .arg("-C")
         .arg(dir)
@@ -582,9 +588,6 @@ impl Checkpoints {
             .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
             .and_then(|v| v.get("enabled").and_then(Value::as_bool))
             .unwrap_or(DEFAULT_ENABLED);
-        let empty = dir.join("no-hooks");
-        let _ = std::fs::create_dir_all(&empty);
-        EMPTY_HOOKS.get_or_init(|| empty);
         // Left over from a daemon that was killed mid-snapshot: stale index copies and their locks.
         let _ = std::fs::remove_dir_all(dir.join("tmp"));
         let cp = Checkpoints {
@@ -598,6 +601,7 @@ impl Checkpoints {
             queues: Mutex::new(HashMap::new()),
             repo_locks: Mutex::new(HashMap::new()),
             repos: Mutex::new(HashMap::new()),
+            last_timing: Mutex::new((Duration::ZERO, Duration::ZERO, None)),
         };
         // Every session's records are needed to tell whose work overlapped.
         let logs: HashMap<String, Log> = cp.stored_sessions().into_iter().filter_map(|stem| cp.load_log(&stem).map(|l| (l.session.clone(), l))).collect();
@@ -975,24 +979,35 @@ impl Checkpoints {
         gone
     }
 
+    /// Whether the repository's index is big enough for its size to make a snapshot slow.
+    fn index_is_big(&self, key: &str) -> bool {
+        self.repos.lock().get(key).is_some_and(|r| std::fs::metadata(&r.index).is_ok_and(|m| m.len() >= BIG_INDEX))
+    }
+
     /// Counts slow snapshots; a repository that was slow twice in a row stops being snapshotted
-    /// (until the daemon restarts). A slow snapshot on a busy machine says nothing about the repository.
-    /// Slow means over a second of git's own work: its CPU time when that is counted, else (and
-    /// whenever the CPU time looks too small for the wall time, as when the counting missed a
-    /// child) the wall time, unless a trivial git also starts slowly: then the machine is busy.
+    /// (until the daemon restarts). A busy machine says nothing about the repository, and wall time
+    /// grows with the load (a five-file repository took 2.3 s of wall time and 0.2 s of git CPU time
+    /// with every core busy), so the verdict is on git's CPU time. Only when that was not counted
+    /// (non-Windows, or a counting that missed the real git) the wall time is judged, and then only
+    /// for a repository whose index is big and while a trivial git starts promptly.
     fn note_duration(&self, key: &str, top: &Path, took: Duration, cpu: Duration) {
-        if took >= SLOW && cpu < SLOW && machine_busy() {
-            return;
+        let counted = cpu >= MIN_COUNTED_CPU;
+        let probe = (!counted && took >= SLOW && self.index_is_big(key)).then(machine_busy_probe);
+        *self.last_timing.lock() = (took, cpu, probe);
+        let slow = if counted { cpu >= SLOW } else { probe.is_some_and(|p| p <= BUSY) };
+        if took >= SLOW || slow {
+            tracing::info!(wall_ms = took.as_millis() as u64, cpu_ms = cpu.as_millis() as u64, probe_ms = probe.map(|p| p.as_millis() as u64), slow, "snapshot of {} took long", top.display());
         }
         let mut g = self.inner.lock();
-        if took < SLOW {
+        if !slow {
             g.slow.remove(key);
             return;
         }
         let count = g.slow.entry(key.to_string()).or_insert(0);
         *count += 1;
         if *count >= SLOW_LIMIT && !g.disabled.contains_key(key) {
-            let reason = format!("A snapshot of this repository took {:.1} s; turn snapshots are off for it", took.as_secs_f32());
+            let shown = if counted { cpu } else { took };
+            let reason = format!("A snapshot of this repository took {:.1} s; turn snapshots are off for it", shown.as_secs_f32());
             g.disabled.insert(key.to_string(), Disabled { at: self.now(), reason: reason.clone(), repo: top.to_string_lossy().into_owned() });
             drop(g);
             (self.emit)("checkpoint.disabled", json!({"repo": top.to_string_lossy(), "reason": reason}));
@@ -1529,13 +1544,13 @@ fn mtime_ms(p: &Path) -> Option<u64> {
     std::fs::metadata(p).and_then(|m| m.modified()).ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_millis() as u64)
 }
 
-/// A trivial git start taking this long means other work is using the machine.
-fn machine_busy() -> bool {
+/// How long a trivial git start takes right now.
+fn machine_busy_probe() -> Duration {
     let t = Instant::now();
     let mut cmd = command(&std::env::temp_dir(), None);
     cmd.arg("--version");
     let _ = run(cmd, None);
-    t.elapsed() > BUSY
+    t.elapsed()
 }
 
 /// A record for a fresh snapshot: where it starts from, what it changed. The caller sets the times.
